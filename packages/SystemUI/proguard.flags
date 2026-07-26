@@ -1,0 +1,12 @@
+-include proguard_common.flags
+
+-keep class com.android.systemui.SystemUIInitializerImpl {
+    *;
+}
+
+-keep,allowoptimization,allowaccessmodification class com.android.systemui.dagger.DaggerReferenceGlobalRootComponent** { !synthetic *; }
+
+# Legacy (Android 7.1.1-style) recents is selected reflectively via
+# R.string.config_recentsComponent, so keep it and its activity from being stripped by R8.
+-keep class com.android.systemui.recents.LegacyRecentsImpl { *; }
+-keep class com.android.systemui.recents.LegacyRecents* { *; }

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- crDroid / IchthysOS SystemUI dimensions -->
+<resources>
+    <!-- Weather -->
+    <dimen name="weather_image_max_size">24dp</dimen>
+</resources>

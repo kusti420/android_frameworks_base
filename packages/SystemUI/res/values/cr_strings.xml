@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     Copyright (C) 2019-2024 crDroid Android Project
+
+     Licensed under the Apache License, Version 2.0 (the "License");
+     you may not use this file except in compliance with the License.
+     You may obtain a copy of the License at
+
+          http://www.apache.org/licenses/LICENSE-2.0
+
+     Unless required by applicable law or agreed to in writing, software
+     distributed under the License is distributed on an "AS IS" BASIS,
+     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+     See the License for the specific language governing permissions and
+     limitations under the License.
+-->
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+
+    <!-- Network traffic monitor throughput units -->
+    <string name="kilobitspersecond_short" translatable="false">kb/s</string>
+    <string name="megabitspersecond_short" translatable="false">Mb/s</string>
+    <string name="gigabitspersecond_short" translatable="false">Gb/s</string>
+    <string name="kilobytespersecond_short" translatable="false">kB/s</string>
+    <string name="megabytespersecond_short" translatable="false">MB/s</string>
+    <string name="gigabytespersecond_short" translatable="false">GB/s</string>
+
+    <!-- Lock screen / status bar weather (OmniJaws) -->
+    <string name="weather_condition_clouds">Cloudy</string>
+    <string name="weather_condition_rain">Rainy</string>
+    <string name="weather_condition_clear">Clear Sky</string>
+    <string name="weather_condition_storm">Stormy</string>
+    <string name="weather_condition_snow">Snowy</string>
+    <string name="weather_condition_wind">Windy</string>
+    <string name="weather_condition_mist">Misty</string>
+
+    <!-- Advanced restart power-menu items -->
+    <string name="global_action_restart_more">Restart…</string>
+    <string name="global_action_reboot_recovery">Recovery</string>
+    <string name="global_action_restart_systemui">Restart SystemUI</string>
+    <string name="global_action_reboot_bootloader">Bootloader</string>
+
+</resources>
