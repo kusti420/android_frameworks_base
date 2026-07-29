@@ -144,10 +144,11 @@ public class ThemeOverlayHelper {
         Resources res = context.createContextAsUser(UserHandle.of(userId), 0).getResources();
 
         try {
-            // Dark ACCENT roles are verified in colorsMatchPitchBlackState because pitch black
-            // flattens them to the seed; asserting the stock Monet tone here would spuriously fail
-            // (and loop-regenerate) while pitch black is on. Light accents are never flattened, so
-            // they stay asserted inline against the light Monet scheme.
+            // Dark ACCENT and dark NEUTRAL roles are verified in colorsMatchPitchBlackState because
+            // pitch black rewrites them (accents flatten to the seed, neutrals lose their tint);
+            // asserting the stock Monet tone here would spuriously fail (and loop-regenerate) while
+            // pitch black is on. Light values are never rewritten, so they stay asserted inline
+            // against the light Monet scheme.
             return res.getColor(R.color.system_accent1_500_light)
                     == lightScheme.getAccent1().getS500()
 
@@ -157,13 +158,9 @@ public class ThemeOverlayHelper {
                     && res.getColor(R.color.system_accent3_500_light)
                     == lightScheme.getAccent3().getS500()
 
-                    && res.getColor(com.android.internal.R.color.system_neutral1_500_dark)
-                    == darkScheme.getNeutral1().getS500()
                     && res.getColor(R.color.system_neutral1_500_light)
                     == lightScheme.getNeutral1().getS500()
 
-                    && res.getColor(com.android.internal.R.color.system_neutral2_500_dark)
-                    == darkScheme.getNeutral2().getS500()
                     && res.getColor(R.color.system_neutral2_500_light)
                     == lightScheme.getNeutral2().getS500()
 
@@ -383,6 +380,8 @@ public class ThemeOverlayHelper {
                     final Integer accent = pitchBlackAccent(p.first, darkColorScheme);
                     if (accent != null) {
                         darkArgb = accent;
+                    } else if (isUngradedNeutralTone(p.first)) {
+                        darkArgb = desaturate(darkArgb);
                     }
                 }
             }
@@ -465,6 +464,42 @@ public class ThemeOverlayHelper {
     }
 
     /**
+     * Whether {@code name} is a neutral tonal token that {@link #pitchBlackShade} does NOT already
+     * pin to a fixed grey, i.e. {@code neutralN_0..600}.
+     * <p>
+     * These matter because they are not only painted directly: the androidx Material library derives
+     * its whole dark surface set from {@code neutral1_600} by keeping that token's hue/chroma and
+     * overriding only the lightness (see {@code m3_ref_palette_dynamic_neutral12} and friends, which
+     * are {@code <item android:color="@android:color/system_neutral1_600" android:lStar="12"/>}).
+     * Monet tints the neutral palette toward the seed, so with only the 700..1000 end graded, every
+     * Material-library app kept rendering seed-tinted "near black" surfaces while the system's own
+     * surfaces were pure grey -- pitch black visibly stopped at the edge of Settings/SystemUI.
+     * Stripping the chroma from the rest of the ramp is what carries the mode into those apps.
+     */
+    private static boolean isUngradedNeutralTone(String name) {
+        if (!name.startsWith("neutral1_") && !name.startsWith("neutral2_")) {
+            return false;
+        }
+        // pitchBlackShade already fixes 700..1000; everything below it just loses its tint.
+        return pitchBlackShade(name) == null;
+    }
+
+    /**
+     * Returns {@code argb} with its colour removed, keeping the alpha and approximately the original
+     * lightness. Uses the same cheap BT.601 luma as {@link #onAccentColor} rather than a full CAM16
+     * round-trip: these tones are consumed either as flat greys or as a hue source that the consumer
+     * re-lightens anyway, so preserving the exact perceptual tone buys nothing here.
+     */
+    private static int desaturate(int argb) {
+        final int r = (argb >> 16) & 0xFF;
+        final int g = (argb >> 8) & 0xFF;
+        final int b = argb & 0xFF;
+        final int grey = Math.min(255, Math.max(0,
+                (int) Math.round(0.299 * r + 0.587 * g + 0.114 * b)));
+        return (argb & 0xFF000000) | (grey << 16) | (grey << 8) | grey;
+    }
+
+    /**
      * Custom Options "pitch black" (Substratum / 8.1 flat-accent look): maps an accent role (either
      * a legacy {@code accentN_*} tonal token or a Material dynamic {@code primary/secondary/tertiary}
      * token) to the pitch-black override for its dark value, or {@code null} to keep its Monet value.
@@ -482,11 +517,12 @@ public class ThemeOverlayHelper {
      *   <li>ON-accent roles ({@link #isOnAccentRole}, the {@code on_*} tokens) -> pure black or
      *       white chosen by the seed's luminance, so text/icons drawn on the seed stay legible.</li>
      * </ul>
-     * The legacy accent extreme tones ({@code accentN_0/50} near white, {@code accentN_800/900/1000}
+     * The legacy accent extreme tones ({@code accentN_0/50} near white, {@code accentN_900/1000}
      * near black) are intentionally left to Monet: they read as near-neutral on-accent poles and
-     * already contrast, so touching them adds no consistency but risks contrast. Neutral tonal roles
-     * are handled by {@link #pitchBlackShade} as surfaces. Returns {@code null} (keep Monet) when the
-     * seed is unusable.
+     * already contrast, so touching them adds no consistency but risks contrast. {@code accentN_800}
+     * is the exception and is handled as an ON-accent role, see {@link #isOnAccentRole}. Neutral
+     * tonal roles are handled by {@link #pitchBlackShade} as surfaces. Returns {@code null} (keep
+     * Monet) when the seed is unusable.
      */
     private static Integer pitchBlackAccent(String name, ColorScheme darkColorScheme) {
         final Integer seed = flatAccentSeed(darkColorScheme);
@@ -540,8 +576,36 @@ public class ThemeOverlayHelper {
      * Material dynamic {@code on_primary/on_secondary/on_tertiary} tokens and their container/fixed
      * variants. These must stay contrasting against the flattened seed, so pitch black paints them
      * pure black or white instead of the seed.
+     * <p>
+     * {@code accentN_800} counts too. It carries no {@code on_} prefix but IS the dark-theme
+     * on-accent tone of the legacy tonal band: SettingsLib maps
+     * {@code settingslib_materialColorOnPrimary}/{@code settingslib_thumb_on_color} to it in
+     * {@code values-night}, and androidx Material maps its dark {@code colorOnPrimary}/
+     * {@code colorOnSecondary}/{@code colorOnTertiary} to it. Left at its Monet value it is a dark
+     * tone-20 of the (possibly hue-rotated) primary palette painted straight onto the flat seed,
+     * which is both off-hue and low contrast, and it disagrees with the Material dynamic
+     * {@code on_primary} token that this method already forces to black/white.
+     * <p>
+     * So do {@code accent2_100} and {@code accent3_100}, which in DARK are the ON-CONTAINER tones
+     * of the legacy band and nothing else: SettingsLib maps
+     * {@code settingslib_materialColorOnSecondaryContainer}/{@code ...OnTertiaryContainer} to them
+     * in {@code values-night}, and androidx Material maps its dark {@code colorOnSecondaryContainer}
+     * / {@code colorOnTertiaryContainer} to them. Their matching containers ({@code accentN_700})
+     * are accent FILLS, so flattening both sides painted the content in exactly the colour of the
+     * thing it sits on and it disappeared entirely -- a selected bottom-navigation icon on the flat
+     * seed pill, for instance. {@code accent1_100} is deliberately NOT in this list: unlike 2/3 it is
+     * genuinely dual-purpose in dark (DeviceDefault {@code colorAccent}/{@code colorAccentPrimary},
+     * {@code settingslib_dialog_accent} and the preference-category title colour all resolve to it),
+     * so it has to stay the flat seed and its {@code colorOnPrimaryContainer} duty loses out.
      */
     private static boolean isOnAccentRole(String name) {
+        switch (name) {
+            case "accent1_800": case "accent2_800": case "accent3_800":
+            case "accent2_100": case "accent3_100":
+                return true;
+            default:
+                break;
+        }
         return name.startsWith("on_primary") || name.startsWith("on_secondary")
                 || name.startsWith("on_tertiary");
     }
@@ -597,8 +661,16 @@ public class ThemeOverlayHelper {
         final int accent3Mid = res.getColor(com.android.internal.R.color.system_accent3_500_dark);
         final int primaryContainer =
                 res.getColor(android.R.color.system_primary_container_dark);
-        // Representative ON-accent role that must stay contrasting against the seed.
+        // Representative ON-accent roles that must stay contrasting against the seed, again spanning
+        // both representations: Material dynamic (on_primary) and legacy tonal (accent1_800, which
+        // SettingsLib and androidx Material both resolve their dark colorOnPrimary from).
         final int onPrimary = res.getColor(android.R.color.system_on_primary_dark);
+        final int accent1On = res.getColor(R.color.system_accent1_800_dark);
+        // Representative ungraded NEUTRAL tones, which pitch black strips the seed tint from. These
+        // moved here out of isColorSchemeApplied: asserting their Monet value unconditionally would
+        // never match once pitch black desaturates them, and the scheme would regenerate forever.
+        final int neutral1Mid = res.getColor(com.android.internal.R.color.system_neutral1_500_dark);
+        final int neutral2Mid = res.getColor(com.android.internal.R.color.system_neutral2_500_dark);
 
         if (pitchBlack) {
             final Integer seed = flatAccentSeed(darkScheme);
@@ -610,21 +682,27 @@ public class ThemeOverlayHelper {
                     && accent2Mid == seed
                     && accent3Mid == seed
                     && primaryContainer == seed
-                    && onPrimary == onAccentColor(seed));
+                    && onPrimary == onAccentColor(seed)
+                    && accent1On == onAccentColor(seed));
             return background == PB_BLACK
                     && surface == PB_SURFACE
                     && container == PB_CONTAINER
+                    && neutral1Mid == desaturate(darkScheme.getNeutral1().getS500())
+                    && neutral2Mid == desaturate(darkScheme.getNeutral2().getS500())
                     && accentsMatch;
         }
         return background == darkScheme.getMaterialScheme().getBackground()
                 && surface == darkScheme.getMaterialScheme().getSurface()
                 && container == darkScheme.getMaterialScheme().getSurfaceContainer()
+                && neutral1Mid == darkScheme.getNeutral1().getS500()
+                && neutral2Mid == darkScheme.getNeutral2().getS500()
                 && accent1Fill == darkScheme.getAccent1().getS100()
                 && accent1Mid == darkScheme.getAccent1().getS500()
                 && accent2Mid == darkScheme.getAccent2().getS500()
                 && accent3Mid == darkScheme.getAccent3().getS500()
                 && primaryContainer == darkScheme.getMaterialScheme().getPrimaryContainer()
-                && onPrimary == darkScheme.getMaterialScheme().getOnPrimary();
+                && onPrimary == darkScheme.getMaterialScheme().getOnPrimary()
+                && accent1On == darkScheme.getAccent1().getS800();
     }
 
     private void checkCancellation() throws CancellationException {
