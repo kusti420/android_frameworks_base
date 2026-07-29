@@ -39,6 +39,14 @@ import com.android.systemui.bouncer.shared.constants.KeyguardBouncerConstants;
  */
 public class EmergencyButton extends Button {
 
+    /**
+     * IchthysOS: this ROM ships without the emergency affordances, so the lockscreen emergency-call
+     * button is never offered. The button itself is kept because it doubles as the "return to call"
+     * affordance for an already in-progress call, which is not an emergency feature. Flip this back
+     * to {@code true} to restore the stock emergency-call behaviour.
+     */
+    private static final boolean SHOW_EMERGENCY_CALL_AFFORDANCE = false;
+
     private final EmergencyAffordanceManager mEmergencyAffordanceManager;
 
     private int mDownX;
@@ -118,7 +126,7 @@ public class EmergencyButton extends Button {
             // Emergency calling requires a telephony radio.
             if (isInCall) {
                 visible = true; // always show "return to call" if phone is off-hook
-            } else {
+            } else if (SHOW_EMERGENCY_CALL_AFFORDANCE) {
                 if (simLocked) {
                     // Some countries can't handle emergency calls while SIM is locked.
                     visible = mEnableEmergencyCallWhileSimLocked;
