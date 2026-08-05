@@ -97,6 +97,7 @@ import com.android.server.pm.PackageManagerService
 import com.android.server.pm.PackageMetrics
 import com.android.server.pm.UserManagerInternal
 import com.android.server.pm.UserManagerService
+import com.android.server.pm.permission.ContactsLockdownPolicy
 import com.android.server.pm.permission.LegacyPermission
 import com.android.server.pm.permission.LegacyPermissionSettings
 import com.android.server.pm.permission.LegacyPermissionState
@@ -521,6 +522,21 @@ class PermissionService(private val service: AccessCheckingService) :
         if (permissionName !in androidPackage.requestedPermissions) {
             return Context.PERMISSION_REQUEST_STATE_UNREQUESTABLE
         }
+        // IchthysOS: global contacts lockdown. An app that asks the platform whether it may still
+        // request contacts is told plainly that it may not, so a well-behaved caller stops trying
+        // instead of firing requestPermissions() into a dialog that will never appear.
+        if (
+            ContactsLockdownPolicy.isGrantBlocked(
+                context,
+                packageName,
+                appId,
+                permissionName,
+                userId,
+                /* isRoleControllerCaller = */ false,
+            )
+        ) {
+            return Context.PERMISSION_REQUEST_STATE_UNREQUESTABLE
+        }
 
         val permissionFlags =
             service.getState {
@@ -906,6 +922,32 @@ class PermissionService(private val service: AccessCheckingService) :
             return
         }
 
+        // IchthysOS: global contacts lockdown. Refusing the grant itself rather than only the
+        // dialog is what makes the feature unavoidable — every caller that can hand out contacts
+        // ends up here, including `pm grant`, a device policy controller, PermissionController's
+        // own "Allow" button and the per-app permission screen in Settings. Evaluated before
+        // service.mutateState() because resolving the role holders is a call out to RoleService
+        // and must not be made while holding the access state lock. The role controller is told
+        // apart from the rest so a phone or messaging app being handed its role is not refused the
+        // access that comes with it.
+        if (
+            isGranted &&
+                ContactsLockdownPolicy.isGrantBlocked(
+                    context,
+                    packageName,
+                    packageState!!.appId,
+                    permissionName,
+                    userId,
+                    UserHandle.getAppId(callingUid) == permissionControllerPackageState!!.appId,
+                )
+        ) {
+            Slog.i(
+                LOG_TAG,
+                "$methodName: contacts lockdown refused $permissionName to $packageName",
+            )
+            return
+        }
+
         val canManageRolePermission =
             isRootOrSystemUid(callingUid) ||
                 UserHandle.getAppId(callingUid) == permissionControllerPackageState!!.appId
@@ -943,6 +985,18 @@ class PermissionService(private val service: AccessCheckingService) :
         userId: Int,
         permissionStates: ArrayMap<String, Int>,
     ) {
+        // IchthysOS: global contacts lockdown, the install-session half of the check in
+        // setRuntimePermissionGranted() above — an installer must not be able to pre-grant
+        // contacts to an app the user has locked out. Resolved up front for the same reason: the
+        // role lookup must not happen inside service.mutateState().
+        val isContactsLockedDown =
+            ContactsLockdownPolicy.isPackageBlocked(
+                context,
+                packageState.packageName,
+                packageState.appId,
+                userId,
+                /* isRoleControllerCaller = */ false,
+            )
         service.mutateState {
             permissionStates.forEachIndexed { _, permissionName, permissionState ->
                 when (permissionState) {
@@ -958,6 +1012,17 @@ class PermissionService(private val service: AccessCheckingService) :
                     }
                 }
                 if (permissionName !in packageState.androidPackage!!.requestedPermissions) {
+                    return@forEachIndexed
+                }
+                if (
+                    isContactsLockedDown &&
+                        ContactsLockdownPolicy.isContactsPermission(permissionName)
+                ) {
+                    Slog.i(
+                        LOG_TAG,
+                        "setRequestedPermissionStates: contacts lockdown refused" +
+                            " $permissionName to ${packageState.packageName}",
+                    )
                     return@forEachIndexed
                 }
                 val permission =

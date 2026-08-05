@@ -22,6 +22,7 @@ import com.android.systemui.classifier.domain.interactor.FalsingInteractor
 import com.android.systemui.development.ui.viewmodel.BuildNumberViewModel
 import com.android.systemui.inputdevice.domain.interactor.PointerDeviceInteractor
 import com.android.systemui.lifecycle.HydratedActivatable
+import com.android.systemui.qs.panels.domain.interactor.QSRowsInteractor
 import com.android.systemui.qs.panels.ui.viewmodel.toolbar.EditModeButtonViewModel
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
@@ -35,9 +36,17 @@ constructor(
     val editModeButtonViewModelFactory: EditModeButtonViewModel.Factory,
     private val falsingInteractor: FalsingInteractor,
     pointerDeviceInteractor: PointerDeviceInteractor,
+    qsRowsInteractor: QSRowsInteractor,
 ) : IconTilesViewModel by iconTilesViewModel, HydratedActivatable() {
 
     var inFirstPage by inFirstPageViewModel::inFirstPage
+
+    /**
+     * IchthysOS: rows per QS page, honouring crDroid's `qs_tiles_rows` /
+     * `qs_tiles_rows_landscape`. Falls back to `R.integer.quick_settings_paginated_grid_num_rows`
+     * when the keys are unset — see [QSRowsInteractor].
+     */
+    val rows by qsRowsInteractor.rows.hydratedStateOf(initialValue = qsRowsInteractor.defaultRows)
 
     val showArrowsInPagerDots by
         pointerDeviceInteractor.isAnyPointerDeviceConnected.hydratedStateOf(initialValue = false)

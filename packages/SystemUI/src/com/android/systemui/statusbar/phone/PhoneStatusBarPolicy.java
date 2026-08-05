@@ -35,6 +35,7 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
@@ -643,8 +644,15 @@ public class PhoneStatusBarPolicy
         paint.setTextAlign(Paint.Align.LEFT);
         final int gap = Math.round(h * 0.12f);
         final Paint.FontMetrics fm = paint.getFontMetrics();
-        final int textW = Math.round(paint.measureText(text));
-        final int w = glyphW + gap + textW;
+        // measureText() returns the ADVANCE width, but bold glyphs routinely ink past their
+        // advance — which cropped the last digit's right edge against the next status bar icon
+        // ("85" rendered as "85" with the 5 sliced). Take whichever is wider, the advance or the
+        // measured ink bounds, and add a small trailing margin so anti-aliasing has somewhere to go.
+        final Rect inkBounds = new Rect();
+        paint.getTextBounds(text, 0, text.length(), inkBounds);
+        final int textW = Math.max(Math.round(paint.measureText(text)), inkBounds.right);
+        final int trailing = Math.round(h * 0.10f);
+        final int w = glyphW + gap + textW + trailing;
 
         final Bitmap bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
         final Canvas canvas = new Canvas(bmp);

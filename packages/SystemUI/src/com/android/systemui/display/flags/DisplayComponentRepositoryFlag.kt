@@ -24,6 +24,5 @@ object DisplayComponentRepositoryFlag {
      * Returns true if eager initialization should be enabled for
      * [com.android.systemui.display.data.repository.DisplayComponentRepository].
      */
-    fun isEagerInitializationEnabled(): Boolean =
-        Flags.enableConnectedDisplaysWallpaperPresentations()
+    fun isEagerInitializationEnabled(): Boolean = true
 }

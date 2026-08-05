@@ -1036,8 +1036,10 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, Dump
 
     private void applyState() {
         debugLog("Applying state: " + mState.name());
+        // IchthysOS: gate on the Abyss palette, not custom_pitch_black - the pure-black switch
+        // only moves the bottom of the surface ladder now, and these scrims read the ladder.
         mPitchBlack = android.provider.Settings.Secure.getInt(
-                mContext.getContentResolver(), "custom_pitch_black", 0) == 1;
+                mContext.getContentResolver(), "theme_engine_style_mode", 0) == 1;
         mInFrontTint = mState.getFrontTint();
         mBehindTint = mState.getBehindTint();
         mNotificationsTint = mState.getNotifTint();
@@ -1415,9 +1417,22 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, Dump
             if (DEBUG_MODE) {
                 tint = getDebugScrimTint(scrimView);
             }
-            // Custom Options "pitch black": paint the shade/QS scrims opaque black.
+            // Custom Options "pitch black": paint the shade/QS scrims opaque.
+            // IchthysOS: these used to be flat Color.BLACK. The surface ladder is now tinted
+            // (black -> dark blue -> purple-ish blue, derived from the accent seed), so the shade
+            // takes its rungs from the system_* dark roles like everything else - otherwise the
+            // shade sits as a black slab on top of a tinted system. The scrim behind the panel
+            // gets the base surface rung and the notification scrim the container rung above it,
+            // matching ShadeColors. The front scrim is a dimming layer, not a surface, so it
+            // stays true black.
             if (mPitchBlack) {
-                tint = Color.BLACK;
+                if (scrimView == mScrimBehind) {
+                    tint = mContext.getColor(android.R.color.system_surface_dark);
+                } else if (scrimView == mNotificationsScrim) {
+                    tint = mContext.getColor(android.R.color.system_surface_container_dark);
+                } else {
+                    tint = Color.BLACK;
+                }
                 if ((scrimView == mNotificationsScrim || scrimView == mScrimBehind)
                         && alpha > 0.05f) {
                     alpha = 1.0f;

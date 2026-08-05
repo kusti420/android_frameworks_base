@@ -31,6 +31,8 @@ import android.view.LayoutInflater
 import android.view.SurfaceControl
 import android.view.View
 import android.widget.ImageButton
+import android.widget.ImageView
+import androidx.annotation.DrawableRes
 import androidx.annotation.LayoutRes
 import androidx.compose.ui.util.fastForEachIndexed
 import androidx.constraintlayout.motion.widget.MotionLayout
@@ -149,14 +151,11 @@ constructor(
         // group. They stay <shape>/GradientDrawable so the corner-radius animation casts below still
         // succeed; the elements draw their own backgrounds. Only the non-blur path is handled (the
         // pitch-black theme ships without the blur surface tint).
-        val oneUiStyle =
-            Settings.System.getIntForUser(
-                view.context.contentResolver,
-                "volume_panel_style",
-                0,
-                UserHandle.USER_CURRENT,
-            ) == 1
+        val oneUiStyle = view.context.isOneUiVolumeStyle()
         if (oneUiStyle) {
+            // IchthysOS: hide the ringer/vibrate/mute toggle entirely in One UI style —
+            // the volume slider is the only control needed.
+            drawerContainer.visibility = View.GONE
             // One UI: no wrapping container at all, REGARDLESS of blur. Hide the AOSP dialog +
             // ringer-drawer background VIEWS by setting their alpha to 0. We deliberately do NOT
             // swap the background drawable: the blur code below casts these backgrounds to
@@ -234,7 +233,10 @@ constructor(
                             }
 
                         // Set up view background and visibility
-                        drawerContainer.visibility = View.VISIBLE
+                        // IchthysOS: keep the ringer drawer hidden in One UI style
+                        if (!oneUiStyle) {
+                            drawerContainer.visibility = View.VISIBLE
+                        }
                         if (viewModel.showBlur) {
                             val layers = (volumeDialogBackgroundView.background as LayerDrawable)
                             val blurDrawable = layers.getDrawable(0) as BackgroundBlurDrawable
@@ -503,7 +505,18 @@ constructor(
         // id = buttonViewModel.viewId
         setSelected(isSelected)
         val ringerContentDesc = context.getString(buttonViewModel.contentDescriptionResId)
-        setImageResource(buttonViewModel.imageResId)
+        // Custom Options: One UI ringer-mode glyphs from the original oneui_volume_ic_* family, so
+        // the menu matches the slider capsule's icons instead of mixing in Material ones.
+        if (context.isOneUiVolumeStyle()) {
+            setImageResource(oneUiRingerIconRes(buttonViewModel.imageResId))
+            // The button is 48dp and its InsetDrawable background contributes 6dp of padding, so the
+            // default fitCenter scaleType would blow the 24dp glyph up to fill the whole 36dp well.
+            // CENTER draws it at its authored 24dp size, which is the One UI optical size next to
+            // the 22dp glyph in the slider capsule.
+            scaleType = ImageView.ScaleType.CENTER
+        } else {
+            setImageResource(buttonViewModel.imageResId)
+        }
         contentDescription =
             if (isSelected && !isOpen) {
                 context.getString(
@@ -516,13 +529,7 @@ constructor(
         // Custom Options: One UI ringer buttons are neutral-dark wells in BOTH states; only the
         // active (selected) icon carries the seed accent (the fill never turns accent, and nothing
         // is Monet-tinted).
-        val oneUiStyle =
-            Settings.System.getIntForUser(
-                context.contentResolver,
-                "volume_panel_style",
-                0,
-                UserHandle.USER_CURRENT,
-            ) == 1
+        val oneUiStyle = context.isOneUiVolumeStyle()
         if (isSelected && !isAnimated) {
             setBackgroundResource(
                 if (oneUiStyle) R.drawable.oneui_volume_ringer_item_bg_selected
@@ -663,6 +670,37 @@ private fun ImageButton.backgroundShape(): GradientDrawable =
 
 // Custom Options: neutral light-grey used for inactive One UI ringer icons (no Monet tint).
 private val ONEUI_VOLUME_NEUTRAL_ICON = 0xFFCCCCCC.toInt()
+
+/**
+ * Custom Options: "volume_panel_style" (Settings.System, default 0). 1 == the One UI volume panel.
+ * Always read for USER_CURRENT - reading it for the process user silently returns the default.
+ */
+private fun Context.isOneUiVolumeStyle(): Boolean {
+    val style =
+        Settings.System.getIntForUser(
+            contentResolver,
+            "volume_panel_style",
+            0,
+            UserHandle.USER_CURRENT,
+        )
+    return style == 1
+}
+
+/**
+ * Custom Options: maps the stock ringer-mode glyphs [VolumeDialogRingerDrawerViewModel] emits onto
+ * the original One UI icon family. Unknown drawables are passed through untouched.
+ */
+@DrawableRes
+private fun oneUiRingerIconRes(@DrawableRes resId: Int): Int =
+    when (resId) {
+        // Silent / muted: a plain bell with the One UI mute slash.
+        R.drawable.ic_notifications_off -> R.drawable.oneui_volume_ic_notification_mute
+        // Vibrate: a handset with vibration ticks.
+        R.drawable.ic_mobile_vibrate -> R.drawable.oneui_volume_ic_vibrate
+        // Normal / ringing: a bell with the two ringing arcs.
+        R.drawable.ic_notifications_active -> R.drawable.oneui_volume_ic_ring
+        else -> resId
+    }
 
 /**
  * Reads the picked seed accent the same way SystemUI does - via ?android:attr/colorAccent - so the

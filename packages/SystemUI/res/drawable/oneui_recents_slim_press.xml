@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The Android Open Source Project. Licensed under the Apache License 2.0. -->
+<!--
+  Press feedback for a slim row. Declared here rather than taken from
+  ?android:attr/selectableItemBackground because the activity runs under
+  Theme.Translucent.NoTitleBar, whose selectableItemBackground is still the pre-Material
+  item_background selector.
+
+  The whole row is the tap target — this style has no per-row ✕ — so the ripple has to cover the
+  whole pill, and the mask therefore repeats the row background's 32dp radius. Without a mask a
+  bounded ripple fills the view's rectangle and the highlight spills past the rounded ends.
+-->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="#33FFFFFF">
+    <item android:id="@android:id/mask">
+        <shape android:shape="rectangle">
+            <solid android:color="#FFFFFFFF" />
+            <corners android:radius="32dp" />
+        </shape>
+    </item>
+</ripple>

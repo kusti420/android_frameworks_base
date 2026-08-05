@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The Android Open Source Project. Licensed under the Apache License 2.0. -->
+<!--
+  Grid cell background. It is set on the thumbnail itself — the snapshot is the whole card in this
+  style — and so also supplies the outline the ImageView clips its bitmap to, which is what rounds
+  the corners of the snapshot.
+
+  16dp, not the 20dp the List and Stack cards use: a Grid cell is a third of the screen wide, and
+  measuring the reference (One UI 8, 1080x2400 @ 420dpi) puts the corner arc at 40px ≈ 15.2dp on a
+  313px-wide card. Carrying the family's 20dp over would visibly over-round a card this small.
+
+  The fill is the near-black an empty snapshot well should be, so a card whose bitmap has not
+  arrived yet reads as a dim placeholder rather than flashing a bright block.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#FF17181C" />
+    <corners android:radius="16dp" />
+</shape>

@@ -161,7 +161,7 @@ public abstract class ActivatableNotificationView extends ExpandableOutlineView 
             mNormalColor = mContext.getColor(
                     com.android.internal.R.color.materialColorSurfaceContainerHigh);
         }
-        // Custom Options "pitch black": black notification background.
+        // Custom Options "pitch black": pure-black notification background.
         if (PitchBlackTheme.isEnabled(mContext)) {
             mNormalColor = Color.BLACK;
             mOpaqueColor = Color.BLACK;

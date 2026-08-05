@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The Android Open Source Project. Licensed under the Apache License 2.0. -->
+<!--
+  Card surface for the List recents style — the whole card, since a One UI vertical-list card is
+  nothing but the rounded snapshot.
+
+  Two jobs. The solid fill is what shows for a task whose snapshot has not been captured yet (and
+  behind the inset app icon the style falls back to in that case), so it is a neutral dark surface
+  rather than anything tinted. And, being the thumbnail's background, this shape is what the default
+  ViewOutlineProvider hands to android:clipToOutline — so the radius here is the radius the snapshot
+  itself is rounded to.
+
+  26dp measured off the reference device: the corner runs from the card edge to full width over
+  ~68px at 420dpi. (One UI draws a squircle rather than a circular arc; a plain rounded rect at the
+  same radius is the closest an AOSP shape gets without shipping a custom outline provider.)
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#FF17181C" />
+    <corners android:radius="26dp" />
+</shape>

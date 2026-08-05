@@ -165,6 +165,12 @@ constructor(
 
     // UI Components that only exist in dialog, but not tile details view.
     private var doneButton: Button? = null
+
+    /**
+     * Route to the full Bluetooth settings screen, sitting opposite Done. Nullable for the same
+     * reason doneButton is: the tile details layout has no button row at all.
+     */
+    private var bluetoothSettingsButton: View? = null
     private var titleTextView: TextView? = null
     private var subtitleTextView: TextView? = null
 
@@ -223,6 +229,7 @@ constructor(
             subtitleTextView = contentView.requireViewById(R.id.bluetooth_tile_dialog_subtitle)
             // If rendering with tile details view, done button shouldn't exist.
             doneButton = contentView.requireViewById(R.id.done_button)
+            bluetoothSettingsButton = contentView.requireViewById(R.id.bluetooth_settings_button)
         } else {
             bluetoothToggleLayout = contentView.requireViewById(R.id.bluetooth_toggle_layout)
             autoOnToggleRow = contentView.requireViewById(R.id.bluetooth_auto_on_toggle_row)
@@ -250,6 +257,7 @@ constructor(
         doneButton?.setOnClickListener { doneButtonCallback() }
         subtitleTextView?.text = contentView.context.getString(initialUiProperties.subTitleResId)
         seeAllButton.setOnClickListener { onSeeAllClicked(it) }
+        bluetoothSettingsButton?.setOnClickListener { onBluetoothSettingsClicked(it) }
         pairNewDeviceButton.setOnClickListener { onPairNewDeviceClicked(it) }
         audioSharingButton.apply {
             setOnClickListener { onAudioSharingButtonClicked(it) }
@@ -337,6 +345,14 @@ constructor(
     override fun onSeeAllClicked(view: View) {
         uiEventLogger.log(BluetoothTileDialogUiEvent.SEE_ALL_CLICKED)
         startSettingsActivity(Intent(ACTION_PREVIOUSLY_CONNECTED_DEVICE), view)
+    }
+
+    /**
+     * Opens the full Bluetooth settings screen. The dialog otherwise dead-ends at per-device rows
+     * and pairing, with no route through to the real settings.
+     */
+    fun onBluetoothSettingsClicked(view: View) {
+        startSettingsActivity(Intent(ACTION_BLUETOOTH_SETTINGS), view)
     }
 
     override fun onPairNewDeviceClicked(view: View) {
@@ -785,6 +801,7 @@ constructor(
         const val ACTION_PREVIOUSLY_CONNECTED_DEVICE =
             "com.android.settings.PREVIOUSLY_CONNECTED_DEVICE"
         const val ACTION_PAIR_NEW_DEVICE = "android.settings.BLUETOOTH_PAIRING_SETTINGS"
+        const val ACTION_BLUETOOTH_SETTINGS = "android.settings.BLUETOOTH_SETTINGS"
         const val ACTION_AUDIO_SHARING = "com.android.settings.BLUETOOTH_AUDIO_SHARING_SETTINGS"
         const val PROGRESS_BAR_ANIMATION_DURATION_MS = 1500L
 

@@ -65,7 +65,8 @@ public abstract class RecentsModule {
      */
     // Custom Options: user-selectable recents implementation.
     // recents_type: 0 = Stock (Launcher overview), 1 = Classic (revived vertical recents),
-    // 2 = Slim (imported Slim Recents). Read once at SystemUI start; changing it requires a
+    // 2 = Slim (imported Slim Recents), 3 = Grace UX cascade (Samsung 7.1.1), 4 = Grid,
+    // 5 = Stack, 6 = List, 7 = Slim list. Read once at SystemUI start; changing it requires a
     // SystemUI restart to take effect.
     private static final String RECENTS_TYPE = "recents_type";
     private static final int RECENTS_STOCK = 0;
@@ -81,8 +82,9 @@ public abstract class RecentsModule {
         if (recentsType == RECENTS_CLASSIC) {
             return new LegacyRecentsImpl();
         }
-        // recents_type 2 (Slim) is handled entirely in the launcher's Quickstep
-        // (OverviewCommandHelper -> slimrecent.RecentController); nothing to do here.
+        // recents_type 2 (Slim) and 3-7 (the card-list styles) are driven entirely from the
+        // launcher's Quickstep (OverviewCommandHelper -> slimrecent.RecentController /
+        // OneUiRecentsActivity); nothing to do here, so fall through to the stock component.
 
         final String clsName = context.getString(R.string.config_recentsComponent);
         if (clsName == null || clsName.length() == 0) {

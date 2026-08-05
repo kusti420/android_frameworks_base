@@ -47,12 +47,14 @@ import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -119,6 +121,11 @@ constructor(
     private var _deviceSupportsFlashlight = false
 
     private val defaultEnabledLevelForUser = ConcurrentHashMap<Int, Int>()
+
+    // IchthysOS: Samsung devices toggle flash through a vendor HAL triggered by
+    // Settings.Secure.FLASHLIGHT_ENABLED. Camera2 TorchCallback doesn't fire when
+    // the flash is toggled this way, so we need a manual state injection path.
+    private val _samsungFallbackState = MutableSharedFlow<FlashlightModel>(extraBufferCapacity = 1)
 
     override fun start() {
         if (FlashlightStrength.isUnexpectedlyInLegacyMode()) {
@@ -222,7 +229,8 @@ constructor(
      *
      * TODO(B/412982015) try to reconnect on new subscriptions
      */
-    private val _state: Flow<FlashlightModel> = conflatedCallbackFlow {
+    // IchthysOS: merge Camera2 TorchCallback flow with Samsung fallback flow
+    private val _state: Flow<FlashlightModel> = merge(conflatedCallbackFlow {
         val callbackFromSystem =
             object : TorchCallback() {
                 override fun onTorchModeUnavailable(camId: String) {
@@ -298,7 +306,7 @@ constructor(
 
         cameraManager.registerTorchCallback(bgDispatcher.asExecutor(), callbackFromSystem)
         awaitClose { cameraManager.unregisterTorchCallback(callbackFromSystem) }
-    }
+    }, _samsungFallbackState) // IchthysOS: merged with Samsung fallback
 
     /**
      * When flashlight is temporarily unavailable, we wait for it to to become available and then we
@@ -387,10 +395,24 @@ constructor(
                     } else {
                         cameraManager.setTorchMode(currentFlashlightInfo.cameraId, enabled)
                     }
+                    // IchthysOS: Samsung fallback — write Settings to trigger FlashControlSVC
+                    // which toggles flash via Samsung's vendor HAL. Also emit manual state
+                    // since Camera2 TorchCallback may not fire on Samsung devices.
+                    secureSettings.setInt(Settings.Secure.FLASHLIGHT_ENABLED, if (enabled) 1 else 0)
+                    _samsungFallbackState.tryEmit(
+                        FlashlightModel.Available.Binary(enabled)
+                    )
                 }
             } catch (e: CameraAccessException) {
                 e.printStackTrace()
                 logger.w("Error trying to setEnabled to $enabled: ${e.message}")
+                // IchthysOS: even if Camera2 fails, try the Samsung Settings path
+                try {
+                    secureSettings.setInt(Settings.Secure.FLASHLIGHT_ENABLED, if (enabled) 1 else 0)
+                    _samsungFallbackState.tryEmit(
+                        FlashlightModel.Available.Binary(enabled)
+                    )
+                } catch (ignored: Exception) {}
             }
         }
     }

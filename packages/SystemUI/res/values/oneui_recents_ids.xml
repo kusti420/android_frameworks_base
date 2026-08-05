@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The Android Open Source Project. Licensed under the Apache License 2.0. -->
+<!--
+  Shared view IDs for every IchthysOS recents card layout. Declared centrally (rather than with
+  @+id in each layout) so the five styles can be built independently against a fixed contract and
+  RecentsCardBinder can populate any of them without knowing which style is live.
+-->
+<resources>
+    <item name="oneui_recents_card_icon" type="id" />
+    <item name="oneui_recents_card_title" type="id" />
+    <item name="oneui_recents_card_dismiss" type="id" />
+    <item name="oneui_recents_card_thumbnail" type="id" />
+    <item name="oneui_recents_card_header" type="id" />
+
+    <!-- Tag key on a card's thumbnail ImageView, holding the ScaleType its layout declared.
+         RecentsCardBinder overwrites the scale type when a task has no snapshot, and views are
+         recycled, so the declared value has to be stashed somewhere to be restorable. -->
+    <item name="oneui_recents_declared_scale_type" type="id" />
+</resources>

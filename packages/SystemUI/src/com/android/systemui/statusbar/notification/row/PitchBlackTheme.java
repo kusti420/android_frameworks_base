@@ -24,17 +24,29 @@ final class PitchBlackTheme {
 
     private PitchBlackTheme() {}
 
+    /**
+     * IchthysOS: whether the Abyss palette is selected in the Theme Engine
+     * (Settings.Secure {@code theme_engine_style_mode}: 0 = Monet, 1 = Abyss).
+     * <p>
+     * This used to read {@code custom_pitch_black}, which conflated "use this ROM's palette" with
+     * "make the background pure black". The palette is now the thing being asked about; pitch black
+     * is only a modifier on top of it and is handled in the surface ladder itself.
+     */
     static boolean isEnabled(Context context) {
-        return Settings.Secure.getInt(context.getContentResolver(), "custom_pitch_black", 0) == 1;
+        return Settings.Secure.getInt(context.getContentResolver(),
+                "theme_engine_style_mode", 0) == 1;
     }
 
     /**
-     * Whether to draw the accent-colored border around each notification row. Independent of the
-     * pitch-black surface theme (Settings.System "notification_accent_border", default on) so the
-     * border shows regardless of whether pitch black is enabled.
+     * Whether to draw the accent-colored border around each notification row.
+     * <p>
+     * IchthysOS: this is an Abyss-palette flourish, so it requires the Abyss palette to be selected
+     * as well as its own switch (Settings.System "notification_accent_border", default on).
+     * Previously it checked only its own switch, so the border bled through onto Monet, where it
+     * looks out of place against Monet's tonal notification surfaces.
      */
     static boolean borderEnabled(Context context) {
-        return Settings.System.getInt(context.getContentResolver(),
+        return isEnabled(context) && Settings.System.getInt(context.getContentResolver(),
                 "notification_accent_border", 1) == 1;
     }
 

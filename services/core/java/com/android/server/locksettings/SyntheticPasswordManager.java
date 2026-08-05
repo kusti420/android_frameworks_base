@@ -2120,8 +2120,11 @@ class SyntheticPasswordManager {
 
     private byte[] createSpBlob(
             String protectorKeyAlias, byte[] data, byte[] protectorSecret, long sid) {
+        // Pass sid=0 to skip auth-bound key creation. Software KeyMint cannot validate
+        // TEE-signed auth tokens (HMAC mismatch), so auth binding would make the SP blob
+        // undecryptable. PIN verification is still enforced by Gatekeeper.
         return SyntheticPasswordCrypto.createBlob(
-                mKeyStore, protectorKeyAlias, data, protectorSecret, sid);
+                mKeyStore, protectorKeyAlias, data, protectorSecret, 0);
     }
 
     private void destroyProtectorKey(String keyAlias) {

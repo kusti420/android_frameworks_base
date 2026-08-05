@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The Android Open Source Project. Licensed under the Apache License 2.0. -->
+<!-- Strings shared by the IchthysOS recents styles hosted by OneUiRecentsActivity. -->
+<resources>
+    <!-- Shown in place of the task list when there are no recent apps. [CHAR LIMIT=40] -->
+    <string name="recents_empty_message">No recent items</string>
+    <!-- Button that closes every recent app at once. One UI labels this "Close all", not
+         "Clear all" — matched deliberately, since these styles recreate One UI. [CHAR LIMIT=20] -->
+    <string name="recents_clear_all">Close all</string>
+</resources>

@@ -168,6 +168,7 @@ import android.media.AudioManagerInternal;
 import android.media.AudioSystem;
 import android.media.IAudioService;
 import android.media.session.MediaSessionLegacyHelper;
+import android.net.Uri;
 import android.os.Binder;
 import android.os.Bundle;
 import android.os.DeviceIdleManager;
@@ -216,6 +217,7 @@ import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
 import android.view.KeyboardShortcutGroup;
 import android.view.MotionEvent;
+import android.view.Surface;
 import android.view.ViewConfiguration;
 import android.view.WindowManager;
 import android.view.WindowManagerGlobal;
@@ -241,6 +243,8 @@ import com.android.internal.policy.KeyInterceptionInfo;
 import com.android.internal.policy.PhoneWindow;
 import com.android.internal.statusbar.IStatusBarService;
 import com.android.internal.util.NamedLock;
+import com.android.internal.util.ScreenshotHelper;
+import com.android.internal.util.ScreenshotRequest;
 import com.android.internal.widget.LockPatternUtils;
 import com.android.server.AccessibilityManagerInternal;
 import com.android.server.DockObserverInternal;
@@ -269,6 +273,7 @@ import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -316,6 +321,18 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     static final int SHORT_PRESS_POWER_DREAM_OR_SLEEP = 7;
     static final int SHORT_PRESS_POWER_HUB_OR_DREAM_OR_SLEEP = 8;
     static final int SHORT_PRESS_POWER_DREAM_OR_AWAKE_OR_SLEEP = 9;
+
+    /**
+     * IchthysOS: master switch for every "assistant" flavour the window policy can launch.
+     * The user does not want an assistant on this device, so all of them are disabled at the
+     * three funnels they share (launchAssistAction, launchVoiceAssist,
+     * launchVoiceAssistWithWakeLock) plus getResolvedLongPressOnPowerBehavior().
+     *
+     * Kept as a constant rather than deleting the call sites so that key dispatch is
+     * structurally untouched and an upstream merge stays trivial; flip it to false to get
+     * stock behaviour back.
+     */
+    private static final boolean ASSIST_DISABLED = true;
 
     // must match: config_LongPressOnPowerBehavior in config.xml
     // The config value can be overridden using Settings.Global.POWER_BUTTON_LONG_PRESS
@@ -647,6 +664,42 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     private boolean mVolumeMusicSeeking;           // deferring this hold for a possible track seek
     private boolean mVolumeSeekFired;              // the track seek fired for this hold
 
+    // IchthysOS: "Reorient" — LineageSettings.System.SWAP_VOLUME_KEYS_ON_ROTATION. When the
+    // display is rotated, swap volume up/down so the physically-upper end of the rocker keeps
+    // meaning "louder".  0 = off, 1 = phone/hybrid (rocker on a long edge: swap at 90/180),
+    // 2 = tablet (rocker on a short edge: swap at 180/270).  Lives in the *lineagesettings*
+    // provider, not Settings.System -- see readLineageSystemInt().
+    private static final int SWAP_VOLUME_KEYS_OFF = 0;
+    private static final int SWAP_VOLUME_KEYS_PHONE = 1;
+    private static final int SWAP_VOLUME_KEYS_TABLET = 2;
+    private int mSwapVolumeKeysOnRotation = SWAP_VOLUME_KEYS_OFF;
+
+    // IchthysOS: three-finger swipe gesture, backed by
+    // LineageSettings.System.KEY_THREE_FINGERS_SWIPE_ACTION.
+    // Value is an ordinal of org.lineageos.internal.util.DeviceKeysConstants.Action; the enum is
+    // in lineage-sdk (not linkable from services.core, see readLineageSystemInt()), so the
+    // ordinals are mirrored here.  Keep in sync with DeviceKeysConstants.Action.
+    private static final int THREE_FINGER_ACTION_NOTHING = 0;
+    private static final int THREE_FINGER_ACTION_MENU = 1;
+    private static final int THREE_FINGER_ACTION_APP_SWITCH = 2;
+    private static final int THREE_FINGER_ACTION_SEARCH = 3;
+    private static final int THREE_FINGER_ACTION_VOICE_SEARCH = 4;
+    private static final int THREE_FINGER_ACTION_IN_APP_SEARCH = 5;
+    private static final int THREE_FINGER_ACTION_LAUNCH_CAMERA = 6;
+    private static final int THREE_FINGER_ACTION_SLEEP = 7;
+    private static final int THREE_FINGER_ACTION_LAST_APP = 8;
+    private static final int THREE_FINGER_ACTION_SPLIT_SCREEN = 9;
+    private static final int THREE_FINGER_ACTION_KILL_APP = 10;
+    private static final int THREE_FINGER_ACTION_PLAY_PAUSE_MUSIC = 11;
+    private static final int THREE_FINGER_ACTION_SCREENSHOT = 12;
+    private static final int THREE_FINGER_ACTION_PARTIAL_SCREENSHOT = 13;
+    // The pointer listener is only registered while the action is something other than NOTHING,
+    // so an unset/disabled setting costs nothing and can never affect touch delivery.
+    private int mThreeFingerSwipeAction = THREE_FINGER_ACTION_NOTHING;
+    private ThreeFingerSwipeListener mThreeFingerSwipeListener;
+    private boolean mThreeFingerSwipeListenerRegistered;
+    private ScreenshotHelper mScreenshotHelper;
+
     private boolean mPendingKeyguardOccluded;
 
     Intent mHomeIntent;
@@ -959,6 +1012,13 @@ public class PhoneWindowManager implements WindowManagerPolicy {
             resolver.registerContentObserver(Settings.System.getUriFor(
                     Settings.System.LOCKSCREEN_ENABLE_POWER_MENU), false, this,
                     UserHandle.USER_ALL);
+            // IchthysOS: swap_volume_keys_on_rotation and key_three_fingers_swipe_action live in
+            // the LineageOS settings provider (content://lineagesettings/system), NOT in
+            // Settings.System. Observe the whole system table with notifyForDescendants: the
+            // provider notifies the per-name item URI on a put but the bare table URI on a
+            // delete, so watching the table catches both.
+            resolver.registerContentObserver(LINEAGE_SETTINGS_SYSTEM_URI,
+                    true /* notifyForDescendants */, this, UserHandle.USER_ALL);
             updateSettings();
         }
 
@@ -1735,6 +1795,16 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     private int getResolvedLongPressOnPowerBehavior() {
         if (FactoryTest.isLongPressOnPowerOffEnabled()) {
             return LONG_PRESS_POWER_SHUT_OFF_NO_CONFIRM;
+        }
+
+        // IchthysOS: never resolve long-press power to an assistant. config_longPressOnPowerBehavior
+        // is already 1 in the device overlay, but Settings.Global.POWER_BUTTON_LONG_PRESS can
+        // override it (that is what the now-hidden "Press and hold power button" screen wrote), and
+        // a settings restore could bring a 4/5 back. Fall back to the power menu rather than to
+        // "nothing", so the power button never becomes dead.
+        if (ASSIST_DISABLED && (mLongPressOnPowerBehavior == LONG_PRESS_POWER_ASSISTANT
+                || mLongPressOnPowerBehavior == LONG_PRESS_POWER_GO_TO_VOICE_ASSIST)) {
+            return LONG_PRESS_POWER_GLOBAL_ACTIONS;
         }
 
         // If the config indicates the assistant behavior but the device isn't yet provisioned, show
@@ -3239,6 +3309,22 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         if (updateRotation) {
             updateRotation(true);
         }
+        // IchthysOS: LineageSettings-backed keys ("Reorient" volume rocker + three-finger swipe
+        // action). Both default to 0 (feature off) when unset or unreadable. Deliberately read
+        // OUTSIDE mLock and only once the system is ready: unlike Settings.System, the
+        // lineagesettings provider lives in a separate app process, so the first read can have to
+        // wait for that process to be started -- something we must not do early in boot, and never
+        // while holding the policy lock.
+        if (mSystemReady) {
+            mSwapVolumeKeysOnRotation = readLineageSystemInt(
+                    LINEAGE_SWAP_VOLUME_KEYS_ON_ROTATION, SWAP_VOLUME_KEYS_OFF);
+            mThreeFingerSwipeAction = readLineageSystemInt(
+                    LINEAGE_KEY_THREE_FINGERS_SWIPE_ACTION, THREE_FINGER_ACTION_NOTHING);
+        }
+        // (Un)hook the three-finger swipe pointer monitor. Posted to the policy handler so it
+        // never runs under mLock (it calls into WindowManagerService) and so registration stays
+        // single-threaded -- registerPointerEventListener() throws if called twice.
+        mHandler.post(this::updateThreeFingerSwipeListener);
     }
 
     private void updateKidsModeSettings(boolean kidsModeEnabled) {
@@ -4229,6 +4315,17 @@ public class PhoneWindowManager implements WindowManagerPolicy {
 
     private void launchAssistAction(String hint, int deviceId, int displayId, long eventTime,
             int invocationType) {
+        // IchthysOS: no assistant on this device. This is the single funnel every
+        // system-server assist invocation goes through - long-press power (behaviours 4/5),
+        // long-press home (LONG_PRESS_HOME_ASSIST), KEYCODE_ASSIST, the keyboard
+        // launch-assistant gestures, stem primary and the three-finger swipe - so returning
+        // here kills all of them at once without touching key dispatch. Left as an early
+        // return rather than deleting the callers so an upstream merge stays trivial.
+        if (ASSIST_DISABLED) {
+            Slog.i(TAG, "launchAssistAction ignored: assistant disabled on this build"
+                    + " (invocationType=" + invocationType + ")");
+            return;
+        }
         sendCloseSystemWindows(SYSTEM_DIALOG_REASON_ASSIST);
         if (!isUserSetupComplete()) {
             // Disable opening assist window during setup
@@ -4270,6 +4367,11 @@ public class PhoneWindowManager implements WindowManagerPolicy {
      * keyguard if present on watch.
      */
     private void launchVoiceAssist(boolean allowDuringSetup) {
+        // IchthysOS: no assistant on this device - see launchAssistAction().
+        if (ASSIST_DISABLED) {
+            Slog.i(TAG, "launchVoiceAssist ignored: assistant disabled on this build");
+            return;
+        }
         final boolean keyguardActive = mKeyguardDelegate.isShowing();
         if (!keyguardActive) {
             startActivityAsUser(
@@ -4621,6 +4723,25 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         final boolean canceled = event.isCanceled();
         final int displayId = event.getDisplayId();
         final boolean isInjected = (policyFlags & WindowManagerPolicy.FLAG_INJECTED) != 0;
+
+        // IchthysOS: "Reorient" (LineageSettings SWAP_VOLUME_KEYS_ON_ROTATION). LineageOS does
+        // this down in inputflinger; that native support does not exist in this tree, so emulate
+        // it here by swallowing the real key and re-injecting the opposite one. Done before any
+        // other processing (in particular before handleKeyGesture()) so that exactly one volume
+        // key -- the swapped one -- is ever seen by gesture detection, key chords, the music
+        // controls and the app. Guarded twice against re-entry: injected events carry
+        // FLAG_INJECTED, and the replacement is tagged with the virtual-keyboard device id.
+        if (mSwapVolumeKeysOnRotation != SWAP_VOLUME_KEYS_OFF
+                && !isInjected
+                && !isKeyGestureTriggered
+                && interactive
+                && event.getDeviceId() != KeyCharacterMap.VIRTUAL_KEYBOARD
+                && (keyCode == KeyEvent.KEYCODE_VOLUME_UP
+                        || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)
+                && shouldSwapVolumeKeysForRotation()) {
+            injectSwappedVolumeKey(event);
+            return 0;
+        }
 
         if (DEBUG_INPUT) {
             // If screen is off then we treat the case where the keyguard is open but hidden
@@ -5029,7 +5150,11 @@ public class PhoneWindowManager implements WindowManagerPolicy {
             }
             case KeyEvent.KEYCODE_ASSIST: {
                 final boolean longPressed = event.getRepeatCount() > 0;
-                if (down && !longPressed) {
+                // IchthysOS: no assistant. Still consumed below (result &= ~ACTION_PASS_TO_USER)
+                // exactly as upstream, so an ASSIST key never leaks through to apps; we simply
+                // don't post the launch message. The A52s has no assist key, so this is only
+                // reachable from an external keyboard / remote.
+                if (!ASSIST_DISABLED && down && !longPressed) {
                     Message msg = mHandler.obtainMessage(MSG_LAUNCH_ASSIST, event.getDeviceId(),
                             0 /* unused */, event.getEventTime() /* eventTime */);
                     msg.setAsynchronous(true);
@@ -5041,7 +5166,9 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                 break;
             }
             case KeyEvent.KEYCODE_VOICE_ASSIST: {
-                if (!down) {
+                // IchthysOS: no assistant - same treatment as KEYCODE_ASSIST above. Skipping the
+                // message also means mBroadcastWakeLock is never acquired for it.
+                if (!ASSIST_DISABLED && !down) {
                     mBroadcastWakeLock.acquire();
                     Message msg = mHandler.obtainMessage(MSG_LAUNCH_VOICE_ASSIST_WITH_WAKE_LOCK);
                     msg.setAsynchronous(true);
@@ -5521,6 +5648,18 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     }
 
     void launchVoiceAssistWithWakeLock() {
+        // IchthysOS: no assistant on this device - see launchAssistAction(). The only poster of
+        // MSG_LAUNCH_VOICE_ASSIST_WITH_WAKE_LOCK (the KEYCODE_VOICE_ASSIST case) is gated by the
+        // same flag and no longer acquires the wake lock, so this method is unreachable in
+        // practice; the isHeld() check keeps the release honest if anything ever does reach it
+        // (releasing an unheld WakeLock throws "WakeLock under-locked").
+        if (ASSIST_DISABLED) {
+            Slog.i(TAG, "launchVoiceAssistWithWakeLock ignored: assistant disabled on this build");
+            if (mBroadcastWakeLock.isHeld()) {
+                mBroadcastWakeLock.release();
+            }
+            return;
+        }
         sendCloseSystemWindows(SYSTEM_DIALOG_REASON_ASSIST);
 
         final Intent voiceIntent;
@@ -5845,6 +5984,274 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         InputManagerGlobal.getInstance().injectInputEvent(event,
                 InputManager.INJECT_INPUT_EVENT_MODE_ASYNC);
         event.recycle();
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // IchthysOS: LineageSettings-backed policy settings.
+    //
+    // LineageSettings lives in org.lineageos.platform.jar. That jar IS on the system-server
+    // classpath (PRODUCT_SYSTEM_SERVER_JARS in build/make/target/product/media_system.mk), so the
+    // classes are resolvable at runtime, but it cannot be added to services.core's build deps:
+    // org.lineageos.platform itself compiles against services.core (see lineage-sdk/Android.bp),
+    // so a compile-time edge back would be a Soong dependency cycle. SystemServer.java reaches
+    // LineageSystemServer the same way -- reflectively.
+    // ---------------------------------------------------------------------------------------
+    // Mirrors lineageos.providers.LineageSettings.System.CONTENT_URI.
+    private static final Uri LINEAGE_SETTINGS_SYSTEM_URI =
+            Uri.parse("content://lineagesettings/system");
+    private static final String LINEAGE_SWAP_VOLUME_KEYS_ON_ROTATION =
+            "swap_volume_keys_on_rotation";
+    private static final String LINEAGE_KEY_THREE_FINGERS_SWIPE_ACTION =
+            "key_three_fingers_swipe_action";
+
+    private static Method sLineageSettingsGetIntForUser;
+    private static boolean sLineageSettingsUnavailable;
+
+    /**
+     * Reads an int out of the LineageOS settings provider's "system" table for the *current*
+     * user. Returns {@code def} if lineage-sdk is unavailable or the value is unset, so every
+     * caller degrades to the feature being off.
+     */
+    private int readLineageSystemInt(String name, int def) {
+        if (sLineageSettingsUnavailable) {
+            return def;
+        }
+        try {
+            if (sLineageSettingsGetIntForUser == null) {
+                final Class<?> cls = Class.forName("lineageos.providers.LineageSettings$System");
+                sLineageSettingsGetIntForUser = cls.getMethod("getIntForUser",
+                        ContentResolver.class, String.class, int.class, int.class);
+            }
+            // USER_CURRENT, never mContext.getUserId(): system_server runs as user 0 and would
+            // silently read the wrong user's value.
+            return (Integer) sLineageSettingsGetIntForUser.invoke(null,
+                    mContext.getContentResolver(), name, def, UserHandle.USER_CURRENT);
+        } catch (ClassNotFoundException | NoSuchMethodException e) {
+            // Permanent: lineage-sdk isn't on this build's system-server classpath.
+            sLineageSettingsUnavailable = true;
+            Slog.w(TAG, "LineageSettings unavailable; " + name + " disabled", e);
+            return def;
+        } catch (Exception e) {
+            Slog.w(TAG, "Failed reading LineageSettings.System." + name, e);
+            return def;
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // IchthysOS: "Reorient" -- swap the volume keys while the display is rotated.
+    // ---------------------------------------------------------------------------------------
+
+    /** True when the current display rotation means the rocker should be read upside down. */
+    private boolean shouldSwapVolumeKeysForRotation() {
+        if (mDefaultDisplay == null) {
+            return false;
+        }
+        final int rotation = mDefaultDisplay.getRotation();
+        switch (mSwapVolumeKeysOnRotation) {
+            case SWAP_VOLUME_KEYS_PHONE:
+                // Rocker along a long edge (all phones, this one included): it ends up pointing
+                // "down" once the display is rotated 90 or 180 degrees.
+                return rotation == Surface.ROTATION_90 || rotation == Surface.ROTATION_180;
+            case SWAP_VOLUME_KEYS_TABLET:
+                // Rocker along a short edge.
+                return rotation == Surface.ROTATION_180 || rotation == Surface.ROTATION_270;
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * Re-injects {@code event} as the opposite volume key, preserving action, repeat count and
+     * timing so a held key still behaves like a held key. The caller must consume the original.
+     */
+    private void injectSwappedVolumeKey(KeyEvent event) {
+        final int swappedKeyCode = event.getKeyCode() == KeyEvent.KEYCODE_VOLUME_UP
+                ? KeyEvent.KEYCODE_VOLUME_DOWN
+                : KeyEvent.KEYCODE_VOLUME_UP;
+        final KeyEvent swapped = KeyEvent.obtain(
+                event.getDownTime(), event.getEventTime(), event.getAction(), swappedKeyCode,
+                event.getRepeatCount(), event.getMetaState(),
+                KeyCharacterMap.VIRTUAL_KEYBOARD /* deviceId: doubles as a re-entry guard */,
+                0 /* scanCode */, event.getFlags() | KeyEvent.FLAG_FROM_SYSTEM,
+                InputDevice.SOURCE_KEYBOARD, event.getDisplayId(), null /* characters */);
+        InputManagerGlobal.getInstance().injectInputEvent(swapped,
+                InputManager.INJECT_INPUT_EVENT_MODE_ASYNC);
+        swapped.recycle();
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // IchthysOS: three-finger swipe gesture.
+    //
+    // Implemented on top of WindowManager's pointer-event *monitor* channel
+    // (PointerEventDispatcher always calls finishInputEvent(event, false)), so this observes
+    // touches and can never consume or delay them. The listener is only attached while an action
+    // other than NOTHING is configured, so with the setting unset or off there is no listener at
+    // all.
+    // ---------------------------------------------------------------------------------------
+
+    private void updateThreeFingerSwipeListener() {
+        if (!mSystemReady || mWindowManagerFuncs == null) {
+            return;
+        }
+        final boolean wanted = mThreeFingerSwipeAction != THREE_FINGER_ACTION_NOTHING;
+        if (wanted == mThreeFingerSwipeListenerRegistered) {
+            return;
+        }
+        if (wanted) {
+            if (mThreeFingerSwipeListener == null) {
+                mThreeFingerSwipeListener = new ThreeFingerSwipeListener();
+            }
+            mWindowManagerFuncs.registerPointerEventListener(
+                    mThreeFingerSwipeListener, DEFAULT_DISPLAY);
+        } else {
+            mWindowManagerFuncs.unregisterPointerEventListener(
+                    mThreeFingerSwipeListener, DEFAULT_DISPLAY);
+        }
+        mThreeFingerSwipeListenerRegistered = wanted;
+    }
+
+    private static final int THREE_FINGER_POINTERS = 3;
+
+    /**
+     * Fires once per gesture when three fingers travel downwards together. Runs on
+     * WindowManager's UiThread; all work is handed to the policy handler.
+     */
+    private class ThreeFingerSwipeListener
+            implements WindowManagerPolicyConstants.PointerEventListener {
+        private final int mThresholdPx;
+        private final int[] mPointerIds = new int[THREE_FINGER_POINTERS];
+        private final float[] mInitialY = new float[THREE_FINGER_POINTERS];
+        private boolean mTracking;
+        private boolean mFired;
+
+        ThreeFingerSwipeListener() {
+            mThresholdPx = (int) (60f
+                    * mContext.getResources().getDisplayMetrics().density + 0.5f);
+        }
+
+        @Override
+        public void onPointerEvent(MotionEvent event) {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    mTracking = false;
+                    mFired = false;
+                    break;
+                case MotionEvent.ACTION_POINTER_DOWN:
+                    if (!mFired && event.getPointerCount() == THREE_FINGER_POINTERS) {
+                        for (int i = 0; i < THREE_FINGER_POINTERS; i++) {
+                            mPointerIds[i] = event.getPointerId(i);
+                            mInitialY[i] = event.getY(i);
+                        }
+                        mTracking = true;
+                    } else {
+                        // A fourth finger (or a late one) -- this is not our gesture.
+                        mTracking = false;
+                    }
+                    break;
+                case MotionEvent.ACTION_MOVE:
+                    if (mTracking && !mFired && event.getPointerCount() == THREE_FINGER_POINTERS) {
+                        float total = 0f;
+                        for (int i = 0; i < THREE_FINGER_POINTERS; i++) {
+                            final int index = event.findPointerIndex(mPointerIds[i]);
+                            if (index < 0) {
+                                mTracking = false;
+                                return;
+                            }
+                            final float dy = event.getY(index) - mInitialY[i];
+                            if (dy <= 0f) {
+                                return; // not all fingers moving down (yet)
+                            }
+                            total += dy;
+                        }
+                        if (total >= mThresholdPx * THREE_FINGER_POINTERS) {
+                            mFired = true;
+                            mTracking = false;
+                            final int action = mThreeFingerSwipeAction;
+                            mHandler.post(() -> performThreeFingerSwipeAction(action));
+                        }
+                    }
+                    break;
+                case MotionEvent.ACTION_POINTER_UP:
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    mTracking = false;
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+    private void performThreeFingerSwipeAction(int action) {
+        switch (action) {
+            case THREE_FINGER_ACTION_NOTHING:
+                break;
+            case THREE_FINGER_ACTION_MENU:
+                injectKeyPress(KeyEvent.KEYCODE_MENU);
+                break;
+            case THREE_FINGER_ACTION_APP_SWITCH:
+                toggleRecentApps();
+                break;
+            case THREE_FINGER_ACTION_SEARCH:
+            case THREE_FINGER_ACTION_IN_APP_SEARCH:
+                injectKeyPress(KeyEvent.KEYCODE_SEARCH);
+                break;
+            case THREE_FINGER_ACTION_VOICE_SEARCH:
+                // IchthysOS: no assistant on this device. The option is also gone from
+                // crDroidSettings' hardware_keys_action_entries, so this only ever runs for a
+                // value written before that change; treat it as "nothing". (launchAssistAction()
+                // would no-op anyway; this just avoids the pointless sendCloseSystemWindows.)
+                break;
+            case THREE_FINGER_ACTION_LAUNCH_CAMERA: {
+                final Intent intent = new Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA);
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivityAsUser(intent, UserHandle.CURRENT_OR_SELF);
+                break;
+            }
+            case THREE_FINGER_ACTION_SLEEP:
+                goToSleep(SystemClock.uptimeMillis(),
+                        PowerManager.GO_TO_SLEEP_REASON_SLEEP_BUTTON, 0);
+                break;
+            case THREE_FINGER_ACTION_SPLIT_SCREEN: {
+                final StatusBarManagerInternal statusbar = getStatusBarManagerInternal();
+                if (statusbar != null) {
+                    statusbar.toggleSplitScreen();
+                }
+                break;
+            }
+            case THREE_FINGER_ACTION_PLAY_PAUSE_MUSIC:
+                sendMediaButtonEvent(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE);
+                break;
+            case THREE_FINGER_ACTION_PARTIAL_SCREENSHOT:
+                // Android 17 dropped WindowManager.TAKE_SCREENSHOT_SELECTED_REGION (the
+                // ScreenshotRequest.Builder only accepts FULLSCREEN / PROVIDED_IMAGE), so there is
+                // no region-select entry point left. Fall back to a full-screen shot, which the
+                // SystemUI screenshot UI lets the user crop anyway.
+                Slog.i(TAG, "Three-finger swipe: partial screenshot unsupported, "
+                        + "taking a full screenshot instead");
+                takeThreeFingerScreenshot();
+                break;
+            case THREE_FINGER_ACTION_SCREENSHOT:
+                takeThreeFingerScreenshot();
+                break;
+            case THREE_FINGER_ACTION_LAST_APP:
+            case THREE_FINGER_ACTION_KILL_APP:
+            default:
+                Slog.w(TAG, "Three-finger swipe action " + action + " is not supported");
+                break;
+        }
+    }
+
+    private void takeThreeFingerScreenshot() {
+        if (mScreenshotHelper == null) {
+            mScreenshotHelper = new ScreenshotHelper(mContext);
+        }
+        final ScreenshotRequest request = new ScreenshotRequest.Builder(
+                WindowManager.TAKE_SCREENSHOT_FULLSCREEN,
+                WindowManager.ScreenshotSource.SCREENSHOT_OTHER)
+                .setDisplayId(DEFAULT_DISPLAY)
+                .build();
+        mScreenshotHelper.takeScreenshot(request, mHandler, null /* completionConsumer */);
     }
 
     private void wakeUpFromWakeKey(KeyEvent event) {

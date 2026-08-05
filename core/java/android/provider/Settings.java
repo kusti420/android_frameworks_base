@@ -4686,6 +4686,25 @@ public final class Settings {
         /** @hide */
         @SuppressLint({"NoSettingsProvider", "UnflaggedApi"})
         public static final String QS_BRIGHTNESS_SLIDER_SHAPE = "qs_brightness_slider_shape";
+        /**
+         * IchthysOS: minimum brightness floor for adaptive/auto brightness, as a brightness
+         * float in the range [0.0, 1.0]. 0.0 (default) disables the feature. When > 0 the
+         * automatic brightness controller clamps its computed value UP so the screen never dims
+         * below this floor in the current environment. Set from the QS brightness slider's
+         * second (floor) handle.
+         * @hide
+         */
+        @SuppressLint({"NoSettingsProvider", "UnflaggedApi"})
+        public static final String AUTO_BRIGHTNESS_MIN_FLOOR = "auto_brightness_min_floor";
+        /**
+         * IchthysOS: master enable toggle (0/1, default 0) for the auto-brightness minimum floor
+         * feature. When 0 the floor is ignored regardless of {@link #AUTO_BRIGHTNESS_MIN_FLOOR}
+         * and the QS second (floor) handle is hidden.
+         * @hide
+         */
+        @SuppressLint({"NoSettingsProvider", "UnflaggedApi"})
+        public static final String AUTO_BRIGHTNESS_MIN_FLOOR_ENABLED =
+                "auto_brightness_min_floor_enabled";
         /** @hide */
         @SuppressLint({"NoSettingsProvider", "UnflaggedApi"})
         public static final String QS_FOOTER_SHOW_EDIT = "qs_footer_show_edit";
@@ -14816,6 +14835,21 @@ public final class Settings {
         @SuppressLint({"NoSettingsProvider", "UnflaggedApi"})
         public static final String SENSOR_BLOCKED_APP = "sensor_blocked_app";
         // ===== End Custom Options keys =====
+
+        /**
+         * IchthysOS: global contacts lockdown (0/1, default 0). When 1, the CONTACTS permission
+         * group is withheld from every app except the current dialer and SMS role holders and the
+         * packages that own the contacts database — requests are refused without a dialog and
+         * existing grants are swept away. Global rather than Secure because it is one switch for
+         * the whole device rather than a per-profile preference.
+         *
+         * <p>PermissionController and crDroidSettings repeat this string literally; they build
+         * against the SDK and cannot see a hidden constant.
+         * @hide
+         */
+        @SuppressLint({"NoSettingsProvider", "UnflaggedApi"})
+        public static final String CONTACTS_LOCKDOWN = "ichthys_contacts_lockdown";
+
         // NOTE: If you add new settings here, be sure to add them to
         // com.android.providers.settings.SettingsProtoDumpUtil#dumpProtoGlobalSettingsLocked.
 

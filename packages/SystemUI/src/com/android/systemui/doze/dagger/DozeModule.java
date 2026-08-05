@@ -17,8 +17,10 @@
 package com.android.systemui.doze.dagger;
 
 import com.android.systemui.Flags;
+import com.android.systemui.doze.DozeAlwaysOnScheduler;
 import com.android.systemui.doze.DozeAuthRemover;
 import com.android.systemui.doze.DozeBrightnessHostForwarder;
+import com.android.systemui.doze.DozeChargeHandler;
 import com.android.systemui.doze.DozeDockHandler;
 import com.android.systemui.doze.DozeFalsingManagerAdapter;
 import com.android.systemui.doze.DozeHost;
@@ -73,7 +75,9 @@ public abstract class DozeModule {
             DozeFalsingManagerAdapter dozeFalsingManagerAdapter, DozeTriggers dozeTriggers,
             DozeUi dozeUi, DozeScreenState dozeScreenState,
             DozeScreenBrightness dozeScreenBrightness, DozeWallpaperState dozeWallpaperState,
-            DozeDockHandler dozeDockHandler, DozeMinMode dozeMinMode,
+            DozeDockHandler dozeDockHandler, DozeChargeHandler dozeChargeHandler,
+            DozeAlwaysOnScheduler dozeAlwaysOnScheduler,
+            DozeMinMode dozeMinMode,
             DozeAuthRemover dozeAuthRemover,
             DozeSuppressor dozeSuppressor, DozeTransitionListener dozeTransitionListener) {
         List<DozeMachine.Part> parts = new ArrayList<>();
@@ -85,6 +89,8 @@ public abstract class DozeModule {
         parts.add(dozeScreenState);
         parts.add(dozeWallpaperState);
         parts.add(dozeDockHandler);
+        parts.add(dozeChargeHandler);
+        parts.add(dozeAlwaysOnScheduler);
         parts.add(dozeAuthRemover);
         parts.add(dozeSuppressor);
         parts.add(dozeTransitionListener);

@@ -106,6 +106,19 @@ public class AssistManager {
 
     private static final String TAG = "AssistManager";
 
+    /**
+     * IchthysOS: the user does not want any assistant / voice-assist surface on this device.
+     * This class is the single place SystemUI actually hands control to an assistant from -
+     * PhoneWindowManager's StatusBarManagerInternal.startAssist() fallback, CommandQueue's
+     * startAssist(), and Launcher's SystemUiProxy.startAssistant() all end up in
+     * {@link #startAssist(Context, Bundle)} - so gating that one method disables the lot.
+     *
+     * Everything else here (hideAssist, onLockscreenShown, the visual query attention
+     * listeners) is left alone: those only ever tear things down or observe, and are called
+     * unconditionally from CentralSurfaces / DozeServiceHost.
+     */
+    private static final boolean ASSIST_DISABLED = true;
+
     // Note that VERBOSE logging may leak PII (e.g. transcription contents).
     private static final boolean VERBOSE = false;
 
@@ -316,6 +329,11 @@ public class AssistManager {
      * launched on that specific display.
      */
     public void startAssist(Context context, Bundle args) {
+        // IchthysOS: no assistant on this device - see ASSIST_DISABLED above.
+        if (ASSIST_DISABLED) {
+            Log.i(TAG, "startAssist ignored: assistant disabled on this build");
+            return;
+        }
         if (mActivityManager.getLockTaskModeState() != ActivityManager.LOCK_TASK_MODE_NONE) {
             return;
         }

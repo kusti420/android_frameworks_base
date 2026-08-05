@@ -46,6 +46,7 @@ import com.android.systemui.haptics.slider.compose.ui.SliderHapticsViewModel
 import com.android.systemui.res.R
 import com.android.systemui.volume.dialog.domain.interactor.ExpandedAudioTileDetailsFeatureInteractor
 import com.android.systemui.volume.dialog.sliders.dagger.VolumeDialogSliderScope
+import com.android.systemui.volume.dialog.sliders.domain.OneUiExpandState
 import com.android.systemui.volume.dialog.sliders.ui.compose.SliderTrack
 import com.android.systemui.volume.dialog.sliders.ui.viewmodel.VolumeDialogOverscrollViewModel
 import com.android.systemui.volume.dialog.sliders.ui.viewmodel.VolumeDialogSliderViewModel
@@ -174,6 +175,7 @@ private fun VolumeDialogSlider(
     if (oneUiStyle) {
         // Custom Options: One UI (1) renders an original, fully custom capsule slider instead of
         // the AOSP Material slider. Default (0) falls through to the unchanged Slider() below.
+        val context = LocalContext.current
         OneUiVolumeSlider(
             state = sliderStateModel,
             iconSize = iconSize,
@@ -189,6 +191,11 @@ private fun VolumeDialogSlider(
             onValueChangeFinished = { viewModel.onSliderChangeFinished(it) },
             onDragStarted = { viewModel.onSliderDragStarted() },
             onDragFinished = { viewModel.onSliderDragFinished() },
+            onExpandClicked = {
+                // IchthysOS: tapping the "⋯" dots toggles the One UI expansion — shows
+                // ALL audio streams as side-by-side capsules (like real One UI).
+                OneUiExpandState.toggle()
+            },
             modifier =
                 modifier.pointerInput(Unit) {
                     coroutineScope {

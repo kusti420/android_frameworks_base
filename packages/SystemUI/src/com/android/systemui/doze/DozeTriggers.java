@@ -29,6 +29,9 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.hardware.display.AmbientDisplayConfiguration;
 import android.os.SystemClock;
+import android.os.VibrationAttributes;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
 import android.text.format.Formatter;
 import android.util.IndentingPrintWriter;
 import android.util.Log;
@@ -86,6 +89,16 @@ public class DozeTriggers implements DozeMachine.Part {
 
     private static final int PROXIMITY_TIMEOUT_DELAY_MS = 500;
 
+    /** Upper bound of the doze_gesture_vibrate seek bar in crDroid Settings. */
+    private static final int MAX_GESTURE_VIBRATION_MS = 2000;
+
+    /**
+     * The gesture haptic is a deliberate acknowledgement of a user gesture on a screen that is
+     * still off, so it is classified as hardware feedback rather than a notification.
+     */
+    private static final VibrationAttributes GESTURE_VIBRATION_ATTRIBUTES =
+            VibrationAttributes.createForUsage(VibrationAttributes.USAGE_HARDWARE_FEEDBACK);
+
     private final Context mContext;
     private final SessionTracker mSessionTracker;
     private DozeMachine mMachine;
@@ -107,6 +120,7 @@ public class DozeTriggers implements DozeMachine.Part {
     private final UserTracker mUserTracker;
     private final SelectedUserInteractor mSelectedUserInteractor;
     private final UiEventLogger mUiEventLogger;
+    private final Vibrator mVibrator;
 
     private long mNotificationPulseTime;
     private Runnable mAodInterruptRunnable;
@@ -232,6 +246,7 @@ public class DozeTriggers implements DozeMachine.Part {
         mKeyguardStateController = keyguardStateController;
         mUserTracker = userTracker;
         mSelectedUserInteractor = selectedUserInteractor;
+        mVibrator = mContext.getSystemService(Vibrator.class);
     }
 
     @Override
@@ -314,8 +329,16 @@ public class DozeTriggers implements DozeMachine.Part {
         boolean isWakeOnReach = pulseReason == DozeLog.PULSE_REASON_SENSOR_WAKE_REACH;
         boolean isUdfpsLongPress = pulseReason == DozeLog.REASON_SENSOR_UDFPS_LONG_PRESS;
         boolean isQuickPickup = pulseReason == DozeLog.REASON_SENSOR_QUICK_PICKUP;
+        boolean isCustomGesture = pulseReason == DozeLog.REASON_SENSOR_TILT
+                || pulseReason == DozeLog.REASON_SENSOR_HANDWAVE
+                || pulseReason == DozeLog.REASON_SENSOR_POCKET;
         boolean isWakeDisplayEvent = isQuickPickup || ((isWakeOnPresence || isWakeOnReach)
                 && rawValues != null && rawValues.length > 0 && rawValues[0] != 0);
+
+        if (isCustomGesture) {
+            onCustomGesture(pulseReason);
+            return;
+        }
 
         if (isWakeOnPresence) {
             onWakeScreen(isWakeDisplayEvent,
@@ -376,6 +399,41 @@ public class DozeTriggers implements DozeMachine.Part {
 
     private boolean shouldDropPickupEvent() {
         return mKeyguardStateController.isOccluded();
+    }
+
+    /**
+     * Handles the crDroid doze gestures (tilt, hand wave, pocket). These are all deliberate user
+     * gestures, so they either fully wake the device (raise_to_wake_gesture) or pulse the ambient
+     * display with an optional haptic acknowledgement (doze_gesture_vibrate).
+     *
+     * No proximity check is performed: the hand wave and pocket gestures *are* proximity
+     * transitions to far, and running the async prox check on top of them would just race with the
+     * event that produced them.
+     */
+    private void onCustomGesture(int pulseReason) {
+        final int userId = mSelectedUserInteractor.getSelectedUserId();
+        if (mConfig.raiseToWakeGestureEnabled(userId)) {
+            gentleWakeUp(pulseReason);
+            return;
+        }
+        playGestureHaptic(userId);
+        requestPulse(pulseReason, true /* performedProxCheck */,
+                null /* onPulseSuppressedListener */);
+    }
+
+    private void playGestureHaptic(int userId) {
+        if (mVibrator == null || !mVibrator.hasVibrator()) {
+            return;
+        }
+        final int durationMs = mConfig.dozeGestureVibrationDuration(userId);
+        if (durationMs <= 0) {
+            return;
+        }
+        mVibrator.vibrate(
+                VibrationEffect.createOneShot(
+                        Math.min(durationMs, MAX_GESTURE_VIBRATION_MS),
+                        VibrationEffect.DEFAULT_AMPLITUDE),
+                GESTURE_VIBRATION_ATTRIBUTES);
     }
 
     private void gentleWakeUp(@DozeLog.Reason int reason) {

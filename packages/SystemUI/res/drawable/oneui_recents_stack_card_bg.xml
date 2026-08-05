@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The Android Open Source Project. Licensed under the Apache License 2.0. -->
+<!--
+  Card face for the Stack (tilt) fan.
+
+  20dp corners, measured off a One UI 8 tilt stack at 420dpi: the front card's left edge only
+  becomes straight ~53px below its top edge, and solving the circle for two sampled rows both give
+  r ≈ 53px ≈ 20dp. (Noticeably tighter than it looks by eye — the cards read as very round because
+  they are narrow, not because the radius is large.)
+
+  The fill is only ever seen through a task with no snapshot, where RecentsCardBinder centres the
+  app icon on it, and in the corners the snapshot's own square corners leave behind. A near-black
+  neutral so neither case flashes bright against the blurred wallpaper.
+
+  Doubles as the outline source: the face sets clipToOutline, so this radius is what rounds the
+  snapshot and what shapes the card's elevation shadow.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#FF1B1B1B" />
+    <corners android:radius="20dp" />
+</shape>

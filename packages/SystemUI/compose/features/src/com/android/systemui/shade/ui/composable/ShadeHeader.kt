@@ -92,6 +92,9 @@ import com.android.compose.animation.scene.animateElementFloatAsState
 import com.android.compose.animation.scene.content.state.TransitionState
 import com.android.compose.modifiers.thenIf
 import com.android.systemui.Flags.groupedPrivacyChip
+// IchthysOS: the adaptive-brightness / brightness-floor toggles, moved out of the QS brightness row
+// (where they cost it ~23% of its width) into the empty gap of the expanded header.
+import com.android.systemui.brightness.ui.compose.BrightnessToggleButtons
 import com.android.systemui.common.ui.compose.byLayoutId
 import com.android.systemui.common.ui.compose.windowinsets.CutoutLocation
 import com.android.systemui.common.ui.compose.windowinsets.LocalDisplayCutout
@@ -343,6 +346,17 @@ fun ContentScope.ExpandedShadeHeader(
                     shorterDateText = viewModel.shorterDateText,
                     textColor = textColor,
                     modifier = Modifier.sysuiResTag("expanded_shade_header_day_date"),
+                )
+                // IchthysOS: the brightness toggles, in the dead space between the date and the
+                // status icons. This row is part of ShadeHeader.Elements.ExpandedContent, which only
+                // exists in this (expanded, QuickSettings-scene) header — CollapsedShadeHeader is a
+                // separate composable and is left untouched, so the buttons can never leak into the
+                // collapsed shade header or the status bar. With the SpaceBetween arrangement they
+                // simply take the middle slot; when qs_show_auto_brightness is off they emit
+                // nothing and the row is byte-for-byte the old two-child layout.
+                BrightnessToggleButtons(
+                    modifier = Modifier.sysuiResTag("expanded_shade_header_brightness_toggles"),
+                    tint = textColor,
                 )
                 ShadeHighlightChip {
                     val paddingEnd = with(LocalDensity.current) { 3.sp.toDp() }

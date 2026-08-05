@@ -62,6 +62,9 @@ constructor(
     private val secureSettings: SecureSettings,
 ) : AssistantRepository {
     override fun startAssistant(context: Context) {
+        // IchthysOS: no assistant on this device. AssistManager.startAssist() is already a
+        // no-op, but returning early here keeps the status-bar quick-action path honest.
+        if (ASSIST_DISABLED) return
         assistManager.startAssist(
             context,
             Bundle().apply {
@@ -86,10 +89,20 @@ constructor(
             // emit whenever the setting has changed
             .observerFlow(UserHandle.USER_ALL, SETTING)
             .emitOnStart()
-            .map { assistManager.getAssistInfoForUser(userInfo.id) }
+            // IchthysOS: always report "no assistant". AssistantIconInteractor hides the
+            // status-bar assistant icon whenever assistInfo is null, so this is what keeps that
+            // chip from ever appearing - including if the user (or a restored backup) ever set
+            // Settings.Secure.ASSISTANT to something.
+            .map { if (ASSIST_DISABLED) null else assistManager.getAssistInfoForUser(userInfo.id) }
             .flowOn(backgroundDispatcher)
 
     private companion object {
         private const val SETTING = Settings.Secure.ASSISTANT
+
+        /**
+         * IchthysOS: no assistant on this device. Plain `val`, not `const val`, so the early
+         * return above does not make the rest statically unreachable.
+         */
+        private val ASSIST_DISABLED = true
     }
 }

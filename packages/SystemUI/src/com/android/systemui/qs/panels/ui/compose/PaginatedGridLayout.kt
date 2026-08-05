@@ -36,7 +36,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.res.integerResource
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import com.android.compose.animation.scene.ContentScope
@@ -53,7 +52,6 @@ import com.android.systemui.qs.panels.ui.compose.toolbar.EditModeButton
 import com.android.systemui.qs.panels.ui.viewmodel.PaginatedGridViewModel
 import com.android.systemui.qs.panels.ui.viewmodel.TileViewModel
 import com.android.systemui.qs.panels.ui.viewmodel.toolbar.EditModeButtonViewModel
-import com.android.systemui.res.R
 import javax.inject.Inject
 
 class PaginatedGridLayout
@@ -78,7 +76,9 @@ constructor(
                 delegateGridLayout.viewModelFactory.create()
             }
 
-        val rows = integerResource(R.integer.quick_settings_paginated_grid_num_rows)
+        // IchthysOS: crDroid `qs_tiles_rows` / `qs_tiles_rows_landscape`, falling back to
+        // R.integer.quick_settings_paginated_grid_num_rows when unset. See QSRowsRepository.
+        val rows = viewModel.rows
         val pages =
             remember(tiles, rows, *delegateGridViewModel.pageKeys) {
                 delegateGridViewModel.splitIntoPages(tiles, rows)

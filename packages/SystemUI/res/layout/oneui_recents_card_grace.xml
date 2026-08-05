@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The Android Open Source Project. Licensed under the Apache License 2.0. -->
+<!--
+  Android 7.1.1 cascade card: a coloured header (icon, title, dismiss ✕) above the app snapshot,
+  with a dim overlay on top that CascadeLayoutManager fades in for cards further back.
+
+  Size and horizontal placement are deliberately NOT declared here. In 7.1.1 every TaskView is laid
+  out to the single derived mTaskRect — width = stack width minus 16dp side margins, height = stack
+  height minus the 128dp initial top offset and the bottom offset — and CascadeLayoutManager
+  reproduces that by measuring each card with exact specs and positioning it itself. Anything set
+  here would simply be overwritten.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/oneui_recents_grace_card_bg"
+    android:clipToOutline="true"
+    android:clickable="true"
+    android:focusable="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:id="@id/oneui_recents_card_header"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingHorizontal="16dp">
+
+            <ImageView
+                android:id="@id/oneui_recents_card_icon"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:layout_marginEnd="16dp"
+                android:scaleType="fitCenter"
+                android:contentDescription="@null" />
+
+            <TextView
+                android:id="@id/oneui_recents_card_title"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="#FFFFFFFF"
+                android:textSize="16sp" />
+
+            <!-- The precise way to close a task, next to the swipe. Sized to the 48dp minimum
+                 touch target — a glyph plus 8dp of padding is about 30dp across, which is a hard
+                 thing to hit on a card that is mostly covered by the one in front of it. The
+                 negative end margin keeps the ✕ itself where it looked before the target grew. -->
+            <TextView
+                android:id="@id/oneui_recents_card_dismiss"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="-9dp"
+                android:minWidth="48dp"
+                android:minHeight="48dp"
+                android:gravity="center"
+                android:padding="8dp"
+                android:text="✕"
+                android:textColor="#FFFFFFFF"
+                android:textSize="18sp"
+                android:clickable="true"
+                android:focusable="true" />
+
+        </LinearLayout>
+
+        <!-- MATRIX asks RecentsCardBinder for the 7.1.1 treatment: the snapshot scaled to the card
+             width and pinned to the top, so a tucked card shows the top of its last frame. This is
+             what TaskViewThumbnail#updateThumbnailScale did. -->
+        <ImageView
+            android:id="@id/oneui_recents_card_thumbnail"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:scaleType="matrix"
+            android:background="#FFFFFFFF"
+            android:contentDescription="@null" />
+
+    </LinearLayout>
+
+    <!-- Depth dim, driven by CascadeLayoutManager's dim curve (0.25 at the back of the stack, 0 at
+         the card sitting at the initial top offset, 0.15 towards the front). A separate overlay
+         rather than alpha on the card itself: 7.1.1 never fades a TaskView — getStackTransform
+         hard-assigns alpha 1f — and a translucent card would show the one behind it through its
+         own snapshot. -->
+    <View
+        android:id="@+id/oneui_recents_grace_dim"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#FF000000"
+        android:alpha="0" />
+
+</FrameLayout>

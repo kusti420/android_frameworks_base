@@ -99,10 +99,11 @@ constructor(
                 debugLog(LogConfig.DEBUG_ACTIONS) { "Preview tapped" }
                 uiEventLogger.log(SCREENSHOT_PREVIEW_TAPPED, 0, request.packageNameString)
                 onDeferrableActionTapped { result ->
-                    actionExecutor.startSharedTransition(
+                    // IchthysOS: use direct launch+dismiss instead of shared element
+                    // transition, which hangs if the editor doesn't support it
+                    actionExecutor.launchIntentAndDismiss(
                         actionIntentCreator.createEdit(result.uri),
                         result.user,
-                        true,
                     )
                 }
             }
@@ -163,10 +164,11 @@ constructor(
                 debugLog(LogConfig.DEBUG_ACTIONS) { "Edit tapped" }
                 uiEventLogger.log(SCREENSHOT_EDIT_TAPPED, 0, request.packageNameString)
                 onDeferrableActionTapped { result ->
-                    actionExecutor.startSharedTransition(
+                    // IchthysOS: use direct launch+dismiss instead of shared element
+                    // transition, which hangs if the editor doesn't support it
+                    actionExecutor.launchIntentAndDismiss(
                         actionIntentCreator.createEdit(result.uri),
                         result.user,
-                        true,
                     )
                 }
             }

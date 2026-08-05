@@ -22,6 +22,7 @@ import com.android.systemui.globalactions.ui.viewmodel.logoutGlobalActionViewMod
 import com.android.systemui.globalactions.ui.viewmodel.restartGlobalActionViewModelFactory
 import com.android.systemui.globalactions.ui.viewmodel.shutdownGlobalActionViewModelFactory
 import com.android.systemui.kosmos.Kosmos
+import com.android.systemui.kosmos.testCase
 import com.android.systemui.log.logcatLogBuffer
 
 val Kosmos.powerMenuViewModelFactory by
@@ -35,6 +36,7 @@ val Kosmos.powerMenuViewModelFactory by
                     logoutFactory = logoutGlobalActionViewModelFactory,
                     shutdownFactory = shutdownGlobalActionViewModelFactory,
                     restartFactory = restartGlobalActionViewModelFactory,
+                    contentResolver = testCase.context.contentResolver,
                 )
         }
     }

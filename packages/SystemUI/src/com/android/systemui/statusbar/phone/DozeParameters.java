@@ -173,6 +173,9 @@ public class DozeParameters implements
         tunerService.addTunable(
                 this,
                 Settings.Secure.DOZE_ALWAYS_ON,
+                // "Always show when charging" feeds into alwaysOnEnabled(), so a change to it has
+                // to refresh the cached mDozeAlwaysOn just like DOZE_ALWAYS_ON does.
+                Settings.Secure.DOZE_ON_CHARGE,
                 Settings.Secure.ACCESSIBILITY_DISPLAY_INVERSION_ENABLED);
         configurationController.addCallback(this);
         statusBarStateController.addCallback(this);
@@ -192,6 +195,13 @@ public class DozeParameters implements
                 @Override
                 public void onPowerSaveChanged(boolean isPowerSave) {
                     dispatchAlwaysOnEvent();
+                }
+
+                @Override
+                public void onBatteryLevelChanged(int level, boolean pluggedIn, boolean charging) {
+                    // With "always show when charging" on, alwaysOnEnabled() depends on the charger
+                    // state, which no settings observer would ever notify us about.
+                    updateDozeAlwaysOn();
                 }
             });
     }
@@ -456,10 +466,26 @@ public class DozeParameters implements
     public void onTuningChanged(String key, String newValue) {
         mDozeAlwaysOn = mAmbientDisplayConfiguration.alwaysOnEnabled(mUserTracker.getUserId());
 
-        if (key.equals(Settings.Secure.DOZE_ALWAYS_ON)) {
+        if (key.equals(Settings.Secure.DOZE_ALWAYS_ON)
+                || key.equals(Settings.Secure.DOZE_ON_CHARGE)) {
             updateControlScreenOff();
         }
 
+        dispatchAlwaysOnEvent();
+    }
+
+    /**
+     * Recomputes whether AOD should currently be on and notifies listeners if that changed. Unlike
+     * {@link #onTuningChanged}, this is driven by state outside of settings (charger connected).
+     */
+    private void updateDozeAlwaysOn() {
+        final boolean alwaysOn =
+                mAmbientDisplayConfiguration.alwaysOnEnabled(mUserTracker.getUserId());
+        if (alwaysOn == mDozeAlwaysOn) {
+            return;
+        }
+        mDozeAlwaysOn = alwaysOn;
+        updateControlScreenOff();
         dispatchAlwaysOnEvent();
     }
 

@@ -18,6 +18,7 @@ package com.android.server.theming;
 
 import static android.util.TypedValue.TYPE_INT_COLOR_ARGB8;
 
+import android.annotation.Nullable;
 import android.app.ActivityThread;
 import android.content.Context;
 import android.content.om.FabricatedOverlay;
@@ -38,6 +39,7 @@ import com.android.systemui.monet.ColorScheme;
 import com.android.systemui.monet.DynamicColors;
 
 import com.google.ux.material.libmonet.dynamiccolor.DynamicColor;
+import com.google.ux.material.libmonet.hct.Hct;
 
 import java.util.List;
 import java.util.Set;
@@ -62,6 +64,10 @@ public class ThemeOverlayHelper {
     // instead of forcing every surface to pure #000. Stepping the shades by elevation gives the
     // UI visual separation and subtle borders while staying clearly a very dark, accent-forward
     // theme. Values are opaque ARGB8.
+    //
+    // These are the FALLBACK ladder, used only when the seed is unusable (fully transparent, e.g.
+    // pure wallpaper theming). Normally the ladder is derived from the user's accent seed by
+    // {@link SurfaceLadder}, which tints these same rungs instead of leaving them neutral grey.
     private static final int PB_BLACK           = 0xFF000000; // background / dim / lowest surface
     private static final int PB_SURFACE         = 0xFF0A0A0A; // base surface / container low
     private static final int PB_CONTAINER       = 0xFF141414; // surface container / surface variant
@@ -69,6 +75,63 @@ public class ThemeOverlayHelper {
     private static final int PB_ELEVATED_HIGH   = 0xFF242424; // highest container
     private static final int PB_OUTLINE         = 0xFF333333; // subtle border
     private static final int PB_OUTLINE_VARIANT = 0xFF1F1F1F; // very subtle divider
+
+    // IchthysOS surface ladder: the dark rungs are derived from the user's accent seed rather than
+    // being flat greys, so blacks read blue/violet instead of dead grey. Two properties matter:
+    //
+    //  1. The ladder is HUE-AGNOSTIC. Whatever accent the user picks is the seed; nothing here is
+    //     tuned for one hue.
+    //  2. The surfaces stay in the SEED'S OWN hue family and are only NUDGED toward the cold side
+    //     of the wheel -- by a capped number of DEGREES, not by blending a fraction of the way to
+    //     a fixed anchor. An earlier version blended 55-85% toward blue, which drowned the seed:
+    //     every accent produced essentially the same blue-violet surfaces, which is exactly the
+    //     "far too blue" complaint. Capping the rotation keeps a fuchsia accent's surfaces plum,
+    //     a green accent's surfaces deep teal, and so on - a monochromatic ramp with a cold lean,
+    //     rather than a blue theme with a hint of accent.
+    //  3. The shift is LARGEST at the darkest rungs and eases off as they get lighter, so the
+    //     deepest surfaces read coolest and the elevated ones sit closest to the accent.
+    //
+    // Tone is HCT lightness, which is perceptually uniform, so rotating hue at a fixed tone keeps
+    // the rung's apparent brightness - the ramp's brightness steps stay even without hand-tuning.
+    private static final double SURFACE_HUE_ANCHOR = 265.0; // the "cold" direction (blue/indigo)
+    private static final double SURFACE_COLD_SHIFT_MAX = 30.0; // max degrees away from the seed
+    private static final double SURFACE_CHROMA = 10.0;      // research-backed: 8-12 gives "clearly
+                                                             // tinted on inspection, reads dark neutral"
+                                                             // without the muddy/brown risk of higher
+                                                             // values at low tones. 32 was far too high.
+    private static final double OUTLINE_CHROMA = 12.0;      // borders: visible tint, lower than before
+
+    // Abyss palette: two distinct surface ramps. Research-backed from Material Design 3 color
+    // science, CIEDE2000 perceptibility measurements, and AMOLED dark theme best practices.
+    //
+    //   DEFAULT (pitch-black OFF): tinted near-black surfaces — the cold-shifted hue rotation
+    //   is visible at these tones with SURFACE_CHROMA 10. Wider tone gaps than before give
+    //   clearer spatial hierarchy (research: stock MD3 uses +2/+4/+2/+5/+5 gaps; we shift the
+    //   whole ramp ~4 tones darker and widen the upper steps for more punch).
+    //
+    //   PITCH BLACK ON: OLED-black with neutral grey steps so elevated elements (search bar,
+    //   cards, dialogs) are distinguishable from the pixel-off background without any tint.
+    //   Research: at tone 0, the jump to tone 4 is already clearly visible on OLED because the
+    //   pixel-off-to-pixel-on transition creates a hard perceptual edge.
+    //
+    // Per-rung {tone when pitch black is ON, tone by default, share of SURFACE_COLD_SHIFT_MAX}.
+    // PB ON uses chroma 0 (neutral grey). PB OFF uses SURFACE_CHROMA with a cold-shifted hue.
+    private static final double[][] LADDER = {
+            {0.0,   4.0,  1.00}, // black:          window background / dim / lowest — OLED black
+            {0.0,   6.0,  0.90}, // surface:        base surface / container low — OLED black
+            {10.0, 10.0,  0.75}, // container:      surface container / search bar / cards
+            {14.0, 15.0,  0.60}, // elevated:       elevated container / surface bright
+            {18.0, 20.0,  0.50}, // elevated high:  dialogs, popups
+            {40.0, 50.0,  0.70}, // outline:        subtle border
+            {6.0,  25.0,  0.80}, // outline variant: very subtle divider
+    };
+    private static final int RUNG_BLACK = 0;
+    private static final int RUNG_SURFACE = 1;
+    private static final int RUNG_CONTAINER = 2;
+    private static final int RUNG_ELEVATED = 3;
+    private static final int RUNG_ELEVATED_HIGH = 4;
+    private static final int RUNG_OUTLINE = 5;
+    private static final int RUNG_OUTLINE_VARIANT = 6;
 
     private final OverlayManagerInternal mOverlayManager;
 
@@ -180,7 +243,8 @@ public class ThemeOverlayHelper {
                     // If what is on screen disagrees with the flag, treat the scheme as not applied
                     // so the overlay is regenerated. This is what makes the flag take effect at boot
                     // and toggle live.
-                    && colorsMatchPitchBlackState(res, darkScheme, isPitchBlackEnabled(userId));
+                    && colorsMatchPitchBlackState(res, darkScheme, isIchthysPaletteEnabled(userId),
+                            isIchthysPaletteEnabled(userId) && isPitchBlackEnabled(userId));
         } catch (Resources.NotFoundException e) {
             return false;
         }
@@ -329,51 +393,63 @@ public class ThemeOverlayHelper {
         FabricatedOverlay overlay = new FabricatedOverlay.Builder(ANDROID_PACKAGE,
                 OVERLAY_NAME_DYNAMIC + "_" + userId, ANDROID_PACKAGE).build();
 
-        // Custom Options "pitch black": when enabled, the dark end of the surface/background
-        // roles is forced to pure black so the whole system (QS, Settings and any app that
-        // follows the system dark theme) gets a true-black background. Additionally EVERY accent
-        // FILL role -- both the legacy tonal band (accent1/2/3 tones 100..700) and the Material
-        // dynamic primary/secondary/tertiary roles (incl. their dim/container/fixed variants) --
-        // is flattened to the single user-picked seed so the accent is ONE flat color everywhere
-        // (QS tiles, notifications, switches, links, buttons) instead of a Monet tonal spread,
-        // while the on-accent (on_*) roles flip to contrasting black/white to stay legible.
-        // This mirrors the SystemUI QS/shade blackening; the applied "android:dynamic_<user>"
-        // overlay generated here is what every app resolves system_* colors from.
-        final boolean pitchBlack = isPitchBlackEnabled(userId);
+        // IchthysOS "Abyss" palette (Theme Engine > palette style). When selected, the dark
+        // surface/background roles take a tinted near-black ladder derived from the user's accent
+        // seed instead of Monet's tonal surfaces, so the whole system (QS, Settings and any app
+        // that follows the system dark theme) gets cool, accent-flavoured blacks. Additionally
+        // EVERY accent FILL role -- both the legacy tonal band (accent1/2/3 tones 100..700) and the
+        // Material dynamic primary/secondary/tertiary roles (incl. their dim/container/fixed
+        // variants) -- is flattened to the single user-picked seed so the accent is ONE flat color
+        // everywhere (QS tiles, notifications, switches, links, buttons) instead of a Monet tonal
+        // spread, while the on-accent (on_*) roles flip to contrasting black/white to stay legible.
+        // The applied "android:dynamic_<user>" overlay generated here is what every app resolves
+        // system_* colors from.
+        //
+        // On Monet this is all skipped and the stock scheme is emitted untouched.
+        final boolean abyss = isIchthysPaletteEnabled(userId);
+
+        // "Pitch black" is now only a modifier ON TOP of Abyss: it drives the bottom rung of the
+        // ladder to true #000 for OLED. It no longer selects the palette, and it does nothing at
+        // all on Monet.
+        final boolean pureBlack = abyss && isPitchBlackEnabled(userId);
+
+        // IchthysOS: derive the tinted surface ladder from the seed once, so every role below sees
+        // the same ramp. Null when the seed is unusable -> the fixed grey fallback ladder.
+        final SurfaceLadder ladder = abyss ? SurfaceLadder.from(darkColorScheme, pureBlack) : null;
 
         // Neutral palette
         assignColorsToOverlay(overlay, DynamicColors.getAllNeutralPalette(),
-                lightColorScheme, darkColorScheme, pitchBlack);
+                lightColorScheme, darkColorScheme, abyss, ladder);
 
         // Accent palette
         assignColorsToOverlay(overlay, DynamicColors.getAllAccentPalette(),
-                lightColorScheme, darkColorScheme, pitchBlack);
+                lightColorScheme, darkColorScheme, abyss, ladder);
 
         //Themed Colors
         assignColorsToOverlay(overlay, DynamicColors.getAllDynamicColorsMapped(),
-                lightColorScheme, darkColorScheme, pitchBlack);
+                lightColorScheme, darkColorScheme, abyss, ladder);
 
         //Fixed Colors
         assignColorsToOverlay(overlay, DynamicColors.getFixedColorsMapped(),
-                lightColorScheme, darkColorScheme, pitchBlack);
+                lightColorScheme, darkColorScheme, abyss, ladder);
 
         //Custom Colors
         assignColorsToOverlay(overlay, DynamicColors.getCustomColorsMapped(),
-                lightColorScheme, darkColorScheme, pitchBlack);
+                lightColorScheme, darkColorScheme, abyss, ladder);
 
         return overlay;
     }
 
     private void assignColorsToOverlay(FabricatedOverlay overlay,
             List<Pair<String, DynamicColor>> colors, ColorScheme lightColorScheme,
-            ColorScheme darkColorScheme, boolean pitchBlack) {
+            ColorScheme darkColorScheme, boolean pitchBlack, @Nullable SurfaceLadder ladder) {
         for (Pair<String, DynamicColor> p : colors) {
             String prefix = "android:color/system_" + p.first;
             overlay.setResourceValue(prefix + "_light", TYPE_INT_COLOR_ARGB8,
                     p.second.getArgb(lightColorScheme.getMaterialScheme()), null);
             int darkArgb = p.second.getArgb(darkColorScheme.getMaterialScheme());
             if (pitchBlack) {
-                final Integer shade = pitchBlackShade(p.first);
+                final Integer shade = pitchBlackShade(p.first, ladder);
                 if (shade != null) {
                     darkArgb = shade;
                 } else {
@@ -381,7 +457,7 @@ public class ThemeOverlayHelper {
                     if (accent != null) {
                         darkArgb = accent;
                     } else if (isUngradedNeutralTone(p.first)) {
-                        darkArgb = desaturate(darkArgb);
+                        darkArgb = retintNeutral(darkArgb, ladder);
                     }
                 }
             }
@@ -395,15 +471,33 @@ public class ThemeOverlayHelper {
      * per-user context here. Any failure is treated as "disabled" so normal Monet is unaffected.
      */
     private boolean isPitchBlackEnabled(int userId) {
+        return readSecureFlag(userId, "custom_pitch_black", 0);
+    }
+
+    /**
+     * IchthysOS: whether the Abyss palette is selected in the Theme Engine
+     * (Settings.Secure {@code theme_engine_style_mode}: 0 = Monet, 1 = Abyss).
+     * <p>
+     * This, not {@code custom_pitch_black}, is what decides whether this ROM's own palette is
+     * generated. The two used to be the same switch, which meant the palette could only be had
+     * with a pure-black background and nobody on Monet could opt out of the ROM's extras. Now the
+     * mode picks the palette and {@code custom_pitch_black} only drives the bottom of the surface
+     * ladder to true black - see {@link #LADDER}.
+     */
+    private boolean isIchthysPaletteEnabled(int userId) {
+        return readSecureFlag(userId, "theme_engine_style_mode", 0);
+    }
+
+    /** Reads a per-user Secure int flag; any failure is treated as "off" so Monet is unaffected. */
+    private boolean readSecureFlag(int userId, String key, int def) {
         try {
             final Context ctx = ActivityThread.currentActivityThread().getSystemContext();
             if (ctx == null) {
                 return false;
             }
-            return Settings.Secure.getIntForUser(ctx.getContentResolver(),
-                    "custom_pitch_black", 0, userId) == 1;
+            return Settings.Secure.getIntForUser(ctx.getContentResolver(), key, def, userId) == 1;
         } catch (Exception e) {
-            Slog.w(TAG, "Failed to read custom_pitch_black", e);
+            Slog.w(TAG, "Failed to read " + key, e);
             return false;
         }
     }
@@ -417,47 +511,93 @@ public class ThemeOverlayHelper {
      * them to pure black (which reads flat), the shades step up by Material elevation so cards,
      * sheets and popups separate from the background and gain a subtle border.
      */
-    private static Integer pitchBlackShade(String name) {
+    private static Integer pitchBlackShade(String name, @Nullable SurfaceLadder ladder) {
+        final Integer rung = pitchBlackRung(name);
+        if (rung == null) {
+            return null;
+        }
+        return ladder != null ? ladder.rung(rung) : FALLBACK_LADDER[rung];
+    }
+
+    /** The fixed grey ladder used when the seed is unusable, indexed by {@code RUNG_*}. */
+    private static final int[] FALLBACK_LADDER = {
+            PB_BLACK, PB_SURFACE, PB_CONTAINER, PB_ELEVATED, PB_ELEVATED_HIGH,
+            PB_OUTLINE, PB_OUTLINE_VARIANT,
+    };
+
+    /**
+     * Maps a role name to its rung on the surface ladder ({@code RUNG_*}), or {@code null} when the
+     * role is not a pitch-black surface. Split out of {@link #pitchBlackShade} so the rung is
+     * decided by name alone and the actual colour comes from whichever ladder is in force.
+     */
+    private static Integer pitchBlackRung(String name) {
         switch (name) {
             // Darkest tier: window background and the lowest/dimmest surfaces stay true black.
             case "background":
             case "surface_dim":
             case "surface_container_lowest":
-                return PB_BLACK;
-            // Base surface tier.
+                return RUNG_BLACK;
+            // Base surface tier — everything that should be OLED-black in PB mode.
+            // surface_bright: Settings preference cards, SettingsLib banners/tabs.
+            // surface_container: Settings window background (colorBackground in
+            //   Theme.SettingsBase_v36 and the night-mode Theme.Settings.Home),
+            //   preference_background drawable, any materialColorSurfaceContainer user.
+            // surface_variant: chip/card variant backgrounds.
             case "surface":
             case "surface_container_low":
-                return PB_SURFACE;
-            // Standard container tier (cards, list items, surface variant).
-            case "surface_variant":
-            case "surface_container":
-                return PB_CONTAINER;
-            // Elevated tier (bottom sheets, menus, bright surface).
             case "surface_bright":
+            case "surface_container":
+            case "surface_variant":
+                return RUNG_SURFACE;
+            // IchthysOS: surface_container_high used by notification card backgrounds,
+            // bottom sheets, etc. — black in PB mode so notification cards don't
+            // show as grey (#242424) rectangles on the OLED-black shade.
             case "surface_container_high":
-                return PB_ELEVATED;
-            // Highest elevation tier (dialogs, popups).
+                return RUNG_SURFACE;
+            // Highest elevation tier — the only remaining visible-grey surface.
+            // Dialogs, popups, and the Settings search bar pill use this to
+            // stand out against the pure-black background.
             case "surface_container_highest":
-                return PB_ELEVATED_HIGH;
-            // Borders / dividers: subtle greys so edges are visible against black without glowing.
+                return RUNG_ELEVATED;
+            // Borders / dividers: tinted to match the surfaces so edges are visible against black
+            // without glowing.
             case "outline":
-                return PB_OUTLINE;
+                return RUNG_OUTLINE;
             case "outline_variant":
-                return PB_OUTLINE_VARIANT;
+                return RUNG_OUTLINE_VARIANT;
+            // IchthysOS: surfaceEffect colors are semi-transparent tinted overlays used as
+            // backgrounds for QS tiles, notification rows, toolbar buttons, shade panel,
+            // volume dialog, etc. Without this, their Monet-tinted alpha values bleed through
+            // on top of the black surfaces and make the background appear tinted / non-black.
+            // Map them to appropriate opaque ladder rungs so they become solid dark greys.
+            case "surface_effect_0":            // shade panel, volume dialog, pin bouncer bg
+            case "surface_effect_0_fallback":   // fallback for the above
+                return RUNG_BLACK;
+            case "surface_effect_1":            // QS tile bg, notification bg, toolbar, footer
+                return RUNG_SURFACE;
+            case "surface_effect_2":            // edit tile icon bg, text feedback
+                return RUNG_SURFACE;
+            case "surface_effect_3":            // subtle accent layer
+                return RUNG_SURFACE;
             // Dark end of the neutral tonal palettes (used as backgrounds by many apps). The Monet
             // engine tints these toward the seed; grade them to match the surface steps above.
             case "neutral1_1000":
             case "neutral2_1000":
-                return PB_BLACK;
+                return RUNG_BLACK;
             case "neutral1_900":
             case "neutral2_900":
-                return PB_SURFACE;
+                return RUNG_SURFACE;
+            // IchthysOS: neutral1_800 MUST map to the same rung as system_surface_dark
+            // because SettingsLib (v31) maps its settingslib_colorSurface to neutral1_800,
+            // which is what Settings uses for its main content area background. Without this
+            // the Settings background appears grey (#1b1b1b) while the search bar (which uses
+            // system_surface_dark = black) is darker than the area behind it — backwards.
             case "neutral1_800":
             case "neutral2_800":
-                return PB_CONTAINER;
+                return RUNG_SURFACE;
             case "neutral1_700":
             case "neutral2_700":
-                return PB_ELEVATED;
+                return RUNG_CONTAINER;
             default:
                 return null;
         }
@@ -480,8 +620,113 @@ public class ThemeOverlayHelper {
         if (!name.startsWith("neutral1_") && !name.startsWith("neutral2_")) {
             return false;
         }
-        // pitchBlackShade already fixes 700..1000; everything below it just loses its tint.
-        return pitchBlackShade(name) == null;
+        // pitchBlackRung already fixes 700..1000; everything below it gets retinted onto the ladder.
+        return pitchBlackRung(name) == null;
+    }
+
+    /**
+     * IchthysOS: the pitch-black surface ladder, derived once per overlay generation from the
+     * user's accent seed. See {@link #LADDER} for the shape of the ramp and why the hue is blended
+     * toward a fixed anchor instead of taken straight from the seed.
+     */
+    private static final class SurfaceLadder {
+        private final double mSeedHue;
+        private final int[] mRungs;
+        private final boolean mPureBlack;
+
+        private SurfaceLadder(double seedHue, boolean pureBlackBackground) {
+            mSeedHue = seedHue;
+            mPureBlack = pureBlackBackground;
+            mRungs = new int[LADDER.length];
+            for (int i = 0; i < LADDER.length; i++) {
+                final double tone = pureBlackBackground ? LADDER[i][0] : LADDER[i][1];
+                // Pitch black ON: zero chroma so steps are pure neutral grey, no tint.
+                // Pitch black OFF: full chroma so the cold-shifted hue is visible.
+                final double chroma;
+                if (pureBlackBackground) {
+                    // Outlines keep a hint of tint even in PB mode for subtle visual coherence.
+                    chroma = (i == RUNG_OUTLINE) ? OUTLINE_CHROMA : 0.0;
+                } else {
+                    chroma = (i == RUNG_OUTLINE || i == RUNG_OUTLINE_VARIANT)
+                            ? OUTLINE_CHROMA : SURFACE_CHROMA;
+                }
+                // Hct clamps chroma to what the tone can actually hold, so the darkest rungs come
+                // back near-neutral on their own rather than being forced to an impossible colour.
+                mRungs[i] = Hct.from(blendedHue(LADDER[i][2]), chroma, tone).toInt();
+            }
+        }
+
+        /**
+         * Hue for a rung: the seed's own hue, nudged toward the cold side of the wheel by
+         * {@code coldFactor} of {@link #SURFACE_COLD_SHIFT_MAX} degrees.
+         */
+        double blendedHue(double coldFactor) {
+            return coldShiftedHue(mSeedHue, coldFactor);
+        }
+
+        /** The opaque colour for a {@code RUNG_*} index. */
+        int rung(int index) {
+            return 0xFF000000 | (mRungs[index] & 0x00FFFFFF);
+        }
+
+        /** Whether this ladder was built for pitch-black (OLED) mode. */
+        boolean isPureBlack() {
+            return mPureBlack;
+        }
+
+        /**
+         * Builds the ladder for {@code darkColorScheme}, or {@code null} when the seed is unusable
+         * so callers fall back to the fixed grey {@link #FALLBACK_LADDER}.
+         */
+        @Nullable
+        static SurfaceLadder from(ColorScheme darkColorScheme, boolean pureBlackBackground) {
+            final Integer seed = flatAccentSeed(darkColorScheme);
+            return seed == null ? null
+                    : new SurfaceLadder(Hct.fromInt(seed).getHue(), pureBlackBackground);
+        }
+    }
+
+    /**
+     * Rotates {@code seedHue} toward the cold anchor along the shorter arc, capped at
+     * {@link #SURFACE_COLD_SHIFT_MAX} degrees and then scaled by {@code coldFactor}.
+     * <p>
+     * The cap is the point: blending a fraction of the way to the anchor makes every seed converge
+     * on the anchor's hue, so all accents end up with the same blue surfaces. Capping the rotation
+     * in degrees keeps each surface in its seed's family - a fuchsia seed leans violet, a green one
+     * leans teal - which is what makes the ramp read as monochromatic-with-a-cold-lean.
+     * <p>
+     * Taking the shorter arc means a warm seed rotates through red/magenta rather than sweeping the
+     * long way round through green; for hues roughly opposite the anchor that is "away from warm"
+     * rather than literally bluer, which still reads as a cohesive deepening of the accent.
+     */
+    private static double coldShiftedHue(double seedHue, double coldFactor) {
+        final double delta = ((SURFACE_HUE_ANCHOR - seedHue + 540.0) % 360.0) - 180.0;
+        final double capped =
+                Math.max(-SURFACE_COLD_SHIFT_MAX, Math.min(SURFACE_COLD_SHIFT_MAX, delta));
+        final double result = (seedHue + capped * coldFactor) % 360.0;
+        return result < 0 ? result + 360.0 : result;
+    }
+
+    /**
+     * IchthysOS: moves an ungraded neutral tone onto the surface ladder's hue instead of stripping
+     * its colour. Keeps the token's own tone, because its consumers re-lighten it: androidx Material
+     * derives its entire dark surface set from {@code neutral1_600} by keeping hue/chroma and
+     * overriding only lightness.
+     * <p>
+     * When pitch black is ON, the neutral palette must be fully desaturated (chroma 0) so Material
+     * apps (Settings, etc.) derive pure neutral grey surfaces from it. Without this, neutral1_600
+     * keeps its Monet chroma and Material derives tinted surfaces that make Settings backgrounds
+     * appear coloured instead of black. When PB is OFF, retinting carries the Abyss tinted blacks
+     * into Material-library apps.
+     */
+    private static int retintNeutral(int argb, @Nullable SurfaceLadder ladder) {
+        if (ladder == null || ladder.isPureBlack()) {
+            // No ladder or PB ON: strip all chroma so Material apps get pure neutral greys.
+            return desaturate(argb);
+        }
+        final double tone = Hct.fromInt(argb).getTone();
+        final int tinted = Hct.from(ladder.blendedHue(0.75), SURFACE_CHROMA, tone).toInt();
+        return (argb & 0xFF000000) | (tinted & 0x00FFFFFF);
     }
 
     /**
@@ -631,12 +876,29 @@ public class ThemeOverlayHelper {
      * luminance so on-accent text/icons stay legible regardless of which accent the user picked.
      */
     private static int onAccentColor(int seedArgb) {
-        final int r = (seedArgb >> 16) & 0xFF;
-        final int g = (seedArgb >> 8) & 0xFF;
-        final int b = seedArgb & 0xFF;
-        // Cheap, dependency-free BT.601 luma. Light seed -> black on-accent, dark seed -> white.
-        final double luma = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0;
-        return luma > 0.5 ? 0xFF000000 : 0xFFFFFFFF;
+        // IchthysOS: pick whichever of black/white actually contrasts more, by WCAG relative
+        // luminance and contrast ratio, rather than by a BT.601 luma threshold. BT.601 is a
+        // gamma-encoded broadcast weighting, so it misjudges saturated hues -- a mid blue and a
+        // mid yellow of equal luma need OPPOSITE on-colours, and its 0.5 cut got that wrong near
+        // the boundary. Every on-X contrasting with its X is the one hard contract of this theme
+        // (it is what keeps icons visible), so it should not depend on hand-tuning per hue.
+        final double l = relativeLuminance(seedArgb);
+        final double contrastWithBlack = (l + 0.05) / 0.05;
+        final double contrastWithWhite = 1.05 / (l + 0.05);
+        return contrastWithBlack >= contrastWithWhite ? 0xFF000000 : 0xFFFFFFFF;
+    }
+
+    /** WCAG 2.x relative luminance of an opaque colour, in [0, 1]. */
+    private static double relativeLuminance(int argb) {
+        return 0.2126 * linearize((argb >> 16) & 0xFF)
+                + 0.7152 * linearize((argb >> 8) & 0xFF)
+                + 0.0722 * linearize(argb & 0xFF);
+    }
+
+    /** Undoes sRGB gamma encoding for one 8-bit channel. */
+    private static double linearize(int channel) {
+        final double s = channel / 255.0;
+        return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
     }
 
     /**
@@ -647,7 +909,7 @@ public class ThemeOverlayHelper {
      * and the transition round-trips in both directions.
      */
     private boolean colorsMatchPitchBlackState(Resources res, ColorScheme darkScheme,
-            boolean pitchBlack) {
+            boolean pitchBlack, boolean pureBlack) {
         final int background = res.getColor(android.R.color.system_background_dark);
         final int surface = res.getColor(android.R.color.system_surface_dark);
         final int container = res.getColor(android.R.color.system_surface_container_dark);
@@ -684,11 +946,14 @@ public class ThemeOverlayHelper {
                     && primaryContainer == seed
                     && onPrimary == onAccentColor(seed)
                     && accent1On == onAccentColor(seed));
-            return background == PB_BLACK
-                    && surface == PB_SURFACE
-                    && container == PB_CONTAINER
-                    && neutral1Mid == desaturate(darkScheme.getNeutral1().getS500())
-                    && neutral2Mid == desaturate(darkScheme.getNeutral2().getS500())
+            // IchthysOS: assert against the seed-derived ladder, not the fixed greys - otherwise
+            // every generation would compare unequal and the scheme would regenerate forever.
+            final SurfaceLadder ladder = SurfaceLadder.from(darkScheme, pureBlack);
+            return background == pitchBlackShade("background", ladder)
+                    && surface == pitchBlackShade("surface", ladder)
+                    && container == pitchBlackShade("surface_container", ladder)
+                    && neutral1Mid == retintNeutral(darkScheme.getNeutral1().getS500(), ladder)
+                    && neutral2Mid == retintNeutral(darkScheme.getNeutral2().getS500(), ladder)
                     && accentsMatch;
         }
         return background == darkScheme.getMaterialScheme().getBackground()

@@ -131,6 +131,13 @@ public class ThemeEventObserver {
                 Settings.Secure.getUriFor(Settings.Secure.THEME_CUSTOMIZATION_OVERLAY_PACKAGES),
                 false, mThemeSettingsObserver, UserHandle.USER_ALL);
 
+        // IchthysOS: observe the pitch-black toggle so the system_server overlay regenerates
+        // when the user flips it. Without this, only SystemUI's overlay (which is not active)
+        // reacts, and the active android:dynamic_0 overlay stays stale.
+        resolver.registerContentObserver(
+                Settings.Secure.getUriFor("custom_pitch_black"),
+                false, mThemeSettingsObserver, UserHandle.USER_ALL);
+
         // Overlay Changes
         final IntentFilter filter = new IntentFilter();
         filter.addAction(Intent.ACTION_OVERLAY_CHANGED);

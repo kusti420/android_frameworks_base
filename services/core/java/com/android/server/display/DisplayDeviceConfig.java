@@ -2077,6 +2077,18 @@ public class DisplayDeviceConfig {
                 .loadRefreshRateData(null, mContext.getResources());
         loadBrightnessChangeThresholdsFromXml();
         loadAutoBrightnessConfigsFromConfigXml();
+        // The auto-brightness light debounce is only loaded by loadAutoBrightnessConfigValues(),
+        // which is exclusive to the DDC path. Without this, a device with no display config XML
+        // keeps INVALID_AUTO_BRIGHTNESS_LIGHT_DEBOUNCE (-1) forever, which makes
+        // AutomaticBrightnessController's next{Brightening,Darkening}Transition always fall in
+        // the past, i.e. auto-brightness runs with *no* debounce at all and reacts to every
+        // transient light change. Passing null makes these read config.xml, which is exactly
+        // what the config.xml fallback path is supposed to do.
+        loadAutoBrightnessBrighteningLightDebounce(/* autoBrightnessConfig= */ null);
+        loadAutoBrightnessDarkeningLightDebounce(/* autoBrightnessConfig= */ null);
+        // Idle must be called after interactive, since we fall back to it if needed.
+        loadAutoBrightnessBrighteningLightDebounceIdle(/* autoBrightnessConfig= */ null);
+        loadAutoBrightnessDarkeningLightDebounceIdle(/* autoBrightnessConfig= */ null);
         loadAutoBrightnessAvailableFromConfigXml();
         loadRefreshRateSetting(null);
         loadBrightnessCapForWearBedtimeModeFromConfigXml();

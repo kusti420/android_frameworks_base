@@ -102,21 +102,23 @@ private fun platformColorScheme(isDarkTheme: Boolean, context: Context): ColorSc
                     errorContainer = color(context, R.color.system_error_container_dark),
                     onErrorContainer = color(context, R.color.system_on_error_container_dark),
                 )
-        // Custom Options "pitch black": pure-black surfaces, white text, and the vivid seed accent
-        // (overriding Monet's pale dark-mode tones).
+        // IchthysOS: both Abyss modes (pitch-black ON and OFF) read surface colours from the
+        // system overlay resources set by ThemeOverlayHelper's LADDER. No hardcoded Color.Black —
+        // the overlay already encodes the right ramp (OLED black + grey steps for PB ON, tinted
+        // surfaces for PB OFF). Accent and on-surface overrides still apply for the flat-accent look.
         if (Settings.Secure.getInt(context.contentResolver, "custom_pitch_black", 0) == 1) {
             val accent = pitchBlackAccent(context)
             scheme.copy(
-                background = Color.Black,
-                surface = Color.Black,
-                surfaceDim = Color.Black,
-                surfaceBright = Color.Black,
-                surfaceContainer = Color.Black,
-                surfaceContainerLow = Color.Black,
-                surfaceContainerLowest = Color.Black,
-                surfaceContainerHigh = Color.Black,
-                surfaceContainerHighest = Color.Black,
-                surfaceVariant = Color.Black,
+                background = color(context, android.R.color.system_background_dark),
+                surface = color(context, android.R.color.system_surface_dark),
+                surfaceDim = color(context, android.R.color.system_surface_dim_dark),
+                surfaceBright = color(context, android.R.color.system_surface_bright_dark),
+                surfaceContainer = color(context, android.R.color.system_surface_container_dark),
+                surfaceContainerLow = color(context, android.R.color.system_surface_container_low_dark),
+                surfaceContainerLowest = color(context, android.R.color.system_surface_container_lowest_dark),
+                surfaceContainerHigh = color(context, android.R.color.system_surface_container_high_dark),
+                surfaceContainerHighest = color(context, android.R.color.system_surface_container_highest_dark),
+                surfaceVariant = color(context, android.R.color.system_surface_variant_dark),
                 onSurface = Color.White,
                 onSurfaceVariant = Color.White,
                 onBackground = Color.White,

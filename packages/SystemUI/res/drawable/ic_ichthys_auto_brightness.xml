@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    IchthysOS: adaptive (automatic) brightness ON.
+
+    There is no auto-brightness glyph in SystemUI's drawables (only the ic_brightness_low/medium/full
+    level-list, which the slider track already uses for the *current* level), so this is authored
+    rather than reused: reusing a level icon here would read as "brightness amount", not "mode".
+
+    Shape: sun rays around a ring with an "A" inside. The OFF sibling keeps the identical ray
+    geometry and swaps the ring+A for a solid disc, so the two states read as one button changing
+    rather than two different icons. No android:tint here on purpose - the colour is supplied by the
+    Compose Icon() tint so the button can dim itself when disabled.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+  <!-- Rays. Inner ends stop short of the ring (ring outer edge sits ~6.0 from centre). -->
+  <path
+      android:strokeColor="#FFFFFFFF"
+      android:strokeWidth="1.7"
+      android:strokeLineCap="round"
+      android:pathData="M12,2.4L12,4.9 M12,19.1L12,21.6 M2.4,12L4.9,12 M19.1,12L21.6,12 M5.75,5.75L7.5,7.5 M16.5,16.5L18.25,18.25 M18.25,5.75L16.5,7.5 M7.5,16.5L5.75,18.25" />
+  <!-- Sun body drawn as a ring so the "A" inside stays legible. -->
+  <path
+      android:strokeColor="#FFFFFFFF"
+      android:strokeWidth="1.6"
+      android:pathData="M6.9,12A5.1,5.1 0 1,1 17.1,12A5.1,5.1 0 1,1 6.9,12Z" />
+  <!-- "A" = automatic. -->
+  <path
+      android:strokeColor="#FFFFFFFF"
+      android:strokeWidth="1.35"
+      android:strokeLineCap="round"
+      android:strokeLineJoin="round"
+      android:pathData="M10.05,14.4L12,9.7L13.95,14.4 M10.7,12.85L13.3,12.85" />
+</vector>

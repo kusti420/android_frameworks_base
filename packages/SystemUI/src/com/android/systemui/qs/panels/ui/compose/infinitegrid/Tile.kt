@@ -46,6 +46,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -85,6 +86,9 @@ import com.android.systemui.animation.Expandable
 import com.android.systemui.animation.TransitionAnimator.Companion.dynamicTargetResolutionEnabled
 import com.android.systemui.common.shared.model.Icon
 import com.android.systemui.compose.modifiers.sysuiResTag
+import com.android.systemui.gradient.diagonalBrush
+import com.android.systemui.gradient.paletteFor
+import com.android.systemui.gradient.rememberGradientConfig
 import com.android.systemui.haptics.msdl.qs.TileHapticsViewModel
 import com.android.systemui.lifecycle.rememberViewModel
 import com.android.systemui.qs.flags.QsDetailedView
@@ -178,6 +182,25 @@ fun ContentScope.Tile(
             rememberViewModel(traceName = "TileHapticsViewModel") {
                 tileHapticsViewModelFactory.create(tile)
             }
+        // IchthysOS: crDroid `qs_tile_haptic` (default on). All tile haptics in this file are routed
+        // through TileHapticsViewModel.setTileInteractionState — the clickables below pass
+        // hapticFeedbackEnabled = false — so gating those calls disables tile haptics entirely
+        // without touching the shared MSDL player.
+        val hapticEnabled = rememberQsTileHapticEnabled()
+        // IchthysOS: crDroid `qs_panel_style`. CARD (default) is this ROM's 8.1 look: transparent
+        // container, accent bubble behind the icon. CLASSIC paints the container instead and
+        // QsTileIconBubble drops the bubble, giving the classic filled QS tile.
+        val panelStyle = rememberQsPanelStyle()
+        // IchthysOS: crDroid `qs_tile_animation_style` — a one-shot effect played on the tile
+        // content when it is tapped. NONE (default) adds nothing.
+        val clickAnimation = rememberQsTileClickAnimation()
+        // IchthysOS: crDroid `qs_tile_gradient`. In CARD style the gradient lives on the icon bubble
+        // (QsTileIconBubble); in CLASSIC style the bubble is gone, so the tile container carries it
+        // instead. The gradient is painted inside the container rather than handed to the Expandable
+        // because the Expandable controller only takes a flat Color — that flat color stays correct
+        // for the tile -> dialog launch animation.
+        val gradientEnabled = rememberQsTileGradientEnabled()
+        val gradientConfig = rememberGradientConfig()
 
         // TODO(b/361789146): Draw the shapes instead of clipping
         val tileShape by TileDefaults.animateTileShapeAsState(uiState)
@@ -229,7 +252,12 @@ fun ContentScope.Tile(
                 // expanded QS grid (verticalLabel) and the collapsed QQS row (iconOnly) so the
                 // circle is a child bubble in both states and the QQS→QS shared-element transition
                 // has nothing to pop — only the bubble's position shifts and the label fades in.
-                color = { if (verticalLabel || iconOnly) Color.Transparent else animatedColor },
+                // IchthysOS: unless the user picked "Classic style" (qs_panel_style), which brings
+                // the filled container back for every tile.
+                color = {
+                    if (panelStyle == QSPanelStyle.CLASSIC) animatedColor
+                    else if (verticalLabel || iconOnly) Color.Transparent else animatedColor
+                },
                 shape = tileShape,
                 squishiness = squishiness,
                 hapticsViewModel = hapticsViewModel,
@@ -256,9 +284,11 @@ fun ContentScope.Tile(
                 val useLongClickToSettings = !(iconOnly && isDualTarget && isClickable)
                 val longClick: (() -> Unit)? =
                     {
-                            hapticsViewModel.setTileInteractionState(
-                                TileHapticsViewModel.TileInteractionState.LONG_CLICKED
-                            )
+                            if (hapticEnabled) {
+                                hapticsViewModel.setTileInteractionState(
+                                    TileHapticsViewModel.TileInteractionState.LONG_CLICKED
+                                )
+                            }
 
                             if (useLongClickToSettings) {
                                 tile.settingsClick(expandable)
@@ -297,9 +327,12 @@ fun ContentScope.Tile(
                             }
 
                             // Side effects of the click
-                            hapticsViewModel.setTileInteractionState(
-                                TileHapticsViewModel.TileInteractionState.CLICKED
-                            )
+                            if (hapticEnabled) {
+                                hapticsViewModel.setTileInteractionState(
+                                    TileHapticsViewModel.TileInteractionState.CLICKED
+                                )
+                            }
+                            clickAnimation.play(coroutineScope)
 
                             coroutineScope.launch {
                                 // Bounce the content of the tile if we're not animating the
@@ -317,7 +350,19 @@ fun ContentScope.Tile(
                     accessibilityUiState = uiState.accessibilityUiState,
                     iconOnly = iconOnly,
                     isDualTarget = isDualTarget,
-                    modifier = contentRevealModifier,
+                    // IchthysOS: the qs_tile_animation_style effect rides on the tile *content*, as
+                    // a draw-time graphicsLayer transform, so it never relayouts the grid and can't
+                    // fight the QQS <-> QS shared-element morph. The classic-style gradient fill is
+                    // drawn here too, so it lands inside the container's clip and behind the icon.
+                    modifier =
+                        contentRevealModifier
+                            .qsTileClickAnimation(clickAnimation)
+                            .thenIf(gradientEnabled && panelStyle == QSPanelStyle.CLASSIC) {
+                                Modifier.background(
+                                    gradientConfig.paletteFor(animatedColor).diagonalBrush(),
+                                    tileShape,
+                                )
+                            },
                 ) {
                     val iconProvider: Context.() -> Icon = { getTileIcon(icon = icon) }
                     if (verticalLabel) {
@@ -350,9 +395,12 @@ fun ContentScope.Tile(
                         val iconShape by TileDefaults.animateIconShapeAsState(uiState)
                         val secondaryClick: (() -> Unit)? =
                             {
-                                    hapticsViewModel.setTileInteractionState(
-                                        TileHapticsViewModel.TileInteractionState.CLICKED
-                                    )
+                                    if (hapticEnabled) {
+                                        hapticsViewModel.setTileInteractionState(
+                                            TileHapticsViewModel.TileInteractionState.CLICKED
+                                        )
+                                    }
+                                    clickAnimation.play(coroutineScope)
                                     tile.toggleClick()
                                 }
                                 .takeIf { isDualTarget }
@@ -564,24 +612,25 @@ private object TileDefaults {
             icon = MaterialTheme.colorScheme.onPrimary,
         )
 
-    /** An active tile with dual target only show the active color on the icon */
+    /** An active tile with dual target — IchthysOS: match regular active tiles */
     @Composable
     @ReadOnlyComposable
     fun activeDualTargetTileColors(): TileColors =
         TileColors(
-            background = LocalAndroidColorScheme.current.surfaceEffect1,
+            background = MaterialTheme.colorScheme.primary,
             iconBackground = MaterialTheme.colorScheme.primary,
-            label = MaterialTheme.colorScheme.onSurface,
-            secondaryLabel = MaterialTheme.colorScheme.onSurface,
+            label = MaterialTheme.colorScheme.onPrimary,
+            secondaryLabel = MaterialTheme.colorScheme.onPrimary,
             icon = MaterialTheme.colorScheme.onPrimary,
         )
 
+    /** An inactive tile with dual target — IchthysOS: match regular inactive tiles */
     @Composable
     @ReadOnlyComposable
     fun inactiveDualTargetTileColors(): TileColors =
         TileColors(
             background = LocalAndroidColorScheme.current.surfaceEffect1,
-            iconBackground = LocalAndroidColorScheme.current.surfaceEffect2,
+            iconBackground = Color.Transparent,
             label = MaterialTheme.colorScheme.onSurface,
             secondaryLabel = MaterialTheme.colorScheme.onSurface,
             icon = MaterialTheme.colorScheme.onSurface,
@@ -664,7 +713,20 @@ private object TileDefaults {
 
     @Composable
     fun animateTileShapeAsState(uiState: TileUiState): State<RoundedCornerShape> {
-        return animateShapeAsState(targetValue = tileRadius(uiState), label = "QSTileCornerRadius")
+        val animated =
+            animateShapeAsState(targetValue = tileRadius(uiState), label = "QSTileCornerRadius")
+        // IchthysOS: crDroid `qs_tile_shape` replaces the stock state-animated corner radius with a
+        // fixed one. "Dynamic" (the default) yields null and keeps the animation.
+        //
+        // Resolved through derivedStateOf rather than an `if` around the return so that both
+        // composables above are always called (stable slot ordering) and, crucially, so
+        // `animated.value` is only read when no override is set — reading it unconditionally would
+        // recompose every tile on every frame of the corner-radius animation.
+        val override = rememberQsTileShapeOverride()
+        val overrideState = rememberUpdatedState(override)
+        return remember(animated, overrideState) {
+            derivedStateOf { overrideState.value ?: animated.value }
+        }
     }
 
     @Composable

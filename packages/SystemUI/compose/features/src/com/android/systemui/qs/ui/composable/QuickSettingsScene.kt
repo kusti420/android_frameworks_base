@@ -413,25 +413,27 @@ private fun ContentScope.QuickSettingsContent(
                             .align(Alignment.TopCenter)
                             .sysuiResTag("expanded_qs_scroll_view")
                 ) {
-                    with(LocalWindowSizeClass.current) {
-                        when {
-                            isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND) ->
-                                CollapsedShadeHeader(
-                                    viewModel = headerViewModel,
-                                    isSplitShade = false,
-                                )
-                            else ->
-                                ExpandedShadeHeader(
-                                    viewModel = headerViewModel,
-                                    modifier = Modifier.padding(horizontal = 16.dp),
-                                )
-                        }
+                    // IchthysOS: only the expanded header has the empty gap that now hosts the
+                    // brightness toggles, so the wide layout — which shows the collapsed header
+                    // instead — keeps them at the end of the brightness row as before.
+                    val usesCollapsedHeader =
+                        LocalWindowSizeClass.current.isWidthAtLeastBreakpoint(
+                            WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND
+                        )
+                    if (usesCollapsedHeader) {
+                        CollapsedShadeHeader(viewModel = headerViewModel, isSplitShade = false)
+                    } else {
+                        ExpandedShadeHeader(
+                            viewModel = headerViewModel,
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                        )
                     }
                     Spacer(modifier = Modifier.height(16.dp))
                     QuickSettingsContent(
                         viewModel.qsContainerViewModel,
                         mediaInRow,
                         Modifier.padding(horizontal = shadeHorizontalPadding),
+                        showBrightnessToggles = usesCollapsedHeader,
                     )
                 }
             }

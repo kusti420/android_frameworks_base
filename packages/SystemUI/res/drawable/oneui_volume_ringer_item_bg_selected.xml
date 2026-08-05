@@ -16,9 +16,11 @@
 
 <!-- Custom Options: One UI selected ringer button - the SAME neutral-dark fill as the unselected
      state but a fuller corner radius, so selection reads through the rounder shape and the accent
-     icon tint (the fill itself never turns accent). Original asset. -->
+     icon tint (the fill itself never turns accent). The 6dp inset shrinks the 48dp drawer button to a
+     36dp well - the width of the One UI slider capsule - and at that size the 20dp selected radius
+     clamps to a full circle, so selection reads as "rounded square -> circle". Original asset. -->
 <inset xmlns:android="http://schemas.android.com/apk/res/android"
-    android:inset="4dp">
+    android:inset="6dp">
     <shape android:shape="rectangle">
         <corners android:radius="@dimen/volume_dialog_ringer_selected_button_background_radius" />
         <size

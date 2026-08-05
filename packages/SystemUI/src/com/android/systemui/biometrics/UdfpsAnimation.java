@@ -36,7 +36,6 @@ import android.view.Gravity;
 import android.view.WindowManager;
 import android.widget.ImageView;
 
-import com.android.systemui.Dependency;
 import com.android.systemui.res.R;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 
@@ -97,12 +96,13 @@ public class UdfpsAnimation extends ImageView {
     };
 
     public UdfpsAnimation(Context context, WindowManager windowManager,
-            FingerprintSensorPropertiesInternal props) {
+            FingerprintSensorPropertiesInternal props,
+            KeyguardStateController keyguardStateController) {
         super(context);
         mContext = context;
         mWindowManager = windowManager;
         mProps = props;
-        mKeyguardStateController = Dependency.get(KeyguardStateController.class);
+        mKeyguardStateController = keyguardStateController;
 
         mAnimationSize = mContext.getResources()
                 .getDimensionPixelSize(R.dimen.udfps_animation_size);
