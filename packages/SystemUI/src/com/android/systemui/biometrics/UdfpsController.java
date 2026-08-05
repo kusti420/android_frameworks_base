@@ -1347,15 +1347,49 @@ public class UdfpsController implements DozeReceiver, Dumpable {
         }
     }
 
+    /**
+     * IchthysOS: how dark the surround has to be so the screen looks unchanged when the panel
+     * jumps to fingerprint HBM.
+     *
+     * <p>{@code mask_brightness} drives the WHOLE panel to a fixed ~547 nits — there is no hardware
+     * way to light only the sensor area (verified: writing mask_brightness with no software circle
+     * brightens the screen uniformly). So to keep the rest of the screen looking the same, the
+     * overlay has to cancel out the ratio between the user's brightness and the HBM level. At low
+     * brightness that jump is huge, so the dim must be near-opaque; at max brightness it is small,
+     * so barely any dim is needed. Without this the screen visibly flashes on every touch, worst at
+     * low brightness.
+     */
+    private int computeAutoDimAlpha() {
+        try {
+            final int max = mContext.getResources().getInteger(
+                    com.android.internal.R.integer.config_screenBrightnessSettingMaximum);
+            final int cur = android.provider.Settings.System.getIntForUser(
+                    mContext.getContentResolver(),
+                    android.provider.Settings.System.SCREEN_BRIGHTNESS,
+                    max, UserHandle.USER_CURRENT);
+            if (max <= 0) {
+                return DEFAULT_DIM_ALPHA;
+            }
+            // Fraction of the HBM level the screen is already at. Clamped so we never fully black
+            // the screen out and never leave it completely undimmed.
+            final float ratio = Math.max(0f, Math.min(1f, (float) cur / (float) max));
+            final int alpha = Math.round((1f - ratio) * 255f);
+            return Math.max(40, Math.min(235, alpha));
+        } catch (RuntimeException e) {
+            Log.w(TAG, "computeAutoDimAlpha failed, using default", e);
+            return DEFAULT_DIM_ALPHA;
+        }
+    }
+
+    private static final int DEFAULT_DIM_ALPHA = 180;
+
     private void showDimLayer() {
         if (mFodDimView != null) {
             return;
         }
-        // Default 0 = no dim. The dim layer was only ever a crutch for the
-        // mispositioned illumination disc (see FLAG_LAYOUT_IN_SCREEN above);
-        // with the disc correctly over the sensor, enrollment and auth both
-        // work with the screen at normal brightness, matching stock OneUI.
-        final int alpha = SystemProperties.getInt(PROP_DIM_ALPHA, 0);
+        // -1 (default) = derive the dim from the current screen brightness; >=0 pins it.
+        final int configured = SystemProperties.getInt(PROP_DIM_ALPHA, -1);
+        final int alpha = configured >= 0 ? configured : computeAutoDimAlpha();
         if (alpha <= 0) {
             return;
         }
