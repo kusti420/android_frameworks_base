@@ -92,6 +92,7 @@ import com.android.systemui.res.R
 import com.android.systemui.scene.ui.view.WindowRootView
 import com.android.systemui.shade.ui.composable.VariableDayDate
 import com.android.systemui.statusbar.BatteryBarView
+import com.android.systemui.statusbar.CutoutRingView
 import com.android.systemui.statusbar.NetworkTraffic
 import com.android.systemui.statusbar.StatusBarWeather
 import com.android.systemui.statusbar.StatusBarAlwaysUseRegionSampling
@@ -666,6 +667,20 @@ private fun addCrDroidStatusBarViews(
                 )
         }
     phoneStatusBarView.addView(batteryBar)
+
+    // SPIKE (IchthysOS): placeholder cutout ring. Added last so it draws on top of everything else
+    // in the bar. Guarded by CutoutRingView.SPIKE_ENABLED -- flip that to false to disable.
+    if (CutoutRingView.SPIKE_ENABLED && CutoutRingView.SHOW_STATUS_BAR_RINGS) {
+        val cutoutRing =
+            CutoutRingView(context).apply {
+                layoutParams =
+                    FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                    )
+            }
+        phoneStatusBarView.addView(cutoutRing)
+    }
 
     return {
         darkIconDispatcher.removeDarkReceiver(logo)

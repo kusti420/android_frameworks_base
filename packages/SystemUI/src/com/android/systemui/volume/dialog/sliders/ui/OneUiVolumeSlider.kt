@@ -17,6 +17,7 @@
 package com.android.systemui.volume.dialog.sliders.ui
 
 import android.view.HapticFeedbackConstants
+import androidx.annotation.DrawableRes
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -67,6 +68,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Icon as M3Icon
 import androidx.compose.material3.Text
+import com.android.internal.R as internalR
+import com.android.settingslib.R as SettingsR
 import com.android.systemui.common.ui.compose.Icon
 import com.android.systemui.res.R
 import com.android.systemui.volume.dialog.sliders.ui.viewmodel.VolumeDialogSliderStateModel
@@ -98,6 +101,7 @@ fun OneUiVolumeSlider(
     onValueChangeFinished: (Float) -> Unit,
     onDragStarted: () -> Unit,
     onDragFinished: () -> Unit,
+    onExpandClicked: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val min = state.valueRange.start
@@ -157,11 +161,22 @@ fun OneUiVolumeSlider(
             Modifier
         } else {
             Modifier.pointerInput(min, max, span) {
+                    // Custom Options: the "⋯" affordance and the level number live INSIDE the top of
+                    // the capsule, and the capsule is tap-to-set. Without this guard, tapping the
+                    // "⋯" snaps the stream straight to maximum - a genuinely nasty surprise on a
+                    // media stream. Taps that land in the top affordance strip are swallowed; drags
+                    // (which are unambiguous) still work from anywhere on the capsule.
+                    val affordanceHeightPx = OneUiVolumeSpecs.topAffordanceHeight.toPx()
                     detectTapGestures(
                         onTap = { offset ->
-                            val value = valueForOffset(offset.y, size.height.toFloat())
-                            onValueChanged(value)
-                            onValueChangeFinished(value)
+                            if (offset.y >= affordanceHeightPx) {
+                                val value = valueForOffset(offset.y, size.height.toFloat())
+                                onValueChanged(value)
+                                onValueChangeFinished(value)
+                            } else {
+                                // IchthysOS: tapping the "⋯" dots triggers expansion
+                                onExpandClicked()
+                            }
                         }
                     )
                 }
@@ -294,14 +309,14 @@ private fun BoxScope.OneUiBottomIcon(
         modifier =
             Modifier.align(Alignment.BottomCenter).padding(bottom = OneUiVolumeSpecs.iconBottomPadding)
     ) {
-        // Custom Options: for an active media stream, swap the plain AOSP note for the original One UI
-        // note-with-sound-waves glyph. Other streams (ring / alarm / etc.) keep their own icons.
-        val isActiveMedia =
-            state.icon.resId == R.drawable.ic_volume_media ||
-                state.icon.resId == R.drawable.ic_volume_media_low
-        if (isActiveMedia) {
+        // Custom Options: swap EVERY stock AOSP stream glyph for its One UI-family counterpart, so
+        // the panel reads as one icon set instead of "One UI note + Material everything else".
+        // Anything we don't have an original for (e.g. a Zen mode's own icon, which arrives as a
+        // pre-loaded Drawable with no resId) falls through to the stock icon unchanged.
+        val oneUiIconRes = oneUiStreamIconRes(state.icon.resId)
+        if (oneUiIconRes != null) {
             M3Icon(
-                painter = painterResource(R.drawable.oneui_volume_ic_media_note_waves),
+                painter = painterResource(oneUiIconRes),
                 contentDescription = null,
                 tint = contentColor,
                 modifier = Modifier.size(iconSize),
@@ -311,6 +326,52 @@ private fun BoxScope.OneUiBottomIcon(
         }
     }
 }
+
+/**
+ * Custom Options: maps every drawable [VolumeDialogSliderIconProvider] can emit onto the original
+ * One UI volume-icon family (`oneui_volume_ic_*`). Returns `null` when there is no One UI
+ * counterpart, in which case the caller keeps the stock icon.
+ *
+ * Kept in sync with `VolumeDialogSliderIconProvider.getIconRes` / `getIconForStream`.
+ */
+@DrawableRes
+private fun oneUiStreamIconRes(resId: Int?): Int? =
+    when (resId) {
+        null -> null
+        // Media
+        R.drawable.ic_volume_media,
+        R.drawable.ic_volume_media_low -> R.drawable.oneui_volume_ic_media_note_waves
+        R.drawable.ic_volume_media_mute -> R.drawable.oneui_volume_ic_media_mute
+        // Media routed to Bluetooth
+        R.drawable.ic_volume_media_bt -> R.drawable.oneui_volume_ic_bluetooth
+        R.drawable.ic_volume_media_bt_mute -> R.drawable.oneui_volume_ic_bluetooth_mute
+        // Call audio routed to a Bluetooth headset (SCO)
+        R.drawable.ic_volume_bt_sco -> R.drawable.oneui_volume_ic_bluetooth_call
+        // Remote / cast output (these two live in SettingsLib, not SystemUI)
+        SettingsR.drawable.ic_volume_remote -> R.drawable.oneui_volume_ic_cast
+        SettingsR.drawable.ic_volume_remote_mute -> R.drawable.oneui_volume_ic_cast_mute
+        // Ringtone
+        R.drawable.ic_ring_volume -> R.drawable.oneui_volume_ic_ring
+        R.drawable.ic_ring_volume_off -> R.drawable.oneui_volume_ic_ring_mute
+        R.drawable.ic_volume_ringer_vibrate -> R.drawable.oneui_volume_ic_vibrate
+        // Notification
+        R.drawable.ic_volume_ringer -> R.drawable.oneui_volume_ic_notification
+        R.drawable.ic_volume_ringer_mute -> R.drawable.oneui_volume_ic_notification_mute
+        // Alarm
+        R.drawable.ic_alarm -> R.drawable.oneui_volume_ic_alarm
+        R.drawable.ic_volume_alarm_mute -> R.drawable.oneui_volume_ic_alarm_mute
+        // System sounds
+        R.drawable.ic_volume_system -> R.drawable.oneui_volume_ic_system
+        R.drawable.ic_volume_system_mute -> R.drawable.oneui_volume_ic_system_mute
+        // Assistant / voice chat
+        R.drawable.ic_volume_voice_chat -> R.drawable.oneui_volume_ic_voice_chat
+        R.drawable.ic_volume_voice_chat_mute -> R.drawable.oneui_volume_ic_voice_chat_mute
+        // Accessibility
+        R.drawable.ic_volume_accessibility -> R.drawable.oneui_volume_ic_accessibility
+        // In-call / voice call (this one lives in framework-res)
+        internalR.drawable.ic_phone -> R.drawable.oneui_volume_ic_call
+        else -> null
+    }
 
 /** Original "⋯" expand affordance: three small dots. */
 @Composable
@@ -386,4 +447,7 @@ private object OneUiVolumeSpecs {
     val iconBottomPadding = 14.dp
     val dotSize = 3.5.dp
     val dotSpacing = 3.dp
+    // Height of the non-value-changing strip at the top of the capsule that holds the "⋯"
+    // affordance and the level number: topPadding + dot + gap + number line, rounded up.
+    val topAffordanceHeight = 40.dp
 }

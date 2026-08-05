@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    IchthysOS: content descriptions for the QS brightness-row toggle buttons. Kept in their own file
+    so the feature can be lifted out (or rebased over an AOSP strings.xml) without a merge conflict.
+-->
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+    <!-- Content description for the button next to the QS brightness slider that turns adaptive
+         (automatic) brightness on and off, while adaptive brightness is on. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_accessibility_auto_brightness_on">Adaptive brightness, on</string>
+    <!-- Spoken state of the adaptive brightness button when brightness is set manually. -->
+    <string name="ichthys_accessibility_auto_brightness_off">Adaptive brightness, off</string>
+    <!-- Content description for the button next to the QS brightness slider that shows or hides the
+         minimum-brightness (floor) handle on the slider. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_accessibility_brightness_floor_on">Minimum brightness handle, shown</string>
+    <!-- Content description for the same button when the floor handle is hidden. -->
+    <string name="ichthys_accessibility_brightness_floor_off">Minimum brightness handle, hidden</string>
+</resources>

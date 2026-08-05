@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The Android Open Source Project. Licensed under the Apache License 2.0. -->
+<!--
+  Press feedback for a Grid recents cell — the same ripple the List cards use, so tapping a task
+  feels identical whichever layout is selected. Declared here rather than taken from
+  ?android:attr/selectableItemBackground because the activity runs under
+  Theme.Translucent.NoTitleBar, whose selectableItemBackground is still the pre-Material
+  item_background selector.
+
+  The mask matches oneui_recents_grid_card_bg's 16dp corner radius. It is redundant in practice —
+  this is the foreground of a view that clips to that same outline — but keeping it means the ripple
+  is still the right shape if the card ever stops clipping itself.
+-->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="#33FFFFFF">
+    <item android:id="@android:id/mask">
+        <shape android:shape="rectangle">
+            <solid android:color="#FFFFFFFF" />
+            <corners android:radius="16dp" />
+        </shape>
+    </item>
+</ripple>

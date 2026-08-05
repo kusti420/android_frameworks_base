@@ -27,10 +27,12 @@ import com.android.systemui.volume.dialog.shared.model.VolumeDialogStateModel
 import com.android.systemui.volume.dialog.shared.model.VolumeDialogStreamModel
 import com.android.systemui.volume.dialog.sliders.domain.model.VolumeDialogSliderType
 import com.android.systemui.volume.dialog.sliders.domain.model.VolumeDialogSlidersModel
+import com.android.systemui.volume.dialog.sliders.domain.OneUiExpandState
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
@@ -50,21 +52,38 @@ constructor(
 ) {
 
     private val streamsSorter = StreamsSorter()
+
+    /**
+     * IchthysOS: intermediate accumulator that carries the expand flag through [runningReduce] so
+     * the accumulator resets when the One UI expand state changes (collapse removes extra streams).
+     */
+    private data class SliderAccum(
+        val types: LinkedHashSet<VolumeDialogSliderType>,
+        val expanded: Boolean,
+    )
+
     val sliders: Flow<VolumeDialogSlidersModel> =
-        volumeDialogStateInteractor.volumeDialogState
-            .filter { it.streamModels.isNotEmpty() }
-            .map { stateModel ->
-                val sliderTypes =
-                    stateModel.streamModels.values
-                        .filter { streamModel -> shouldShowSliders(stateModel, streamModel) }
-                        .sortedWith(streamsSorter)
-                        .map { model -> model.toType() }
-                LinkedHashSet(sliderTypes)
+        combine(
+            volumeDialogStateInteractor.volumeDialogState
+                .filter { it.streamModels.isNotEmpty() },
+            OneUiExpandState.expanded,
+        ) { stateModel, expanded ->
+            val sliderTypes =
+                stateModel.streamModels.values
+                    .filter { streamModel -> shouldShowSliders(stateModel, streamModel, expanded) }
+                    .sortedWith(streamsSorter)
+                    .map { model -> model.toType() }
+            SliderAccum(LinkedHashSet(sliderTypes), expanded)
+        }
+            .runningReduce { prev, next ->
+                if (prev.expanded != next.expanded) {
+                    // IchthysOS: expand state flipped — fresh set, don't accumulate stale streams.
+                    next
+                } else {
+                    SliderAccum(prev.types.apply { addAll(next.types) }, next.expanded)
+                }
             }
-            .runningReduce { sliderTypes, newSliderTypes ->
-                sliderTypes.apply { addAll(newSliderTypes) }
-            }
-            .map { sliderTypes ->
+            .map { (sliderTypes, _) ->
                 val primarySlider = sliderTypes.firstOrNull()
                 primarySlider ?: return@map null
                 VolumeDialogSlidersModel(
@@ -78,7 +97,13 @@ constructor(
     private fun shouldShowSliders(
         stateModel: VolumeDialogStateModel,
         streamModel: VolumeDialogStreamModel,
+        expanded: Boolean = false,
     ): Boolean {
+        // IchthysOS: One UI expand — show the standard user-facing streams as side-by-side
+        // capsules.  Internal streams (DTMF, TTS, SYSTEM_ENFORCED) are excluded because the
+        // icon provider doesn't handle them and they have no user-visible volume knob.
+        if (expanded) return streamModel.stream in ONEUI_EXPANDABLE_STREAMS
+
         if (streamModel.isActive) {
             return true
         }
@@ -141,5 +166,17 @@ constructor(
         }
     }
 }
+
+/**
+ * IchthysOS: the five streams that appear when the One UI capsule is expanded — matching the
+ * real One UI expanded panel exactly: Media, Ringtone, Notification, System, Alarm.
+ */
+private val ONEUI_EXPANDABLE_STREAMS = setOf(
+    AudioManager.STREAM_MUSIC,
+    AudioManager.STREAM_RING,
+    AudioManager.STREAM_NOTIFICATION,
+    AudioManager.STREAM_SYSTEM,
+    AudioManager.STREAM_ALARM,
+)
 
 private fun PackageManager.isTv(): Boolean = hasSystemFeature(PackageManager.FEATURE_LEANBACK)

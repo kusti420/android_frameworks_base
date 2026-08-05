@@ -120,6 +120,12 @@ public final class NavBarHelper implements
         Dumpable, CommandQueue.Callbacks, ConfigurationController.ConfigurationListener {
     private static final String TAG = NavBarHelper.class.getSimpleName();
 
+    /**
+     * IchthysOS: the user does not want any assistant surface. See
+     * {@link #updateAssistantAvailability()}. Flip to false for stock behaviour.
+     */
+    private static final boolean ASSIST_DISABLED = true;
+
     private final Handler mHandler = new Handler(Looper.getMainLooper());
     private final Executor mMainExecutor;
     private final Handler mBgHandler;
@@ -492,6 +498,21 @@ public final class NavBarHelper implements
     }
 
     private void updateAssistantAvailability() {
+        // IchthysOS: no assistant on this device. This method is the source of truth SystemUI
+        // pushes to Launcher via onAssistantAvailable() (NavigationBar / TaskbarDelegate), which
+        // is what arms the bottom-corner assist swipe regions and the long-press-home assist in
+        // the taskbar. Reporting "unavailable" here disables both at the source rather than
+        // relying on no assistant app being installed - the regions stay unclaimed even if one
+        // ever is. The device overlay also flips the two config_assist*Default bools, so a
+        // Settings.Secure value restored from a backup can't re-arm anything either.
+        if (ASSIST_DISABLED) {
+            mAssistantTouchGestureEnabled = false;
+            mLongPressHomeEnabled = false;
+            mAssistantAvailable = false;
+            dispatchAssistantEventUpdate(false /* assistantAvailable */,
+                    false /* longPressHomeEnabled */);
+            return;
+        }
         boolean assistantAvailableForUser = mAssistManagerLazy.get()
                 .getAssistInfoForUser(mUserTracker.getUserId()) != null;
 

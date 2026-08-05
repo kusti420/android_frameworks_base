@@ -34,6 +34,7 @@ import com.android.systemui.res.R
 import com.android.systemui.util.children
 import com.android.systemui.volume.dialog.dagger.scope.VolumeDialogScope
 import com.android.systemui.volume.dialog.sliders.dagger.VolumeDialogSliderComponent
+import com.android.systemui.volume.dialog.sliders.domain.OneUiExpandState
 import com.android.systemui.volume.dialog.sliders.ui.viewmodel.VolumeDialogSlidersViewModel
 import com.android.systemui.volume.dialog.ui.binder.ViewBinder
 import com.android.systemui.volume.dialog.ui.viewmodel.VolumeDialogViewModel
@@ -62,10 +63,12 @@ constructor(
         val topSection: View = view.requireViewById(R.id.volume_dialog_top_section_container)
 
         // Custom Options: "volume_panel_style" == 1 (One UI) — the collapsed One UI volume popup is
-        // JUST the slider capsule: no ringer/mute button above it and no settings/expand button
-        // below it (those only appear when One UI is expanded). Hide both sections and cap the
-        // capsule to One UI's shorter height. Scoped to One UI only (the slider is anchored to
-        // parent with verticalBias 0.5, so GONE-ing the sections does not collapse it), so the
+        // the ringer-mode button floating above the slider capsule, and nothing else. The
+        // settings/expand pill below the capsule stays hidden (One UI only shows it once the panel
+        // is expanded), but the ringer section is KEPT: it is the One UI ringer menu (a single
+        // button showing the current mode that expands into normal / vibrate / mute — see
+        // VolumeDialogRingerViewBinder). Scoped to One UI only (the slider is anchored to parent
+        // with verticalBias 0.5, so GONE-ing the bottom section does not collapse it), so the
         // global dimen and every other volume style are untouched.
         val oneUiStyle =
             Settings.System.getIntForUser(
@@ -75,9 +78,21 @@ constructor(
                 UserHandle.USER_CURRENT,
             ) == 1
         if (oneUiStyle) {
+            // IchthysOS: start collapsed every time the dialog is (re-)bound.
+            OneUiExpandState.collapse()
+
             val density = view.resources.displayMetrics.density
-            topSection.visibility = View.GONE
             bottomSection.visibility = View.GONE
+            // IchthysOS: hide the ringer/vibrate/mute toggle above the slider entirely — the
+            // One UI capsule is the only control needed. The FrameLayout wrapping the ringer
+            // drawer has spread constraints so it steals vertical space even when its child
+            // MotionLayout is GONE; hiding the container itself fixes that.
+            topSection.visibility = View.GONE
+            // IchthysOS: the AOSP dialog background (a dark rounded rectangle behind the capsule)
+            // must be INVISIBLE in One UI mode — One UI floats the capsule with no container. Using
+            // INVISIBLE rather than GONE preserves layout anchors for the floating-sliders
+            // container and bottom/top sections that reference this view in their constraints.
+            background.visibility = View.INVISIBLE
             (mainSliderContainer.layoutParams as? ConstraintLayout.LayoutParams)?.let {
                 // Taller/thinner One UI capsule per on-device comparison: 205dp cap over the 36dp
                 // capsule width (OneUiVolumeSpecs.capsuleWidth) => ~5.7:1 (real One UI ≈ 4.8:1).
@@ -111,7 +126,11 @@ constructor(
                 )
                 floatingSliderViewBinders.fastForEachIndexed { index, sliderComponent ->
                     val sliderContainer = floatingSlidersContainer.getChildAt(index)
-                    if (viewModel.showBlur) {
+                    if (oneUiStyle) {
+                        // IchthysOS: One UI capsules draw their own grey track background;
+                        // the wrapping FrameLayout should be fully transparent.
+                        sliderContainer.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                    } else if (viewModel.showBlur) {
                         sliderContainer.updateBackground()
                     }
                     bindSlider(sliderComponent, sliderContainer, arrayOf(sliderContainer))
@@ -177,6 +196,10 @@ constructor(
         with(component.overscrollViewBinder()) { bind(sliderContainer, viewsToAnimate) }
     }
 }
+
+// Custom Options: horizontal nudge (dp) that centres the One UI ringer button over the 36dp One UI
+// slider capsule. See the comment at its use site for the derivation.
+private const val ONEUI_RINGER_CENTERING_NUDGE_DP = 4f
 
 private fun ViewGroup.ensureChildCount(@LayoutRes viewLayoutId: Int, count: Int) {
     val childCountDelta = childCount - count

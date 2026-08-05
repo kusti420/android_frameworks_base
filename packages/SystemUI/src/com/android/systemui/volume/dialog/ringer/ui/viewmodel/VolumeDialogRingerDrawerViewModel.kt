@@ -22,7 +22,9 @@ import android.media.AudioManager.RINGER_MODE_NORMAL
 import android.media.AudioManager.RINGER_MODE_SILENT
 import android.media.AudioManager.RINGER_MODE_VIBRATE
 import android.media.AudioManager.STREAM_RING
+import android.os.UserHandle
 import android.os.VibrationEffect
+import android.provider.Settings
 import android.widget.Toast
 import com.android.internal.R as internalR
 import com.android.internal.logging.UiEventLogger
@@ -63,6 +65,11 @@ import kotlinx.coroutines.launch
 
 private const val DRAWER_STATE_ANIMATION_DURATION = 400L
 private const val SHOW_RINGER_TOAST_COUNT = 12
+
+// Custom Options: One UI's ringer-menu order, BOTTOM-UP (the drawer stacks index 0 lowest), so the
+// menu reads Sound / Vibrate / Mute from the top down like the One UI popup.
+private val ONE_UI_RINGER_MODE_ORDER =
+    intArrayOf(RINGER_MODE_SILENT, RINGER_MODE_VIBRATE, RINGER_MODE_NORMAL)
 
 @VolumeDialogScope
 class VolumeDialogRingerDrawerViewModel
@@ -124,6 +131,20 @@ constructor(
             .build()
 
     private var lastClickTime = 0L
+
+    /**
+     * Custom Options: "volume_panel_style" (Settings.System, default 0). 1 == the One UI volume
+     * panel. Read once (the setting is applied on a restart, like every other read of it) and
+     * always for USER_CURRENT - reading it for the process user silently returns the default.
+     */
+    private val isOneUiVolumeStyle: Boolean by lazy {
+        Settings.System.getIntForUser(
+            applicationContext.contentResolver,
+            "volume_panel_style",
+            0,
+            UserHandle.USER_CURRENT,
+        ) == 1
+    }
 
     init {
         ringerViewModel
@@ -187,7 +208,16 @@ constructor(
         isZenMuted: Boolean,
         orientation: Int,
     ): RingerViewModelState {
-        val currentIndex = availableModes.indexOf(currentRingerMode)
+        // Custom Options: the drawer stacks availableModes BOTTOM-UP (index 0 is the lowest button),
+        // and One UI reads Sound / Vibrate / Mute top-to-bottom - i.e. mute, vibrate, sound going
+        // up. AOSP's own order (normal, silent, vibrate) is untouched for every other volume style.
+        val orderedModes =
+            if (isOneUiVolumeStyle) {
+                availableModes.sortedBy { ONE_UI_RINGER_MODE_ORDER.indexOf(it.value) }
+            } else {
+                availableModes
+            }
+        val currentIndex = orderedModes.indexOf(currentRingerMode)
         if (currentIndex == -1) {
             volumeDialogLogger.onCurrentRingerModeIsUnsupported(currentRingerMode)
         }
@@ -198,7 +228,7 @@ constructor(
                 RingerViewModelState.Available(
                     RingerViewModel(
                         availableButtons =
-                            availableModes.mapNotNull { mode ->
+                            orderedModes.mapNotNull { mode ->
                                 toButtonViewModel(mode, isZenMuted)
                             },
                         currentButtonIndex = currentIndex,

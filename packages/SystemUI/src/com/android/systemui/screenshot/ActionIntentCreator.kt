@@ -127,6 +127,21 @@ constructor(
     }
 
     /**
+     * IchthysOS: @return an ACTION_VIEW intent for the given URI — opens the screenshot in
+     * whatever gallery / image viewer the user has installed.  Used by the preview-thumbnail tap
+     * so it always lands somewhere useful (the AOSP default fires ACTION_EDIT which requires a
+     * specific editor component that custom ROMs rarely ship).
+     */
+    fun createView(rawUri: Uri): Intent {
+        val uri = uriWithoutUserId(rawUri)
+        return Intent(Intent.ACTION_VIEW)
+            .setDataAndType(uri, "image/png")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
+    }
+
+    /**
      * @return an optional ACTION_VIEW intent for the parent directory of the given MediaStore URI.
      */
     suspend fun createOpenInFiles(rawUri: Uri): Intent? {

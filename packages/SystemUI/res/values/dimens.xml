@@ -1120,6 +1120,14 @@
     <dimen name="global_actions_lite_padding">24dp</dimen>
     <dimen name="global_actions_info_margin">32dp</dimen>
 
+    <!-- IchthysOS advanced restart: cell size for the "Restart…" submenu tiles. The submenu is a
+         plain two-column LinearLayout grid, so the tiles need an explicit width (the main power
+         menu gets its columns from a ConstraintLayout Flow chain instead). The margin is half of
+         global_actions_lite_padding: doubled between two tiles, and added to the container's own
+         padding on the outside, it reproduces the main menu's 24dp spacing exactly. -->
+    <dimen name="global_actions_restart_item_width">128dp</dimen>
+    <dimen name="global_actions_restart_item_margin">12dp</dimen>
+
     <!-- The maximum offset in either direction that elements are moved horizontally to prevent
          burn-in on AOD. -->
     <dimen name="burn_in_prevention_offset_x">8dp</dimen>

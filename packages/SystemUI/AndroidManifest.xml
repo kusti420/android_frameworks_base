@@ -538,6 +538,19 @@
                   android:stateNotNeeded="true"
                   android:configChanges="orientation|screenSize|keyboardHidden|screenLayout" />
 
+        <!-- The card-list recents styles: Samsung 7.1.1 (Grace UX) cascade plus the four Home
+             Up-style layouts (grid, stack, list, slim list). One activity for all of them; the
+             live style comes from the recents_type System setting. Exported so the launcher's
+             Quickstep can launch it in place of the stock overview. -->
+        <activity android:name=".recents.oneui.OneUiRecentsActivity"
+                  android:theme="@android:style/Theme.Translucent.NoTitleBar"
+                  android:exported="true"
+                  android:excludeFromRecents="true"
+                  android:launchMode="singleInstance"
+                  android:resizeableActivity="false"
+                  android:stateNotNeeded="true"
+                  android:configChanges="orientation|screenSize|keyboardHidden|screenLayout" />
+
         <service android:name=".screenshot.proxy.ScreenshotProxyService"
                  android:permission="com.android.systemui.permission.SELF"
                  android:exported="false" />
@@ -653,8 +666,18 @@
             </meta-data>
         </service>
 
+        <!-- IchthysOS: ENABLED (AOSP ships this disabled; Google hid the Tuner years ago but never
+             removed it). The whole package is intact and the plumbing is live — StatusBarSwitch in
+             res/xml/tuner_prefs.xml writes Settings.Secure "icon_blacklist", which
+             StatusBarIconController.ICON_HIDE_LIST reads and StatusBarIconControllerImpl,
+             StatusBarSignalPolicy and BatteryMeterViewController all honour. That gives per-icon
+             status bar visibility control for free.
+             CAVEAT: the Tuner is unmaintained upstream, so parts of it are stale on A17 — in
+             particular NavBarTuner is meaningless here, because the 3-button navbar is rendered by
+             the Launcher taskbar, not by SystemUI's NavigationBarView. Treat the status bar icon
+             section as the working part. -->
         <activity android:name=".tuner.TunerActivity"
-                  android:enabled="false"
+                  android:enabled="true"
                   android:icon="@drawable/tuner"
                   android:theme="@style/TunerSettings"
                   android:label="@string/system_ui_tuner"

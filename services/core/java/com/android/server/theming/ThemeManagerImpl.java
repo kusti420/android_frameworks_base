@@ -524,6 +524,11 @@ public class ThemeManagerImpl implements ThemeManagerInternal, ThemeEventDispatc
         List<Integer> newSeeds = userSettings.seedColors().stream().map(Color::toArgb).toList();
         mStateManager.onSeedColorChange(userId, newSeeds, true);
         mStateManager.onStyleChange(userId, userSettings.themeStyle());
+        // IchthysOS: force a timestamp bump so the overlay regenerates even when seeds/style
+        // haven't changed — needed for toggles like custom_pitch_black that alter the overlay
+        // output without changing the seed/style/contrast inputs.
+        mStateManager.getState(userId).forceUpdate();
+        mStateManager.reevaluateSystemTheme();
     }
 
     /**

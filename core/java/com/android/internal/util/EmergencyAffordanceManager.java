@@ -26,7 +26,7 @@ import android.provider.Settings;
  */
 public class EmergencyAffordanceManager {
 
-    public static final boolean ENABLED = true;
+    public static final boolean ENABLED = false;
 
     /**
      * Global setting override with the number to call with the emergency affordance.

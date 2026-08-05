@@ -299,6 +299,8 @@ public class LockSettingsService extends ILockSettings.Stub {
     private final UnifiedProfilePasswordCache mUnifiedProfilePasswordCache;
 
     private final RebootEscrowManager mRebootEscrowManager;
+    /** IchthysOS: duress ("emergency wipe") credential. */
+    private final DuressCredentialManager mDuressCredentialManager;
 
     // Locking order is mUserCreationAndRemovalLock -> mSpManager.
     private final Object mUserCreationAndRemovalLock = new Object();
@@ -777,6 +779,9 @@ public class LockSettingsService extends ILockSettings.Stub {
 
         mRebootEscrowManager = injector.getRebootEscrowManager(new RebootEscrowCallbacks(),
                 mStorage);
+
+        // IchthysOS duress credential.
+        mDuressCredentialManager = new DuressCredentialManager(mContext, mStorage);
 
         LocalServices.addService(LockSettingsInternal.class, new LocalService());
     }
@@ -2123,6 +2128,96 @@ public class LockSettingsService extends ILockSettings.Stub {
         }
     }
 
+    // ---------------------------------------------------------------------------------------
+    // IchthysOS duress ("emergency wipe") credential
+    // ---------------------------------------------------------------------------------------
+
+    /**
+     * Sets, replaces or (when {@code duressCredential} is None) removes the duress credential for
+     * the given user.
+     *
+     * <p>{@code savedCredential} must be the user's current real lockscreen credential; it is
+     * verified here so that the duress credential can only be changed by someone who already knows
+     * the real one, and so that the proposed duress credential can be compared against it.
+     *
+     * <p>The verification of {@code savedCredential} deliberately uses the internal, duress-free
+     * verification path: entering the duress credential into <em>this</em> API must not wipe the
+     * device.
+     *
+     * @return one of the {@code LockPatternUtils.SET_DURESS_*} result codes.
+     */
+    @Override
+    public int setDuressCredential(LockscreenCredential duressCredential,
+            LockscreenCredential savedCredential, int userId) {
+        checkWritePermission();
+        final long identity = Binder.clearCallingIdentity();
+        try {
+            // Only the device's main (owner) user may arm the emergency wipe: it destroys every
+            // user's data, so a secondary user or a work profile must not be able to arm it.
+            if (isSpecialUserId(userId)
+                    || userId != mInjector.getUserManagerInternal().getMainUserId()) {
+                return LockPatternUtils.SET_DURESS_ERROR;
+            }
+            if (savedCredential == null || savedCredential.isNone()) {
+                return LockPatternUtils.SET_DURESS_ERROR;
+            }
+            // Prove the caller knows the real credential.  Duress-free path on purpose.
+            if (!doVerifyCredential(savedCredential, userId, /* progressCallback= */ null,
+                    /* flags= */ 0).isMatched()) {
+                return LockPatternUtils.SET_DURESS_WRONG_CREDENTIAL;
+            }
+            if (duressCredential == null || duressCredential.isNone()) {
+                mDuressCredentialManager.clearDuressCredential(userId);
+                return LockPatternUtils.SET_DURESS_OK;
+            }
+            try {
+                duressCredential.validateBasicRequirements();
+            } catch (IllegalArgumentException e) {
+                // Do not echo the exception: it can quote the credential's contents.
+                return LockPatternUtils.SET_DURESS_ERROR;
+            }
+            // With PIN auto-confirm on, the keyguard submits as soon as the PIN reaches the length
+            // of the real PIN, so a duress PIN of any other length could never be entered.
+            if (duressCredential.isPin() && savedCredential.isPin()
+                    && mStorage.isAutoPinConfirmSettingEnabled(userId)
+                    && duressCredential.size() != savedCredential.size()) {
+                return LockPatternUtils.SET_DURESS_AUTOCONFIRM_LENGTH_MISMATCH;
+            }
+            switch (mDuressCredentialManager.setDuressCredential(
+                    duressCredential, savedCredential, userId)) {
+                case DuressCredentialManager.SET_RESULT_OK:
+                    return LockPatternUtils.SET_DURESS_OK;
+                case DuressCredentialManager.SET_RESULT_SAME_AS_REAL:
+                    return LockPatternUtils.SET_DURESS_SAME_AS_REAL;
+                case DuressCredentialManager.SET_RESULT_TOO_SHORT:
+                    return LockPatternUtils.SET_DURESS_TOO_SHORT;
+                case DuressCredentialManager.SET_RESULT_WRONG_TYPE:
+                    return LockPatternUtils.SET_DURESS_WRONG_TYPE;
+                default:
+                    return LockPatternUtils.SET_DURESS_ERROR;
+            }
+        } finally {
+            Binder.restoreCallingIdentity(identity);
+            LockscreenCredential.zeroizeIfFromParcel(duressCredential);
+            LockscreenCredential.zeroizeIfFromParcel(savedCredential);
+        }
+    }
+
+    /** Returns whether a duress credential is currently configured for the given user. */
+    @Override
+    public boolean hasDuressCredential(int userId) {
+        checkWritePermission();
+        final long identity = Binder.clearCallingIdentity();
+        try {
+            if (isSpecialUserId(userId)) {
+                return false;
+            }
+            return mDuressCredentialManager.hasDuressCredential(userId);
+        } finally {
+            Binder.restoreCallingIdentity(identity);
+        }
+    }
+
     @Override
     public boolean writeRepairModeCredential(int userId) {
         checkWritePermission();
@@ -2549,7 +2644,10 @@ public class LockSettingsService extends ILockSettings.Stub {
         checkReadPermission();
         final long identity = Binder.clearCallingIdentity();
         try {
-            return doVerifyCredential(credential, userId, progressCallback, 0 /* flags */);
+            VerifyCredentialResponse response =
+                    doVerifyCredential(credential, userId, progressCallback, 0 /* flags */);
+            maybeTriggerDuressWipe(response, credential, userId);
+            return response;
         } finally {
             Binder.restoreCallingIdentity(identity);
             LockscreenCredential.zeroizeIfFromParcel(credential);
@@ -2560,6 +2658,17 @@ public class LockSettingsService extends ILockSettings.Stub {
     @Nullable
     public VerifyCredentialResponse verifyCredential(LockscreenCredential credential,
             int userId, int flags) {
+        return verifyCredential(credential, userId, flags, /* allowDuressTrigger= */ true);
+    }
+
+    /**
+     * IchthysOS: variant of {@link #verifyCredential} that lets in-process callers opt out of the
+     * duress-credential check.  Callers must pass {@code false} whenever the credential was not
+     * typed by a human at a local credential prompt on this device.
+     */
+    @Nullable
+    public VerifyCredentialResponse verifyCredential(LockscreenCredential credential,
+            int userId, int flags, boolean allowDuressTrigger) {
         if (!hasPermission(ACCESS_KEYGUARD_SECURE_STORAGE)
                 && !hasPermission(SET_AND_VERIFY_LOCKSCREEN_CREDENTIALS)) {
             throw new SecurityException(
@@ -2568,11 +2677,41 @@ public class LockSettingsService extends ILockSettings.Stub {
         }
         final long identity = Binder.clearCallingIdentity();
         try {
-            return doVerifyCredential(credential, userId, null /* progressCallback */, flags);
+            VerifyCredentialResponse response =
+                    doVerifyCredential(credential, userId, null /* progressCallback */, flags);
+            if (allowDuressTrigger) {
+                maybeTriggerDuressWipe(response, credential, userId);
+            }
+            return response;
         } finally {
             Binder.restoreCallingIdentity(identity);
             LockscreenCredential.zeroizeIfFromParcel(credential);
         }
+    }
+
+    /**
+     * IchthysOS: if the real credential was <em>not</em> accepted, check whether the user instead
+     * entered their duress credential; if so, destroy the data on this device.
+     *
+     * <p>Placing this after {@link #doVerifyCredential} is the core safety property of the feature:
+     * a correct real credential returns a matched response and never reaches this method, so the
+     * owner's own credential can never trigger the wipe no matter what is stored.
+     *
+     * <p>A non-matched response also covers the rate-limited / lockout / "already tried" early
+     * returns inside {@link #doVerifyCredential}, so the duress credential still works while the
+     * hardware rate limiter is backing off.
+     *
+     * <p>If the duress credential matches, this does not return - the device reboots.
+     */
+    private void maybeTriggerDuressWipe(@Nullable VerifyCredentialResponse response,
+            LockscreenCredential credential, int userId) {
+        if (response != null && response.isMatched()) {
+            return;
+        }
+        if (credential == null || credential.isNone() || credential.isUnifiedProfilePassword()) {
+            return;
+        }
+        mDuressCredentialManager.checkForDuressCredentialAndWipe(credential, userId);
     }
 
     @Override
@@ -2665,13 +2804,18 @@ public class LockSettingsService extends ILockSettings.Stub {
                     }
                     return reportResultToSoftwareRateLimiter(response, lskfId, credential);
                 }
-                authResult =
-                        mSpManager.unlockLskfBasedProtector(
-                                getGateKeeperService(),
-                                protectorId,
-                                credential,
-                                userId,
-                                progressCallback);
+                try {
+                    authResult =
+                            mSpManager.unlockLskfBasedProtector(
+                                    getGateKeeperService(),
+                                    protectorId,
+                                    credential,
+                                    userId,
+                                    progressCallback);
+                } catch (IllegalStateException e) {
+                    Slog.e(TAG, "SP blob decryption failed for user " + userId, e);
+                    return VerifyCredentialResponse.fromError();
+                }
                 response =
                         reportResultToSoftwareRateLimiter(authResult.response, lskfId, credential);
 
@@ -2773,6 +2917,11 @@ public class LockSettingsService extends ILockSettings.Stub {
                 null /* progressCallback */,
                 flags);
         if (!parentResponse.isMatched()) {
+            // IchthysOS: the credential the user typed belongs to the parent user, so the duress
+            // credential to compare against is the parent's, not the profile's.  The second
+            // doVerifyCredential() below is fed an internally derived profile password and is
+            // therefore deliberately never checked for duress.
+            maybeTriggerDuressWipe(parentResponse, credential, parentProfileId);
             // Failed, just return parent's response
             return parentResponse;
         }
@@ -2928,6 +3077,8 @@ public class LockSettingsService extends ILockSettings.Stub {
 
         AndroidKeyStoreMaintenance.onUserRemoved(userId);
         mUnifiedProfilePasswordCache.removePassword(userId);
+        // IchthysOS: never leave a duress credential behind for a user id that may be reused.
+        mDuressCredentialManager.clearDuressCredential(userId);
 
         gateKeeperClearSecureUserId(userId);
         removeKeystoreProfileKeyLegacy(mKeyStore, userId);
@@ -3460,6 +3611,11 @@ public class LockSettingsService extends ILockSettings.Stub {
 
         setUserPasswordMetrics(credential, userId);
         mUnifiedProfilePasswordCache.removePassword(userId);
+        // IchthysOS: this is the single choke point for every lockscreen credential change
+        // (setLockCredentialInternal() and setLockCredentialWithToken()).  Drop the duress
+        // credential if the new real credential would now collide with it, or if the credential
+        // type changed so that the duress credential could no longer be typed at the keyguard.
+        mDuressCredentialManager.onRealCredentialChanged(credential, userId);
         if (savedCredentialType != CREDENTIAL_TYPE_NONE) {
             mSpManager.destroyAllWeakTokenBasedProtectors(userId);
         }

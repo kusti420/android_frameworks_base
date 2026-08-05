@@ -59,6 +59,9 @@ interface ILockSettings {
     VerifyCredentialResponse verifyGatekeeperPasswordHandle(long gatekeeperPasswordHandle, long challenge, int userId);
     void removeGatekeeperPasswordHandle(long gatekeeperPasswordHandle);
     int getCredentialType(int userId);
+    // IchthysOS duress ("emergency wipe") credential.
+    int setDuressCredential(in LockscreenCredential duressCredential, in LockscreenCredential savedCredential, int userId);
+    boolean hasDuressCredential(int userId);
     int getPinLength(int userId);
     boolean refreshStoredPinLength(int userId);
     byte[] getHashFactor(in LockscreenCredential currentCredential, int userId);

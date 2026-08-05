@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The Android Open Source Project. Licensed under the Apache License 2.0. -->
+<!-- Card body for the 7.1.1 cascade. Also supplies the outline the card is clipped and shadowed
+     by, which is what keeps the tinted header's top corners rounded and what turns the layout
+     manager's 3dp…24dp elevation into the stack's depth shadows.
+     2dp is recents_task_view_rounded_corners_radius from 7.1.1 — the cards of that era were very
+     nearly square-cornered, and a 12dp radius was the single most obvious tell that this was a
+     modern reinterpretation rather than the real thing. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#FFFFFFFF" />
+    <corners android:radius="2dp" />
+</shape>

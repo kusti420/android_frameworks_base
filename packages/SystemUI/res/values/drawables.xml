@@ -32,4 +32,10 @@
     </drawable>
     <drawable name="ic_global_actions_restart">@*android:drawable/ic_restart_round</drawable>
     <drawable name="ic_global_actions_screenshot">@*android:drawable/ic_screenshot_round</drawable>
+    <!-- IchthysOS advanced restart submenu: one glyph per entry. The submenu now draws its icons
+         in the same 96dp chips as the main power menu, where four identical restart arrows read
+         as a bug. "System" keeps ic_global_actions_restart. -->
+    <drawable name="ic_global_actions_restart_recovery">@drawable/ic_ichthys_reboot_recovery</drawable>
+    <drawable name="ic_global_actions_restart_bootloader">@drawable/ic_ichthys_reboot_bootloader</drawable>
+    <drawable name="ic_global_actions_restart_systemui">@*android:drawable/ic_refresh</drawable>
 </resources>

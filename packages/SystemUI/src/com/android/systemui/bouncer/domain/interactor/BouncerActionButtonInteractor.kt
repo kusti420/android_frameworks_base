@@ -197,13 +197,7 @@ constructor(
     private fun isReturnToCallButton() = telephonyInteractor.isInCall.value
 
     private fun isEmergencyCallButton(): Boolean {
-        return if (mobileConnectionsRepository.getIsAnySimSecure()) {
-            // Some countries can't handle emergency calls while SIM is locked.
-            repository.enableEmergencyCallWhileSimLocked.value
-        } else {
-            // Only show if there is a secure screen (password/pin/pattern/SIM pin/SIM puk).
-            authenticationInteractor.authenticationMethod.value.isSecure
-        }
+        return false
     }
 
     private fun isConfirmStrongBiometricAuthButton(): Boolean {

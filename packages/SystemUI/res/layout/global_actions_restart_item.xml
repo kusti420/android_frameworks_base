@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2021 The Android Open Source Project
+
+     Licensed under the Apache License, Version 2.0 (the "License");
+     you may not use this file except in compliance with the License.
+     You may obtain a copy of the License at
+
+          http://www.apache.org/licenses/LICENSE-2.0
+
+     Unless required by applicable law or agreed to in writing, software
+     distributed under the License is distributed on an "AS IS" BASIS,
+     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+     See the License for the specific language governing permissions and
+     limitations under the License.
+-->
+<!-- IchthysOS advanced restart: item for the "Restart…" submenu. Deliberately identical to
+     global_actions_grid_item_lite (same icon chip, size, tint, typography and colours) so the
+     submenu tiles look exactly like the top-level power menu items, instead of the flat
+     control_primary_text rows of global_actions_power_item. The only difference is the fixed
+     cell width and margin: these tiles sit in a plain two-column LinearLayout grid rather than
+     a ConstraintLayout Flow, so they cannot rely on the Flow's chain sizing and gaps. -->
+<com.android.systemui.globalactions.GlobalActionsItem
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="@dimen/global_actions_restart_item_width"
+    android:layout_height="wrap_content"
+    android:layout_margin="@dimen/global_actions_restart_item_margin"
+    android:gravity="center"
+    android:layout_gravity="center"
+    android:orientation="vertical"
+    android:stateListAnimator="@anim/control_state_list_animator">
+        <ImageView
+            android:id="@*android:id/icon"
+            android:layout_width="@dimen/global_actions_button_size"
+            android:layout_height="@dimen/global_actions_button_size"
+            android:layout_marginBottom="@dimen/global_actions_grid_container_bottom_margin"
+            android:padding="@dimen/global_actions_button_padding"
+            android:scaleType="centerInside"
+            android:tint="@color/materialColorOnSurface"
+            android:background="@drawable/global_actions_lite_button"/>
+        <TextView
+            android:id="@*android:id/message"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="marquee"
+            android:marqueeRepeatLimit="marquee_forever"
+            android:singleLine="true"
+            android:textSize="14sp"
+            android:gravity="center"
+            android:textColor="@color/materialColorOnSurface"
+            android:textAppearance="?android:attr/textAppearanceSmall" />
+</com.android.systemui.globalactions.GlobalActionsItem>

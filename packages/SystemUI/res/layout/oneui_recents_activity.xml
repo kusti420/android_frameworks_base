@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The Android Open Source Project. Licensed under the Apache License 2.0. -->
+<!--
+  Shared host layout for every OneUiRecentsActivity style. The style supplies the layout manager
+  and the card; this only provides the veil, the list, the empty state and the close-all affordance.
+
+  The background is deliberately a light veil, not an opaque scrim. One UI shows the blurred
+  wallpaper behind recents with the dock still visible; the previous #CC000000 scrim hid both and
+  was the single biggest reason these styles read as "not One UI" against the real device.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/oneui_recents_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#33000000"
+    android:clickable="true"
+    android:focusable="true">
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/oneui_recents_list"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:paddingTop="24dp"
+        android:paddingBottom="104dp"
+        android:clipToPadding="false"
+        android:scrollbars="none" />
+
+    <TextView
+        android:id="@+id/oneui_recents_empty"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:text="@string/recents_empty_message"
+        android:textColor="#FFFFFFFF"
+        android:textSize="18sp"
+        android:visibility="gone" />
+
+    <!-- Size measured off a stock Grace UX SM-A310F: 199 x 34dp. The list carries 104dp of bottom
+         padding so cards scroll clear of this rather than under it — the button sits below the
+         stack, it does not float over the front card. The bottom margin is deliberately not set
+         here: OneUiRecentsActivity applies it from the live navigation-bar inset plus a fixed gap. -->
+    <TextView
+        android:id="@+id/oneui_recents_clear_all"
+        android:layout_width="199dp"
+        android:layout_height="34dp"
+        android:layout_gravity="bottom|center_horizontal"
+        android:gravity="center"
+        android:background="@drawable/oneui_recents_clear_all_bg"
+        android:text="@string/recents_clear_all"
+        android:textAllCaps="true"
+        android:textColor="#FFFFFFFF"
+        android:textSize="13sp"
+        android:textStyle="bold"
+        android:letterSpacing="0.03"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone" />
+
+</FrameLayout>

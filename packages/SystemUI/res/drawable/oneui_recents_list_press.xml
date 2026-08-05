@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The Android Open Source Project. Licensed under the Apache License 2.0. -->
+<!--
+  Press feedback for a List recents card. Declared here rather than taken from
+  ?android:attr/selectableItemBackground because the activity runs under
+  Theme.Translucent.NoTitleBar, whose selectableItemBackground is still the pre-Material
+  item_background selector.
+
+  Used as the card's foreground, so it lands on top of the snapshot. The clickable view is the row
+  above it, not the card, but ViewGroup dispatches both the pressed state and the touch hotspot down
+  to its children, so the ripple still starts under the finger. The mask matches the card's corner
+  radius (see oneui_recents_list_card_bg).
+-->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="#33FFFFFF">
+    <item android:id="@android:id/mask">
+        <shape android:shape="rectangle">
+            <solid android:color="#FFFFFFFF" />
+            <corners android:radius="26dp" />
+        </shape>
+    </item>
+</ripple>

@@ -28,6 +28,8 @@ import android.annotation.AnyThread;
 import android.content.res.Resources;
 import android.database.ContentObserver;
 import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.hardware.TriggerEvent;
 import android.hardware.TriggerEventListener;
@@ -86,6 +88,7 @@ import java.util.function.Consumer;
  *    - udfps long-press gesture
  *    - reach and presence gestures
  *    - quick pickup gesture (low-threshold pickup gesture)
+ *    - crDroid tilt, hand wave and pocket gestures
  *
  * This class also registers a ProximitySensor that reports near/far events and will
  * trigger callbacks on the provided {@link mProxCallback}.
@@ -94,6 +97,20 @@ public class DozeSensors {
     private static final String TAG = "DozeSensors";
     private static final UiEventLogger UI_EVENT_LOGGER = new UiEventLoggerImpl();
     private static final String KEY_DOZE_PULSE_ON_AUTH = "doze_pulse_on_auth";
+
+    /**
+     * Minimum time between two tilt-gesture pulses. The tilt detector fires on every meaningful
+     * orientation change, so without this a device being carried would pulse continuously.
+     */
+    private static final long TILT_MIN_INTERVAL_NS = 2_500_000_000L;
+
+    /**
+     * A near->far proximity transition shorter than this counts as a hand wave; anything longer
+     * counts as the device having been in a pocket/bag. Mirrors crDroid's
+     * config_dozePulseProximity_HandwaveMaxDeltaNs / _PocketMinDeltaNs defaults.
+     */
+    private static final long HANDWAVE_MAX_DELTA_NS = 1_000_000_000L;
+    private static final long POCKET_MIN_DELTA_NS = 2_000_000_000L;
 
     private final AsyncSensorManager mSensorManager;
     private final AmbientDisplayConfiguration mConfig;
@@ -287,6 +304,11 @@ public class DozeSensors {
                         true /* immediatelyReRegister */,
                         false /* requiresAod */
                 ),
+                // crDroid doze gestures. These use continuously-reporting sensors rather than
+                // one-shot trigger sensors, so they go through ListeningSensor instead of the
+                // requestTriggerSensor() path used above.
+                new TiltGestureSensor(),
+                new ProximityGestureSensor(),
         };
         setProxListening(false);  // Don't immediately start listening when we register.
         mProximitySensor.register(
@@ -335,6 +357,17 @@ public class DozeSensors {
 
     private Sensor findSensor(String type) {
         return findSensor(mSensorManager, type, null);
+    }
+
+    /**
+     * Doze gestures are registered while the display is off, so the sensor has to be able to wake
+     * the AP up; a non-wake-up sensor would simply never deliver. Falls back to the non-wake-up
+     * variant so the gesture still works (while the device happens to be awake) on hardware that
+     * only exposes one.
+     */
+    private Sensor getDefaultSensorPreferWakeUp(int type) {
+        final Sensor wakeUp = mSensorManager.getDefaultSensor(type, true /* wakeUp */);
+        return wakeUp != null ? wakeUp : mSensorManager.getDefaultSensor(type);
     }
 
     @NonNull
@@ -862,6 +895,181 @@ public class DozeSensors {
                 }
                 mSensorCallback.onSensorPulse(mPulseReason, -1, -1, event.getValues());
             }));
+        }
+    }
+
+    /**
+     * A {@link TriggerSensor} backed by a continuously (or specially) reporting sensor rather than
+     * a one-shot trigger sensor. {@link SensorManager#requestTriggerSensor} only accepts one-shot
+     * sensors, so these register through {@link SensorManager#registerListener} instead and keep
+     * the rest of the TriggerSensor lifecycle (setting gating, listening state, dump).
+     */
+    private abstract class ListeningSensor extends TriggerSensor implements SensorEventListener {
+
+        ListeningSensor(Sensor sensor, String setting, boolean configured, int pulseReason,
+                boolean requiresProx) {
+            super(
+                    sensor,
+                    setting,
+                    false /* settingDef */,
+                    configured,
+                    pulseReason,
+                    false /* reportsTouchCoordinates */,
+                    false /* requiresTouchscreen */,
+                    false /* ignoresSetting */,
+                    requiresProx,
+                    false /* immediatelyReRegister */,
+                    false /* requiresAod */
+            );
+        }
+
+        @Override
+        public void updateListening() {
+            final Sensor sensor = mSensors[0];
+            if (!mConfigured || sensor == null) return;
+            if (mRequested && !mDisabled && (enabledBySetting() || mIgnoresSetting)) {
+                if (!mRegistered) {
+                    onStartListening();
+                    mRegistered = mSensorManager.registerListener(
+                            this, sensor, SensorManager.SENSOR_DELAY_NORMAL);
+                    mDozeLog.traceSensorRegisterAttempt(sensor.toString(), mRegistered);
+                }
+            } else if (mRegistered) {
+                mSensorManager.unregisterListener(this, sensor);
+                mDozeLog.traceSensorUnregisterAttempt(sensor.toString(), true);
+                mRegistered = false;
+            }
+        }
+
+        /** Called right before the sensor is registered, to reset any gesture state. */
+        protected void onStartListening() {
+        }
+
+        @Override
+        public void onAccuracyChanged(Sensor sensor, int accuracy) {
+        }
+
+        /** Reports a gesture, on the main handler and under a wakelock, like TriggerSensor does. */
+        protected void reportGesture(int pulseReason, float[] values) {
+            mDozeLog.traceSensor(pulseReason);
+            mHandler.post(mWakeLock.wrap(
+                    () -> mSensorCallback.onSensorPulse(pulseReason, -1 /* screenX */,
+                            -1 /* screenY */, values)));
+        }
+    }
+
+    /** Doze gesture: raise/tilt the device. Gated by Settings.Secure.DOZE_TILT_GESTURE. */
+    private class TiltGestureSensor extends ListeningSensor {
+
+        private long mLastGestureNs;
+
+        TiltGestureSensor() {
+            super(
+                    getDefaultSensorPreferWakeUp(Sensor.TYPE_TILT_DETECTOR),
+                    Settings.Secure.DOZE_TILT_GESTURE,
+                    mConfig.dozeTiltSensorAvailable(),
+                    DozeLog.REASON_SENSOR_TILT,
+                    false /* requiresProx */
+            );
+        }
+
+        @Override
+        protected boolean enabledBySetting() {
+            // Like the AOSP quick-pickup gesture, this only makes sense while AOD is off: with AOD
+            // on there is nothing left to pulse into.
+            return super.enabledBySetting()
+                    && !mConfig.alwaysOnEnabled(mSelectedUserInteractor.getSelectedUserId());
+        }
+
+        @Override
+        protected void onStartListening() {
+            mLastGestureNs = 0;
+        }
+
+        @Override
+        public void onSensorChanged(SensorEvent event) {
+            if (event.values.length < 1 || event.values[0] != 1) {
+                return;
+            }
+            if (event.timestamp - mLastGestureNs < TILT_MIN_INTERVAL_NS) {
+                mDozeLog.traceSensorEventDropped(mPulseReason, "tilt debounce");
+                return;
+            }
+            mLastGestureNs = event.timestamp;
+            reportGesture(mPulseReason, event.values);
+        }
+    }
+
+    /**
+     * Doze gestures: hand wave and pocket. Both are the same physical near->far proximity
+     * transition, told apart by how long the sensor stayed near, so they share one registration.
+     */
+    private class ProximityGestureSensor extends ListeningSensor {
+
+        private boolean mSawNear;
+        private long mNearSinceNs;
+
+        ProximityGestureSensor() {
+            super(
+                    getDefaultSensorPreferWakeUp(Sensor.TYPE_PROXIMITY),
+                    Settings.Secure.DOZE_HANDWAVE_GESTURE,
+                    mConfig.dozeProximitySensorAvailable(),
+                    DozeLog.REASON_SENSOR_HANDWAVE,
+                    true /* requiresProx */
+            );
+        }
+
+        @Override
+        protected boolean enabledBySetting() {
+            final int userId = mSelectedUserInteractor.getSelectedUserId();
+            // Like the AOSP quick-pickup gesture, these only make sense while AOD is off: with AOD
+            // on there is nothing left to pulse into.
+            return mConfig.enabled(userId)
+                    && !mConfig.alwaysOnEnabled(userId)
+                    && (mConfig.handwaveGestureEnabled(userId)
+                            || mConfig.pocketGestureEnabled(userId));
+        }
+
+        @Override
+        public void registerSettingsObserver(ContentObserver settingsObserver) {
+            if (!mConfigured) return;
+            // Two settings drive this one registration, so both have to be observed.
+            mSecureSettings.registerContentObserverForUserAsync(
+                    Settings.Secure.DOZE_HANDWAVE_GESTURE, mSettingsObserver, UserHandle.USER_ALL);
+            mSecureSettings.registerContentObserverForUserAsync(
+                    Settings.Secure.DOZE_POCKET_GESTURE, mSettingsObserver, UserHandle.USER_ALL);
+        }
+
+        @Override
+        protected void onStartListening() {
+            mSawNear = false;
+            mNearSinceNs = 0;
+        }
+
+        @Override
+        public void onSensorChanged(SensorEvent event) {
+            final Sensor sensor = mSensors[0];
+            if (sensor == null || event.values.length < 1) {
+                return;
+            }
+            final boolean isNear = event.values[0] < sensor.getMaximumRange();
+            if (mSawNear && !isNear) {
+                final long nearDurationNs = event.timestamp - mNearSinceNs;
+                final int userId = mSelectedUserInteractor.getSelectedUserId();
+                if (nearDurationNs < HANDWAVE_MAX_DELTA_NS) {
+                    if (mConfig.handwaveGestureEnabled(userId)) {
+                        reportGesture(DozeLog.REASON_SENSOR_HANDWAVE, event.values);
+                    }
+                } else if (nearDurationNs >= POCKET_MIN_DELTA_NS) {
+                    if (mConfig.pocketGestureEnabled(userId)) {
+                        reportGesture(DozeLog.REASON_SENSOR_POCKET, event.values);
+                    }
+                }
+                // Between the two thresholds the gesture is ambiguous, so nothing is reported.
+            } else if (isNear && !mSawNear) {
+                mNearSinceNs = event.timestamp;
+            }
+            mSawNear = isNear;
         }
     }
 

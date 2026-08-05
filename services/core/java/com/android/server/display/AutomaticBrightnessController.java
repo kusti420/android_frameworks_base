@@ -31,12 +31,14 @@ import android.app.TaskStackListener;
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
+import android.database.ContentObserver;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.hardware.display.BrightnessConfiguration;
 import android.hardware.display.DisplayManagerInternal.DisplayPowerRequest;
+import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
@@ -44,6 +46,8 @@ import android.os.PowerManager;
 import android.os.RemoteException;
 import android.os.SystemClock;
 import android.os.Trace;
+import android.os.UserHandle;
+import android.provider.Settings;
 import android.util.EventLog;
 import android.util.IndentingPrintWriter;
 import android.util.MathUtils;
@@ -238,6 +242,12 @@ public class AutomaticBrightnessController {
     // available.
     private float mScreenAutoBrightness = PowerManager.BRIGHTNESS_INVALID_FLOAT;
 
+    // IchthysOS: user-set minimum floor for auto-brightness, as a brightness float [0.0-1.0].
+    // 0.0 means the feature is disabled (default AOSP behavior). When > 0, the computed automatic
+    // screen brightness is clamped UP so it never drops below this value in the current environment.
+    private float mAutoBrightnessMinFloor = 0.0f;
+    private ContentObserver mAutoBrightnessFloorObserver;
+
     // The screen brightness level before clamping and throttling. This value needs to be stored
     // for concurrent displays mode and passed to the additional displays which will do their own
     // clamping and throttling.
@@ -385,6 +395,46 @@ public class AutomaticBrightnessController {
         if (userNits != BrightnessMappingStrategy.INVALID_NITS) {
             setScreenBrightnessByUser(userLux, getBrightnessFromNits(userNits));
         }
+
+        // IchthysOS: observe the user-configurable auto-brightness minimum floor.
+        if (mContext.getContentResolver() != null) {
+            mAutoBrightnessFloorObserver = new ContentObserver(mHandler) {
+                @Override
+                public void onChange(boolean selfChange, Uri uri) {
+                    updateAutoBrightnessFloor();
+                }
+            };
+            mContext.getContentResolver().registerContentObserver(
+                    Settings.System.getUriFor(Settings.System.AUTO_BRIGHTNESS_MIN_FLOOR),
+                    false /* notifyForDescendants */, mAutoBrightnessFloorObserver,
+                    UserHandle.USER_ALL);
+            mContext.getContentResolver().registerContentObserver(
+                    Settings.System.getUriFor(Settings.System.AUTO_BRIGHTNESS_MIN_FLOOR_ENABLED),
+                    false /* notifyForDescendants */, mAutoBrightnessFloorObserver,
+                    UserHandle.USER_ALL);
+            updateAutoBrightnessFloor();
+        }
+    }
+
+    /**
+     * IchthysOS: re-read the auto-brightness minimum floor from settings. When it changes we force
+     * an immediate auto-brightness recompute (bypassing the hysteresis threshold) so the new floor
+     * takes effect right away.
+     */
+    private void updateAutoBrightnessFloor() {
+        final boolean enabled = Settings.System.getIntForUser(mContext.getContentResolver(),
+                Settings.System.AUTO_BRIGHTNESS_MIN_FLOOR_ENABLED, 0, UserHandle.USER_CURRENT) != 0;
+        float floor = enabled ? Settings.System.getFloatForUser(mContext.getContentResolver(),
+                Settings.System.AUTO_BRIGHTNESS_MIN_FLOOR, 0.0f, UserHandle.USER_CURRENT) : 0.0f;
+        if (Float.isNaN(floor)) {
+            floor = 0.0f;
+        }
+        floor = MathUtils.constrain(floor, 0.0f, 1.0f);
+        if (floor != mAutoBrightnessMinFloor) {
+            mAutoBrightnessMinFloor = floor;
+            // Force through the hysteresis threshold so the floor applies immediately.
+            updateAutoBrightness(true /* sendUpdate */, true /* isManuallySet */);
+        }
     }
 
     /**
@@ -493,6 +543,10 @@ public class AutomaticBrightnessController {
 
     public void stop() {
         setLightSensorEnabled(false);
+        // IchthysOS: unregister the auto-brightness floor observer to avoid leaking on recreation.
+        if (mAutoBrightnessFloorObserver != null) {
+            mContext.getContentResolver().unregisterContentObserver(mAutoBrightnessFloorObserver);
+        }
     }
 
     public boolean hasUserDataPoints() {
@@ -661,6 +715,7 @@ public class AutomaticBrightnessController {
         ipw.println("mRecentLightSamples=" + mRecentLightSamples);
         ipw.println("mAmbientLightRingBuffer=" + mAmbientLightRingBuffer);
         ipw.println("mScreenAutoBrightness=" + mScreenAutoBrightness);
+        ipw.println("mAutoBrightnessMinFloor=" + mAutoBrightnessMinFloor);
         ipw.println("mDisplayPolicy=" + DisplayPowerRequest.policyToString(mDisplayPolicy));
         ipw.println("mShortTermModel=");
 
@@ -1002,6 +1057,23 @@ public class AutomaticBrightnessController {
                 mForegroundAppCategory);
         mRawScreenAutoBrightness = value;
         float newScreenAutoBrightness = clampScreenBrightness(value);
+
+        // IchthysOS: apply the user-set auto-brightness minimum floor. This clamps the computed
+        // automatic brightness UP so it never dims below the floor the user picked for the current
+        // environment. Only applies in auto mode (this method is the auto-brightness path); manual
+        // brightness is unaffected. The floor is itself bounded by the current allowed min/max
+        // (HBM/thermal) so it can never push brightness outside the valid range.
+        if (mAutoBrightnessMinFloor > 0.0f) {
+            float floor = MathUtils.constrain(mAutoBrightnessMinFloor,
+                    getMinBrightness(), getMaxBrightness());
+            if (newScreenAutoBrightness < floor) {
+                if (mLoggingEnabled) {
+                    Slog.d(TAG, "updateAutoBrightness: applying floor " + floor
+                            + " (was " + newScreenAutoBrightness + ")");
+                }
+                newScreenAutoBrightness = floor;
+            }
+        }
 
         // The min/max range can change for brightness due to HBM. See if the current brightness
         // value still falls within the current range (which could have changed).

@@ -2924,10 +2924,7 @@ public class KeyguardViewMediator implements CoreStartable,
     };
 
     private Looper getHandlerLooper() {
-        if (DisplayComponentRepositoryFlag.INSTANCE.isEagerInitializationEnabled()) {
-            return Looper.getMainLooper();
-        }
-        return Looper.myLooper();
+        return Looper.getMainLooper();
     }
 
     /**

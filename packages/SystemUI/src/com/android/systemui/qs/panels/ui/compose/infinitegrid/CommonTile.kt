@@ -33,7 +33,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -106,6 +105,9 @@ import com.android.systemui.common.ui.compose.Icon
 import com.android.systemui.common.ui.compose.load
 import com.android.systemui.compose.modifiers.sysuiResTag
 import com.android.systemui.flags.DesktopSizing
+import com.android.systemui.gradient.diagonalBrush
+import com.android.systemui.gradient.paletteFor
+import com.android.systemui.gradient.rememberGradientConfig
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.CommonTileDefaults.SideIconHeight
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.CommonTileDefaults.SideIconWidth
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.CommonTileDefaults.TILE_INITIAL_DELAY_MILLIS
@@ -247,7 +249,14 @@ fun QsTileIconBubble(
 ) {
     val context = LocalContext.current
     val accentIconBg = Settings.Secure.getInt(context.contentResolver, "qs_accent_icon_bg", 1) == 1
-    val neutralIconBackground = Color(0xFF333333)
+    // IchthysOS: this was a fixed #333 grey, chosen back when pitch black collapsed every surface
+    // to #000 and an inactive bubble needed *something* to stand on. The surface ladder is now
+    // tinted (black -> dark blue -> purple-ish blue, derived from the accent seed), so a neutral
+    // grey reads as a foreign patch on it. Take the elevated rung instead, which is exactly the
+    // "one step above the panel" tone this bubble wants and tracks the user's accent for free.
+    val neutralIconBackground =
+        Color(context.resources.getColor(android.R.color.system_surface_container_high_dark,
+            context.theme))
     val effectiveIconBackground =
         when {
             colors.iconBackground == Color.Transparent -> neutralIconBackground // inactive tile
@@ -260,12 +269,34 @@ fun QsTileIconBubble(
     // and gives the flat dark bubble a hint of depth without looking like stock Monet.
     val rimBrush =
         Brush.verticalGradient(colors = listOf(Color(0x24FFFFFF), Color(0x08FFFFFF)))
+
+    // IchthysOS: crDroid `qs_tile_icon_shape` — the bubble is clipped to the shape picked in
+    // Settings (default "circle", i.e. exactly the CircleShape this used before).
+    val bubbleShape = rememberQsTileIconShape()
+    // IchthysOS: crDroid `qs_panel_style` — "Classic style" paints the tile container instead of
+    // this bubble (see Tile.kt), so here the bubble collapses to a bare icon. The Box keeps its
+    // IconBubbleSize either way so the QQS -> QS shared-element morph is unaffected.
+    val drawBubble = rememberQsPanelStyle() != QSPanelStyle.CLASSIC
+    // IchthysOS: crDroid `qs_tile_gradient` — fill the bubble with the shared gradient palette
+    // instead of a flat color. The config is read once (it is what changes rarely); the palette is
+    // derived per frame from the animating background color.
+    val gradientEnabled = rememberQsTileGradientEnabled()
+    val gradientConfig = rememberGradientConfig()
+
     Box(
         modifier =
-            modifier
-                .size(IconBubbleSize)
-                .background(animatedIconBackground, CircleShape)
-                .border(BorderStroke(1.dp, rimBrush), CircleShape),
+            modifier.size(IconBubbleSize).thenIf(drawBubble) {
+                val fill =
+                    if (gradientEnabled) {
+                        Modifier.background(
+                            gradientConfig.paletteFor(animatedIconBackground).diagonalBrush(),
+                            bubbleShape,
+                        )
+                    } else {
+                        Modifier.background(animatedIconBackground, bubbleShape)
+                    }
+                fill.border(BorderStroke(1.dp, rimBrush), bubbleShape)
+            },
         contentAlignment = Alignment.Center,
     ) {
         SmallTileContent(
@@ -313,7 +344,11 @@ fun VerticalTileContent(
     modifier: Modifier = Modifier,
     squishiness: () -> Float = { 1f },
 ) {
-    val animatedLabelColor by animateColorAsState(colors.label, label = "QSVerticalTileLabelColor")
+    // IchthysOS: the label sits BELOW the icon bubble, directly on the dark QS panel — NOT on
+    // the tile's primary-colored background. So it must always contrast with the panel surface
+    // (onSurface), not with the accent (onPrimary, which can be black for lighter accents).
+    val animatedLabelColor by animateColorAsState(
+        MaterialTheme.colorScheme.onSurface, label = "QSVerticalTileLabelColor")
     val labelScale = rememberQsTileLabelScale()
     val labelHidden = rememberQsTileLabelHidden()
     // IchthysOS: TOP-anchor the icon at a SMALL offset (3dp) — the SAME anchor the QQS row uses.

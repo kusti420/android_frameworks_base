@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    IchthysOS: adaptive (automatic) brightness OFF, i.e. brightness is under manual control.
+
+    Identical ray geometry to ic_ichthys_auto_brightness so the button looks like one control in two
+    states; the ring + "A" is replaced by a solid disc ("you are driving it by hand"). The Compose
+    caller additionally drops the tint alpha in this state, because a shape-only difference is easy
+    to miss at 22dp.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+  <path
+      android:strokeColor="#FFFFFFFF"
+      android:strokeWidth="1.7"
+      android:strokeLineCap="round"
+      android:pathData="M12,2.4L12,4.9 M12,19.1L12,21.6 M2.4,12L4.9,12 M19.1,12L21.6,12 M5.75,5.75L7.5,7.5 M16.5,16.5L18.25,18.25 M18.25,5.75L16.5,7.5 M7.5,16.5L5.75,18.25" />
+  <path
+      android:fillColor="#FFFFFFFF"
+      android:pathData="M6.9,12A5.1,5.1 0 1,1 17.1,12A5.1,5.1 0 1,1 6.9,12Z" />
+</vector>

@@ -77,6 +77,11 @@ constructor(
     val maxBrightness = screenBrightnessInteractor.maxGammaBrightness
     val minBrightness = screenBrightnessInteractor.minGammaBrightness
 
+    // IchthysOS: display linear brightness bounds for the auto-brightness floor handle, mapped the
+    // same way as the main handle so the floor position corresponds to a real brightness value.
+    val minLinearBrightness by screenBrightnessInteractor.minLinearBrightness.hydratedStateOf(0f)
+    val maxLinearBrightness by screenBrightnessInteractor.maxLinearBrightness.hydratedStateOf(1f)
+
     val policyRestriction = brightnessPolicyEnforcementInteractor.brightnessPolicyRestriction
 
     fun showPolicyRestrictionDialog(restriction: PolicyRestriction.Restricted) {

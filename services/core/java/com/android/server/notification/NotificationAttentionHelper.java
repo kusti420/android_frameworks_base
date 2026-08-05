@@ -223,6 +223,10 @@ public final class NotificationAttentionHelper {
     private final PolitenessStrategy mStrategy;
     private int mCurrentWorkProfileId = UserHandle.USER_NULL;
 
+    // crDroid: blinks the camera flash while an incoming call rings. This device has no
+    // notification LED, so the torch is driven directly and never through LightsManager.
+    private final FlashlightBlinkController mFlashlightBlinkController;
+
     public NotificationAttentionHelper(Context context, Object lock, LightsManager lightsManager,
             AccessibilityManager accessibilityManager, PackageManager packageManager,
             UserManager userManager, NotificationUsageStats usageStats,
@@ -282,6 +286,8 @@ public final class NotificationAttentionHelper {
             mStrategy = null;
         }
 
+        mFlashlightBlinkController = new FlashlightBlinkController(context);
+
         mSettingsObserver = new SettingsObserver();
         loadUserSettings();
     }
@@ -329,6 +335,8 @@ public final class NotificationAttentionHelper {
         mAudioManager = mContext.getSystemService(AudioManager.class);
         mKeyguardManager = mContext.getSystemService(KeyguardManager.class);
 
+        mFlashlightBlinkController.onSystemReady();
+
         registerBroadcastListeners();
     }
 
@@ -340,6 +348,9 @@ public final class NotificationAttentionHelper {
                     if (mCallState == state) return;
                     if (DEBUG) Slog.d(TAG, "Call state changed: " + callStateToString(state));
                     mCallState = state;
+                    // crDroid: RINGING starts the flashlight blink, every other state (answered,
+                    // rejected, missed, cancelled, ended) stops it and forces the torch off.
+                    mFlashlightBlinkController.onCallStateChanged(state);
                 }
             }, PhoneStateListener.LISTEN_CALL_STATE);
         }
@@ -1018,6 +1029,9 @@ public final class NotificationAttentionHelper {
         clearSoundLocked();
         clearVibrateLocked();
         clearLightsLocked();
+        // crDroid: safety net. Whenever all attention effects are torn down (panel revealed,
+        // effects disabled) the torch must not be left blinking.
+        mFlashlightBlinkController.stopBlinking();
     }
 
     public void evaluateLateCallLightLocked(
@@ -1337,6 +1351,7 @@ public final class NotificationAttentionHelper {
         pw.println("  mSystemReady=" + mSystemReady);
         pw.print(prefix);
         pw.println("  mNotificationPulseEnabled=" + mNotificationPulseEnabled);
+        mFlashlightBlinkController.dump(pw, prefix + "  ");
 
         int N = mLights.size();
         if (N > 0) {
@@ -1841,8 +1856,18 @@ public final class NotificationAttentionHelper {
                     updateLightsLocked();
                 }
             } else if (action.equals(TelephonyManager.ACTION_PHONE_STATE_CHANGED)) {
-                mInCallStateOffHook = TelephonyManager.EXTRA_STATE_OFFHOOK
-                        .equals(intent.getStringExtra(TelephonyManager.EXTRA_STATE));
+                final String extraState = intent.getStringExtra(TelephonyManager.EXTRA_STATE);
+                mInCallStateOffHook = TelephonyManager.EXTRA_STATE_OFFHOOK.equals(extraState);
+                // crDroid: second, redundant feed for the flashlight-on-call blink. The
+                // PhoneStateListener above is the primary source but is only registered on
+                // devices with FEATURE_TELEPHONY; both calls are idempotent, and any spurious
+                // non-ringing state can only ever stop the blink, never leave the torch on.
+                mFlashlightBlinkController.onCallStateChanged(
+                        TelephonyManager.EXTRA_STATE_RINGING.equals(extraState)
+                                ? TelephonyManager.CALL_STATE_RINGING
+                                : (mInCallStateOffHook
+                                        ? TelephonyManager.CALL_STATE_OFFHOOK
+                                        : TelephonyManager.CALL_STATE_IDLE));
                 synchronized (mLock) {
                     updateLightsLocked();
                 }

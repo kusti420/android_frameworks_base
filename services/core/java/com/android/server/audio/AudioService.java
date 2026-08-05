@@ -12164,6 +12164,10 @@ public class AudioService extends IAudioService.Stub
                     Settings.System.MASTER_MONO), false, this, UserHandle.USER_ALL);
             mContentResolver.registerContentObserver(Settings.System.getUriFor(
                     Settings.System.MASTER_BALANCE), false, this, UserHandle.USER_ALL);
+            // IchthysOS: observe multi-audio-focus so the toggle takes effect immediately
+            mContentResolver.registerContentObserver(Settings.System.getUriFor(
+                    Settings.System.MULTI_AUDIO_FOCUS_ENABLED), false, this,
+                    UserHandle.USER_ALL);
 
             mEncodedSurroundMode = mSettings.getGlobalInt(
                     mContentResolver, Settings.Global.ENCODED_SURROUND_OUTPUT,
@@ -12206,6 +12210,23 @@ public class AudioService extends IAudioService.Stub
 
             synchronized (mAssistantUidLock) {
                 updateAssistantUIdLocked(/* forceUpdate= */ false);
+            }
+
+            // IchthysOS: live-update multi-audio-focus when the setting changes
+            updateMultiAudioFocusFromSetting();
+        }
+
+        private void updateMultiAudioFocusFromSetting() {
+            if (mMediaFocusControl != null) {
+                boolean enabled = Settings.System.getIntForUser(mContentResolver,
+                        Settings.System.MULTI_AUDIO_FOCUS_ENABLED, 0,
+                        mContentResolver.getUserId()) != 0;
+                if (mMediaFocusControl.getMultiAudioFocusEnabled() != enabled) {
+                    mMediaFocusControl.updateMultiAudioFocus(enabled);
+                    if (!enabled) {
+                        mDeviceBroker.postBroadcastBecomingNoisy();
+                    }
+                }
             }
         }
 

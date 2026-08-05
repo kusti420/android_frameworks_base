@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The Android Open Source Project. Licensed under the Apache License 2.0. -->
+<!--
+  One cell of the Grid style: a bare portrait snapshot of the app, with the app icon straddling the
+  card's top edge — half of it above the card, half overlapping it. No title, no dismiss ✕; the
+  snapshot is the whole card.
+
+  Those two views are simply absent rather than hidden. RecentsCardBinder null-checks every shared
+  ID it knows about and OneUiRecentsActivity only wires a dismiss listener when the card actually
+  has one, so omitting a view is the supported way for a style to drop it.
+
+  The overhang is paid for by paddingTop on the root plus an equal negative top margin on the icon:
+  FrameLayout lays a top-gravity child out at paddingTop + topMargin, so the icon's top lands on the
+  item's own top edge and its centre on the card's. clipToPadding="false" is what lets it draw up
+  there — with the default true, FrameLayout would clip at the padding box and shave off the top
+  half of the icon. Everything still sits inside the item view's bounds, so this does not depend on
+  the RecyclerView's clipping.
+
+  The thumbnail doubles as the card: it carries the rounded background, clips its bitmap to that
+  outline, and shows the press ripple as its foreground. The activity puts the click listener on the
+  root, and ViewGroup forwards both the pressed state and the ripple hotspot down to non-clickable
+  children, so the ripple still lights up and still tracks the finger.
+
+  The height declared here is a portrait placeholder. GridStyle overwrites it with a height derived
+  from the measured list width, so every cell in the current configuration matches and rows line up.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:paddingTop="20dp"
+    android:clipToPadding="false"
+    android:clipChildren="false"
+    android:clickable="true"
+    android:focusable="true">
+
+    <!--
+      centerCrop: a cell is a fixed size, so the snapshot has to fill it and be trimmed rather than
+      letterboxed. Declared once and never re-asserted — RecentsCardBinder stashes the scale type a
+      layout declares the first time it binds the view and restores it after the no-snapshot
+      fallback has forced CENTER_INSIDE on it.
+    -->
+    <ImageView
+        android:id="@id/oneui_recents_card_thumbnail"
+        android:layout_width="match_parent"
+        android:layout_height="244dp"
+        android:layout_gravity="top"
+        android:scaleType="centerCrop"
+        android:background="@drawable/oneui_recents_grid_card_bg"
+        android:foreground="@drawable/oneui_recents_grid_press"
+        android:clipToOutline="true"
+        android:contentDescription="@null" />
+
+    <!--
+      Half above the card, half over it. Listed after the thumbnail so it draws on top; neither view
+      sets an elevation, so plain child order settles the z-order and there are no shadows to be
+      clipped by the RecyclerView.
+    -->
+    <ImageView
+        android:id="@id/oneui_recents_card_icon"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="-20dp"
+        android:scaleType="fitCenter"
+        android:contentDescription="@null" />
+
+</FrameLayout>

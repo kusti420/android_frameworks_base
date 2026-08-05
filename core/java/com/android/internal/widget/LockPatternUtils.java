@@ -438,6 +438,64 @@ public class LockPatternUtils {
                 null /* componentName */, userId);
     }
 
+    // -----------------------------------------------------------------------------------------
+    // IchthysOS duress ("emergency wipe") credential.
+    //
+    // A second lockscreen credential which, when entered at a credential prompt instead of the
+    // real one, destroys the file-based-encryption keys of every user on the device and reboots
+    // into recovery to reformat /data.  See DuressCredentialManager in services.
+    // -----------------------------------------------------------------------------------------
+
+    /** The duress credential was stored (or cleared). */
+    public static final int SET_DURESS_OK = 0;
+    /** The supplied real credential was wrong, so nothing was changed. */
+    public static final int SET_DURESS_WRONG_CREDENTIAL = 1;
+    /** The proposed duress credential is identical to the real lockscreen credential. */
+    public static final int SET_DURESS_SAME_AS_REAL = 2;
+    /** The proposed duress credential is shorter than {@link #MIN_DURESS_CREDENTIAL_LENGTH}. */
+    public static final int SET_DURESS_TOO_SHORT = 3;
+    /** The proposed duress credential is not the same type as the real lockscreen credential. */
+    public static final int SET_DURESS_WRONG_TYPE = 4;
+    /**
+     * PIN auto-confirm is enabled, so the keyguard submits at the length of the real PIN and a
+     * duress PIN of a different length could never be entered.
+     */
+    public static final int SET_DURESS_AUTOCONFIRM_LENGTH_MISMATCH = 5;
+    /** Something else went wrong; nothing was changed. */
+    public static final int SET_DURESS_ERROR = 6;
+
+    /** Minimum length of a duress credential.  Mirrors DuressCredentialManager. */
+    public static final int MIN_DURESS_CREDENTIAL_LENGTH = 6;
+
+    /**
+     * Sets, replaces or removes the duress credential of the given user.
+     *
+     * @param duressCredential the new duress credential, or {@link LockscreenCredential#createNone}
+     *                         to remove it.
+     * @param savedCredential  the user's current real lockscreen credential.
+     * @return one of the {@code SET_DURESS_*} constants.
+     */
+    public int setDuressCredential(@NonNull LockscreenCredential duressCredential,
+            @NonNull LockscreenCredential savedCredential, int userId) {
+        throwIfCalledOnMainThread();
+        try {
+            return getLockSettings().setDuressCredential(duressCredential, savedCredential, userId);
+        } catch (RemoteException re) {
+            Log.e(TAG, "Failed to set emergency credential", re);
+            return SET_DURESS_ERROR;
+        }
+    }
+
+    /** Returns whether a duress credential is currently configured for the given user. */
+    public boolean hasDuressCredential(int userId) {
+        try {
+            return getLockSettings().hasDuressCredential(userId);
+        } catch (RemoteException re) {
+            Log.e(TAG, "Failed to query emergency credential", re);
+            return false;
+        }
+    }
+
     /**
      * Save the current password data to the repair mode file.
      *

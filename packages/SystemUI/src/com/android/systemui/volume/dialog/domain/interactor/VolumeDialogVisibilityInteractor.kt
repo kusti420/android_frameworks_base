@@ -33,6 +33,7 @@ import com.android.systemui.volume.dialog.shared.model.VolumeDialogVisibilityMod
 import com.android.systemui.volume.dialog.shared.model.VolumeDialogVisibilityModel.Dismissed
 import com.android.systemui.volume.dialog.shared.model.VolumeDialogVisibilityModel.Invisible
 import com.android.systemui.volume.dialog.shared.model.VolumeDialogVisibilityModel.Visible
+import com.android.systemui.volume.dialog.sliders.domain.OneUiExpandState
 import com.android.systemui.volume.dialog.utils.VolumeTracer
 import javax.inject.Inject
 import kotlin.time.Duration
@@ -77,6 +78,8 @@ constructor(
 
     /** @see computeTimeout */
     private val defaultTimeout = 3.seconds
+    /** IchthysOS: longer timeout so the expanded One UI panel doesn't vanish mid-adjustment. */
+    private val expandedTimeout = 8.seconds
 
     private val showVolumeSliderInQsShade = expandedAudioTileDetailsFeatureInteractor.isEnabled()
 
@@ -124,6 +127,12 @@ constructor(
             }
             .launchIn(coroutineScope)
 
+        // IchthysOS: when the One UI expand state changes, restart the dismiss timer so the
+        // freshly computed (longer or shorter) timeout takes effect immediately.
+        OneUiExpandState.expanded
+            .onEach { resetDismissTimeout() }
+            .launchIn(coroutineScope)
+
         if (showVolumeSliderInQsShade) {
             // Dismiss the volume dialog if QS becomes expanded while the dialog is visible
             combine(shadeInteractor.isQsExpanded, dialogVisibility) {
@@ -169,13 +178,21 @@ constructor(
     }
 
     private suspend fun computeTimeout(): Duration {
+        // IchthysOS: while the One UI panel is expanded, force the longer timeout regardless
+        // of the persisted Settings.Secure value (which would otherwise override it).
+        val isExpanded = OneUiExpandState.expanded.value
         val defaultDialogTimeoutMillis =
-            secureSettingsRepository
-                .getInt(
-                    Settings.Secure.VOLUME_DIALOG_DISMISS_TIMEOUT,
-                    defaultTimeout.toInt(DurationUnit.MILLISECONDS),
-                )
-                .milliseconds
+            if (isExpanded) {
+                expandedTimeout
+            } else {
+                val settingVal = secureSettingsRepository
+                    .getInt(
+                        Settings.Secure.VOLUME_DIALOG_DISMISS_TIMEOUT,
+                        defaultTimeout.toInt(DurationUnit.MILLISECONDS),
+                    )
+                    .milliseconds
+                settingVal
+            }
         val currentDialogState = stateInteractor.volumeDialogState.first()
         return when {
             currentDialogState.isHovering ->

@@ -128,15 +128,26 @@ public class FlashlightControllerImpl implements FlashlightController {
         }
         mExecutor.execute(() -> {
             if (mCameraId.get() == null) return;
+            boolean changed = false;
             synchronized (this) {
                 if (mFlashlightEnabled != enabled) {
                     try {
                         mCameraManager.setTorchMode(mCameraId.get(), enabled);
                     } catch (CameraAccessException e) {
-                        Log.e(TAG, "Couldn't set torch mode", e);
-                        dispatchError();
+                        Log.e(TAG, "Couldn't set torch mode via Camera2", e);
                     }
+                    // IchthysOS: Samsung fallback — trigger FlashControlSVC via Settings.
+                    // Samsung devices toggle the flash through a vendor HAL that monitors
+                    // this setting, rather than through Camera2 setTorchMode.
+                    mSecureSettings.putInt(Secure.FLASHLIGHT_ENABLED, enabled ? 1 : 0);
+                    // Manually update state since TorchCallback may not fire on Samsung
+                    mFlashlightEnabled = enabled;
+                    changed = true;
                 }
+            }
+            if (changed) {
+                if (DEBUG) Log.d(TAG, "dispatchModeChanged(" + enabled + ")");
+                dispatchModeChanged(enabled);
             }
         });
     }

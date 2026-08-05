@@ -166,6 +166,8 @@ import dagger.assisted.Assisted;
 import dagger.assisted.AssistedFactory;
 import dagger.assisted.AssistedInject;
 
+import lineageos.providers.LineageSettings;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -310,6 +312,23 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
     private MyPowerOptionsAdapter mPowerAdapter;
     // IchthysOS advanced restart: adapter backing the "Restart…" submenu.
     private MyRestartOptionsAdapter mRestartAdapter;
+
+    /**
+     * IchthysOS power-menu contents: the action keys the user ticked in
+     * Settings > Buttons > Power menu.
+     *
+     * <p>Those toggles are persisted by {@code LineageGlobalActionsService} as a
+     * '|'-separated key list in {@code LineageSettings.Secure.POWER_MENU_ACTIONS}. The keys come
+     * from {@code org.lineageos.internal.util.PowerMenuConstants} and are the same strings as
+     * {@link GlobalActionType#getConfigKey()}.
+     *
+     * <p>{@code null} means "the user has never expressed a preference" (setting absent, empty or
+     * unparseable), in which case we fall back to the platform {@code config_globalActionsList}
+     * and behave exactly like stock AOSP. Recomputed on every {@link #createActionItems()} pass so
+     * a toggle flipped in Settings takes effect on the next long-press.
+     */
+    @Nullable
+    private List<String> mUserPowerMenuActions;
 
     private boolean mKeyguardShowing = false;
     private boolean mDeviceProvisioned = false;
@@ -674,6 +693,81 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
         }
     }
 
+    /**
+     * IchthysOS: read the user's power-menu selection out of
+     * {@code LineageSettings.Secure.POWER_MENU_ACTIONS}.
+     *
+     * @return the selected keys in stored order, or {@code null} when there is no usable
+     *         selection (never set, empty, or the provider could not be reached) so that callers
+     *         keep stock behaviour.
+     */
+    @Nullable
+    private List<String> readUserPowerMenuActions() {
+        final String saved;
+        try {
+            saved = LineageSettings.Secure.getStringForUser(mContext.getContentResolver(),
+                    LineageSettings.Secure.POWER_MENU_ACTIONS, UserHandle.USER_CURRENT);
+        } catch (Exception e) {
+            // A missing or broken LineageSettings provider must never cost the user their power
+            // menu - fall back to the platform config instead.
+            Log.e(TAG, "Could not read POWER_MENU_ACTIONS", e);
+            return null;
+        }
+        if (saved == null || saved.isEmpty()) {
+            return null;
+        }
+        final List<String> keys = new ArrayList<>();
+        for (String key : saved.split("\\|")) {
+            final String trimmed = key.trim();
+            if (!trimmed.isEmpty() && !keys.contains(trimmed)) {
+                keys.add(trimmed);
+            }
+        }
+        return keys.isEmpty() ? null : keys;
+    }
+
+    /**
+     * IchthysOS: whether the user explicitly enabled this power-menu entry. Returns {@code false}
+     * when no user selection exists, so callers must keep their stock fallback behaviour.
+     */
+    private boolean isUserSelectedAction(GlobalActionType type) {
+        return mUserPowerMenuActions != null
+                && mUserPowerMenuActions.contains(type.getConfigKey());
+    }
+
+    /**
+     * IchthysOS: the action types the power menu should offer.
+     *
+     * <p>When the user has a stored selection it wins over {@code config_globalActionsList};
+     * otherwise the platform config is used unchanged. Keys this build has no action for
+     * (crDroid/Lineage-only entries such as {@code devicecontrols} or {@code onthego}) are
+     * skipped rather than treated as an error, and Power off / Restart are always kept so a
+     * mangled selection can never leave the user unable to reboot the device.
+     */
+    @NonNull
+    private List<GlobalActionType> getEffectiveGlobalActions() {
+        final List<GlobalActionType> configured = mInteractor.getPossibleGlobalActions();
+        final List<String> userKeys = mUserPowerMenuActions;
+        if (userKeys == null) {
+            return configured;
+        }
+        final List<GlobalActionType> result = new ArrayList<>();
+        for (String key : userKeys) {
+            final GlobalActionType type = GlobalActionType.Companion.fromConfigKey(key);
+            if (type != null && !result.contains(type)) {
+                result.add(type);
+            }
+        }
+        // Safety net: the power menu must always be able to power off and restart the device.
+        if (!result.contains(GlobalActionType.POWER)) {
+            result.add(GlobalActionType.POWER);
+        }
+        if (!result.contains(GlobalActionType.RESTART)) {
+            result.add(GlobalActionType.RESTART);
+        }
+        return result;
+    }
+
     @VisibleForTesting
     void createActionItems() {
         // Simple toggle style if there's no vibrator, otherwise use a tri-state
@@ -691,7 +785,11 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
         mPowerItems.clear();
         mRestartItems.clear();
 
-        List<GlobalActionType> actionTypes = mInteractor.getPossibleGlobalActions();
+        // IchthysOS: refresh the user's power-menu selection before deciding what to build, so
+        // both the type list below and the per-action shouldShow() hooks see the same snapshot.
+        mUserPowerMenuActions = readUserPowerMenuActions();
+
+        List<GlobalActionType> actionTypes = getEffectiveGlobalActions();
 
         ShutDownAction shutdownAction = new ShutDownAction();
         RestartAction restartAction = new RestartAction();
@@ -699,12 +797,12 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
         CurrentUserProvider currentUser = new CurrentUserProvider();
         final UserInfo currentUserInfo = currentUser.get();
 
-        // Make sure emergency affordance action is first
-        boolean handledEmergencyAffordance = false;
-        if (mEmergencyAffordanceManager.needsEmergencyAffordance()) {
-            addIfShouldShowAction(tempActions, new EmergencyAffordanceAction());
-            handledEmergencyAffordance = true;
-        }
+        // IchthysOS: this ROM ships without the emergency affordances, so neither the
+        // country-triggered EmergencyAffordanceAction (added here upstream, ahead of the
+        // configured list) nor the EmergencyDialerAction below is ever offered. Dropping
+        // "emergency" from config_globalActionsList is not enough on its own: a stored
+        // LineageSettings POWER_MENU_ACTIONS selection wins over that config, and the
+        // affordance action never consulted it in the first place.
 
         for (int i = 0; i < actionTypes.size(); i++) {
             GlobalActionType actionType = actionTypes.get(i);
@@ -732,7 +830,10 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
                     }
                     break;
                 case USERS:
-                    if (SystemProperties.getBoolean("fw.power_user_switcher", false)) {
+                    // IchthysOS: the user switcher entry is also offered by the crDroid power
+                    // menu settings ("users"); stock AOSP hides it behind a debug sysprop.
+                    if (isUserSelectedAction(GlobalActionType.USERS)
+                            || SystemProperties.getBoolean("fw.power_user_switcher", false)) {
                         addUserActions(tempActions, currentUserInfo);
                     }
                     break;
@@ -748,10 +849,12 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
                     addIfShouldShowAction(tempActions, new LockAction());
                     break;
                 case VOICEASSIST:
-                    addIfShouldShowAction(tempActions, getVoiceAssistAction());
-                    break;
                 case ASSIST:
-                    addIfShouldShowAction(tempActions, getAssistAction());
+                    // IchthysOS: no assistant / voice assist on this device. Neither is in
+                    // config_globalActionsList today, so this is belt and braces: it guarantees
+                    // the power menu can never grow a "Voice Assist" (ACTION_VOICE_ASSIST) or
+                    // "Assist" (ACTION_ASSIST) entry, even via an overlay. Every other power
+                    // menu item is untouched.
                     break;
                 case RESTART:
                     addIfShouldShowAction(tempActions, restartAction);
@@ -781,13 +884,9 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
                     addIfShouldShowAction(tempActions, new StandbyAction());
                     break;
                 case EMERGENCY:
-                    // Only add the standard EmergencyDialerAction if the
-                    // EmergencyAffordanceAction was NOT already handled.
-                    if (!handledEmergencyAffordance) {
-                        if (shouldDisplayEmergency()) {
-                            addIfShouldShowAction(tempActions, new EmergencyDialerAction());
-                        }
-                    }
+                    // IchthysOS: no emergency dialer entry. "emergency" is already out of
+                    // config_globalActionsList, but a POWER_MENU_ACTIONS selection stored
+                    // before that change still carries the key, so drop it here too.
                     break;
                 default:
                     Log.e(TAG, "Unknown global action type: " + actionType.getConfigKey());
@@ -1184,7 +1283,7 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
     /** IchthysOS advanced restart: reboot straight into recovery. */
     final class RebootRecoveryAction extends SinglePressAction {
         RebootRecoveryAction() {
-            super(com.android.systemui.res.R.drawable.ic_global_actions_restart,
+            super(com.android.systemui.res.R.drawable.ic_global_actions_restart_recovery,
                     com.android.systemui.res.R.string.global_action_reboot_recovery);
         }
 
@@ -1233,7 +1332,7 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
     /** IchthysOS advanced restart: soft-restart SystemUI (kills our own process; init respawns it). */
     final class RestartSystemUIAction extends SinglePressAction {
         RestartSystemUIAction() {
-            super(com.android.systemui.res.R.drawable.ic_global_actions_restart,
+            super(com.android.systemui.res.R.drawable.ic_global_actions_restart_systemui,
                     com.android.systemui.res.R.string.global_action_restart_systemui);
         }
 
@@ -1263,7 +1362,7 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
     /** IchthysOS advanced restart: reboot into the bootloader (download/fastboot). */
     final class RebootBootloaderAction extends SinglePressAction {
         RebootBootloaderAction() {
-            super(com.android.systemui.res.R.drawable.ic_global_actions_restart,
+            super(com.android.systemui.res.R.drawable.ic_global_actions_restart_bootloader,
                     com.android.systemui.res.R.string.global_action_reboot_bootloader);
         }
 
@@ -1299,18 +1398,27 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
 
     /**
      * IchthysOS: whether the "advanced restart" reboot items (Recovery / Bootloader) should
-     * be shown. Requires the LineageSettings ADVANCED_REBOOT toggle on, the device not
-     * sitting on a secure keyguard, and the primary user (matches PowerMenuUtils).
+     * be shown. Requires the LineageSettings ADVANCED_REBOOT toggle on and the primary user
+     * (matches PowerMenuUtils).
+     *
+     * <p>On a locked, secured keyguard the items are additionally gated by
+     * ADVANCED_REBOOT_SECURED ("Secured lockscreen" in Settings, default on): with it off the
+     * advanced entries are hidden until the device is unlocked, so a stranger cannot reboot
+     * straight into recovery/download mode.
      */
     private boolean isAdvancedRestartPossible() {
         KeyguardManager km = mContext.getSystemService(KeyguardManager.class);
         boolean keyguardSecureLocked = km != null
                 && km.inKeyguardRestrictedInputMode() && km.isKeyguardSecure();
-        boolean advancedRestartEnabled = lineageos.providers.LineageSettings.Secure.getInt(
+        boolean advancedRestartEnabled = LineageSettings.Secure.getIntForUser(
                 mContext.getContentResolver(),
-                lineageos.providers.LineageSettings.Secure.ADVANCED_REBOOT, 1) == 1;
+                LineageSettings.Secure.ADVANCED_REBOOT, 1, UserHandle.USER_CURRENT) == 1;
+        boolean advancedRestartSecured = LineageSettings.Secure.getIntForUser(
+                mContext.getContentResolver(),
+                LineageSettings.Secure.ADVANCED_REBOOT_SECURED, 1, UserHandle.USER_CURRENT) == 1;
         boolean isPrimaryUser = mUserTracker.getUserId() == UserHandle.USER_SYSTEM;
-        return advancedRestartEnabled && !keyguardSecureLocked && isPrimaryUser;
+        return advancedRestartEnabled && (advancedRestartSecured || !keyguardSecureLocked)
+                && isPrimaryUser;
     }
 
     @VisibleForTesting
@@ -1348,9 +1456,11 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
 
         @Override
         public boolean shouldShow() {
-            // Include screenshot in power menu for legacy nav because it is not accessible
-            // through Recents in that mode
-            return is2ButtonNavigationEnabled();
+            // IchthysOS: honour the crDroid power menu "screenshot" toggle. Stock AOSP only
+            // includes screenshot for legacy 2-button nav, where it is not accessible through
+            // Recents; keep that as the fallback when the user has no stored selection.
+            return isUserSelectedAction(GlobalActionType.SCREENSHOT)
+                    || is2ButtonNavigationEnabled();
         }
 
         boolean is2ButtonNavigationEnabled() {
@@ -1576,6 +1686,9 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
         };
     }
 
+    // IchthysOS: unused - the ASSIST case in createActionItems() is disabled (no assistant on
+    // this device). Kept rather than deleted so an upstream merge stays trivial.
+    @SuppressWarnings("unused")
     private Action getAssistAction() {
         return new SinglePressAction(R.drawable.ic_action_assist_focused,
                 R.string.global_action_assist) {
@@ -1598,6 +1711,9 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
         };
     }
 
+    // IchthysOS: unused - the VOICEASSIST case in createActionItems() is disabled (no voice
+    // assist on this device). Kept rather than deleted so an upstream merge stays trivial.
+    @SuppressWarnings("unused")
     private Action getVoiceAssistAction() {
         return new SinglePressAction(R.drawable.ic_voice_search,
                 R.string.global_action_voice_assist) {
@@ -1974,6 +2090,15 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
             return position;
         }
 
+        /**
+         * IchthysOS: the layout used for one submenu item. Overridable so the "Restart…"
+         * submenu can swap in power-menu-style tiles without duplicating the view plumbing
+         * below.
+         */
+        int getItemLayoutResource() {
+            return com.android.systemui.res.R.layout.global_actions_power_item;
+        }
+
         @Override
         public View getView(int position, View convertView, ViewGroup parent) {
             Action action = getItem(position);
@@ -1981,7 +2106,7 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
                 Log.w(TAG, "No power options action found at position: " + position);
                 return null;
             }
-            int viewLayoutResource = com.android.systemui.res.R.layout.global_actions_power_item;
+            int viewLayoutResource = getItemLayoutResource();
             View view = convertView != null ? convertView
                     : LayoutInflater.from(mContext).inflate(viewLayoutResource, parent, false);
             view.setOnClickListener(v -> onClickItem(position));
@@ -2051,6 +2176,18 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
         @Override
         public Action getItem(int position) {
             return mRestartItems.get(position);
+        }
+
+        /**
+         * IchthysOS: render the submenu entries as power-menu tiles (round icon chip on
+         * materialColorSurfaceContainerHighest, materialColorOnSurface label) rather than the
+         * flat control_primary_text rows the power options submenu uses, so the submenu matches
+         * the rest of the power menu. The layout is a copy of global_actions_grid_item_lite; see
+         * global_actions_restart_item.xml for why it is not that file verbatim.
+         */
+        @Override
+        int getItemLayoutResource() {
+            return com.android.systemui.res.R.layout.global_actions_restart_item;
         }
     }
 
@@ -2989,10 +3126,12 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
         }
 
         // IchthysOS advanced restart: open the "Restart…" submenu (System / Recovery /
-        // Bootloader / SystemUI) on top of the main power dialog.
+        // Bootloader / SystemUI) on top of the main power dialog. Uses the grid variant so the
+        // four entries are laid out like the main power menu's items instead of as a single tall
+        // column of power-options rows.
         public void showRestartOptionsMenu() {
             mRestartOptionsDialog =
-                    GlobalActionsPowerDialog.create(mContext, mRestartOptionsAdapter);
+                    GlobalActionsPowerDialog.createRestart(mContext, mRestartOptionsAdapter);
             mRestartOptionsDialog.show();
         }
 

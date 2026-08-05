@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 
 /**
@@ -53,6 +54,13 @@ constructor(
     /** Minimum value in the Gamma space for brightness */
     override val minGammaBrightness: GammaBrightness =
         GammaBrightness(BrightnessUtils.GAMMA_SPACE_MIN)
+
+    /** IchthysOS: display linear brightness bounds, used to map the floor handle position. */
+    override val minLinearBrightness: Flow<Float> =
+        screenBrightnessRepository.minLinearBrightness.map { it.floatValue }
+
+    override val maxLinearBrightness: Flow<Float> =
+        screenBrightnessRepository.maxLinearBrightness.map { it.floatValue }
 
     /**
      * Brightness in the Gamma space for the current display. It will always represent a value

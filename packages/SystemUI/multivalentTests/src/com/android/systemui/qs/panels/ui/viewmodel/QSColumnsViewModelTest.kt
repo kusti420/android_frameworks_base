@@ -47,6 +47,7 @@ import com.android.systemui.res.R
 import com.android.systemui.shade.domain.interactor.disableDualShade
 import com.android.systemui.shade.domain.interactor.enableDualShade
 import com.android.systemui.testKosmos
+import com.android.systemui.util.settings.fakeSettings
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -74,7 +75,7 @@ class QSColumnsViewModelTest : SysuiTestCase() {
                 R.integer.quick_settings_infinite_grid_tile_max_width,
                 4,
             )
-            qsColumnsRepository = QSColumnsRepository(mainResources, configurationRepository)
+            qsColumnsRepository = QSColumnsRepository(mainResources, configurationRepository, fakeSettings)
         }
 
     @Test

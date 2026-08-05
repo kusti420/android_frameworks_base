@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The Android Open Source Project. Licensed under the Apache License 2.0. -->
+<!--
+  Slim-list row: app icon, app name, nothing else.
+
+  "Slim" describes the row, not the list. The row is a 64dp pill and the gaps between rows are
+  16dp, so the pitch is 80dp and about ten tasks fit on a phone screen — airier than a dense list,
+  and the whole row is one 64dp-tall tap target.
+
+  Deliberately absent, and all three by omission rather than by visibility="gone": there is no
+  @id/oneui_recents_card_thumbnail (a snapshot chip cannot say anything a 64dp row has room to
+  read), no @id/oneui_recents_card_dismiss (dismissal is the horizontal swipe SlimListStyle opts
+  into), and no @id/oneui_recents_card_header (the app-primary-colour tint RecentsCardBinder applies
+  to that ID would break the uniform near-black the rows depend on). RecentsCardBinder null-checks
+  every shared ID, so leaving them out is the supported way to opt out of each.
+
+  Geometry is a fixed 64dp height, so nothing in here is allowed to grow the row: the title is
+  single-line and ellipsized, and the icon is a fixed square.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="64dp"
+    android:layout_marginHorizontal="20dp"
+    android:layout_marginVertical="8dp"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:background="@drawable/oneui_recents_slim_row_bg"
+    android:foreground="@drawable/oneui_recents_slim_press"
+    android:clickable="true"
+    android:focusable="true">
+
+    <!-- 28dp: an AdaptiveIconDrawable masks to its full bounds, so the view size is the size the
+         icon reads at. 20dp in from the pill's leading edge, which puts its centre 34dp in — clear
+         of the 32dp corner sweep, so the icon never looks like it is leaning into the curve. -->
+    <ImageView
+        android:id="@id/oneui_recents_card_icon"
+        android:layout_width="28dp"
+        android:layout_height="28dp"
+        android:layout_marginStart="20dp"
+        android:scaleType="fitCenter"
+        android:contentDescription="@null" />
+
+    <!-- Weighted so the ellipsis lands at the end margin rather than wherever the longest label
+         happens to reach, and marginEnd is a full 24dp so a truncated name stops well short of the
+         trailing corner sweep instead of appearing to run off the rounded end. -->
+    <TextView
+        android:id="@id/oneui_recents_card_title"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="24dp"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:fontFamily="sans-serif-medium"
+        android:textColor="#FFFFFFFF"
+        android:textSize="15sp" />
+
+</LinearLayout>

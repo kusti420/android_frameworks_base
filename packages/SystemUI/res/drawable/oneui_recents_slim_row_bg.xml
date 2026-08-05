@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The Android Open Source Project. Licensed under the Apache License 2.0. -->
+<!--
+  Slim-list row surface: a full pill.
+
+  The corner radius is exactly half the row height declared in oneui_recents_card_slim.xml (64dp),
+  which is what makes the ends semicircular rather than merely rounded. The two numbers have to move
+  together — a radius smaller than half the height turns the pill back into a rounded rectangle, and
+  a larger one is silently clamped by the renderer, so the shape would stop tracking the layout.
+
+  Near-black, but not opaque: recents draws over the live wallpaper (the host lays down a light
+  #33000000 veil, not a scrim), and letting a tenth of that through is what keeps the rows sitting
+  *on* the wallpaper instead of punching holes in it. On the 1080p/420dpi reference frame that lands
+  the fill between #000000 and #191919, which is where the One UI original measures.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#E6000000" />
+    <corners android:radius="32dp" />
+</shape>

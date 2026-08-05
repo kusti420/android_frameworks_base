@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+    Copyright (C) 2026 The Android Open Source Project
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+         http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+-->
+
+<!-- Custom Options: One UI vibrate - a handset with vibration ticks. Used for the ringer-mode vibrate button and for the vibrate state of the ring / notification streams.
+     Original vector recreation in the One UI volume-icon family (no Samsung asset):
+     24dp / 24 viewport, solid fills for masses + 1.5-1.9 round-cap strokes for arcs and rules,
+     matching oneui_volume_ic_media_note_waves. Always rendered with a tint (Compose tint or
+     ImageView colour filter), so the literal colours below are placeholders the tint overrides. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- handset body -->
+    <path
+        android:strokeColor="#FF1A1A1C"
+        android:strokeWidth="1.6"
+        android:strokeLineJoin="round"
+        android:pathData="M9.7,4.0 h4.6 a1.7,1.7 0 0,1 1.7,1.7 v12.6 a1.7,1.7 0 0,1 -1.7,1.7 h-4.6 a1.7,1.7 0 0,1 -1.7,-1.7 V5.7 a1.7,1.7 0 0,1 1.7,-1.7 z" />
+    <!-- vibration ticks -->
+    <path
+        android:strokeColor="#FF1A1A1C"
+        android:strokeWidth="1.6"
+        android:strokeLineCap="round"
+        android:pathData="M5.4,9.6 v4.8 M2.8,11.0 v2.0 M18.6,9.6 v4.8 M21.2,11.0 v2.0" />
+</vector>

@@ -28,6 +28,16 @@ public interface ScreenBrightnessInteractor {
     public val minGammaBrightness: GammaBrightness
 
     /**
+     * IchthysOS: minimum brightness for the current display as an absolute linear float. Same
+     * bounds the main slider uses to map gamma<->linear, so a second (floor) handle can convert
+     * its position to a real brightness value that lines up with the main handle.
+     */
+    public val minLinearBrightness: Flow<Float>
+
+    /** IchthysOS: maximum brightness for the current display as an absolute linear float. */
+    public val maxLinearBrightness: Flow<Float>
+
+    /**
      * Brightness in the Gamma space for the current display. It will always represent a value
      * between [minGammaBrightness] and [maxGammaBrightness]
      */

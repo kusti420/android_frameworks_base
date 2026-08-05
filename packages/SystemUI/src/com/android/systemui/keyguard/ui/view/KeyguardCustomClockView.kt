@@ -17,23 +17,37 @@
 package com.android.systemui.keyguard.ui.view
 
 import android.content.Context
+import android.content.ContextWrapper
+import android.content.res.AssetManager
+import android.content.res.Resources
 import android.database.ContentObserver
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.UserHandle
+import android.os.UserManager
 import android.provider.Settings
 import android.text.InputFilter
+import android.util.AttributeSet
+import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextClock
 import android.widget.TextView
+import com.airbnb.lottie.LottieAnimationView
+import com.airbnb.lottie.LottieDrawable
+import java.util.Calendar
 
 /**
  * IchthysOS custom lockscreen clock.
@@ -42,9 +56,17 @@ import android.widget.TextView
  * tuned live by the auxiliary secure settings written by the crDroid Settings "Custom clock style"
  * picker (color mode, custom color, size scale, opacity, top margin).
  *
- * Clock faces are built programmatically (no XML resources) so the whole render path lives under the
- * keyguard package. Each face here is authored to visually match its counterpart preview layout in
- * crDroidSettings so the picker previews faithfully.
+ * Faces are inflated **from the picker's own layout resources**, cross-package, out of
+ * `com.android.settings` (crDroidSettings' `res/layout/keyguard_clock_*.xml`). That is the exact
+ * same resource the picker preview inflates, so what the user picks is what the lockscreen shows -
+ * all 67 faces, not a hand-written subset. Resolution is by NAME (see [LAYOUT_NAMES], mirroring
+ * crDroidSettings `ClockUtils.CLOCK_LAYOUTS`), and every resource the layouts reference (fonts,
+ * drawables, raw Lottie JSON) is resolved out of the Settings resource table too, so nothing has to
+ * be duplicated into SystemUI - notably no new SystemUI `dimen` is added, which is what previously
+ * shifted the resource-ID table and crash-looped SystemUI at app-bind.
+ *
+ * If the Settings package or a given layout cannot be resolved, [legacyBuildClock] falls back to the
+ * original hand-written builders so the previously working faces never regress.
  *
  * When the style is 0 ("Default Clock") this view stays [GONE] and the stock AOSP keyguard clock is
  * shown instead (the picker leaves the stock clock/smartspace overlays enabled for style 0).
@@ -86,6 +108,7 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
+        stopWordTicker()
         context.contentResolver.unregisterContentObserver(observer)
     }
 
@@ -97,26 +120,43 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
             ?: def
 
     private fun rebuild() {
+        stopWordTicker()
         currentClock?.let { removeView(it) }
         currentClock = null
 
         val style =
             secureInt(Settings.Secure.LOCK_SCREEN_CUSTOM_CLOCK_STYLE, STYLE_DEFAULT)
-        android.util.Log.i("IchthysClock", "rebuild: style=$style width=$width height=$height")
         if (style == STYLE_DEFAULT) {
             visibility = GONE
             return
         }
         visibility = VISIBLE
 
-        val clock = buildClock(style)
+        val inflated = inflateFace(style)
+        val clock = inflated ?: legacyBuildClock(style)
+        Log.i(TAG, "rebuild: style=$style inflated=${inflated != null}")
         applyTheme(clock)
         applyContainerAttributes(clock)
 
-        val lp =
-            LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
-                gravity = clockGravity(style)
-            }
+        val lp: LayoutParams
+        if (inflated != null) {
+            // The layout root already carries its authored layout_width / layout_gravity; only the
+            // height is forced, because five faces declare match_parent height (authored for the
+            // full-screen picker preview) and would otherwise eat the whole Compose column.
+            lp =
+                (clock.layoutParams as? LayoutParams)
+                    ?: LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
+            lp.height = LayoutParams.WRAP_CONTENT
+            val g = lp.gravity
+            lp.gravity =
+                if (g == LayoutParams.UNSPECIFIED_GRAVITY) Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                else (g and HORIZONTAL_GRAVITY_BITS) or Gravity.TOP
+        } else {
+            lp =
+                LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
+                    gravity = clockGravity(style)
+                }
+        }
         addView(clock, lp)
         currentClock = clock
     }
@@ -130,9 +170,21 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
         clock.scaleX = scale
         clock.scaleY = scale
         clock.pivotY = 0f
-        clock.post { clock.pivotX = clock.width / 2f }
+        // Inflated roots are usually match_parent wide, so scaling has to pivot on the edge the face
+        // is actually aligned to, otherwise a start-aligned face grows off the padding at >100%.
+        clock.post { clock.pivotX = scalePivotX(clock) }
 
         setPadding(dp(24), dp(BASE_TOP_DP) + marginTopPx, dp(24), 0)
+    }
+
+    private fun scalePivotX(clock: View): Float {
+        val g = (clock as? LinearLayout)?.gravity ?: return clock.width / 2f
+        val abs = Gravity.getAbsoluteGravity(g, layoutDirection) and Gravity.HORIZONTAL_GRAVITY_MASK
+        return when (abs) {
+            Gravity.LEFT -> 0f
+            Gravity.RIGHT -> clock.width.toFloat()
+            else -> clock.width / 2f
+        }
     }
 
     /**
@@ -151,10 +203,20 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
             val roles = (view.tag as? String)?.split("|") ?: emptyList()
             val isAccent = roles.any { it.startsWith("accent") }
             val isText = roles.any { it.startsWith("text") }
-            when (mode) {
-                MODE_ACCENT -> if (isAccent || isText) view.setTextColor(accent)
-                MODE_CUSTOM -> if (isText) view.setTextColor(customColor)
-                // MODE_DEFAULT keeps the face's designed colors.
+            if (isAccent || isText) {
+                when (mode) {
+                    MODE_ACCENT -> view.setTextColor(accent)
+                    MODE_CUSTOM -> if (isText) view.setTextColor(customColor)
+                    // MODE_DEFAULT keeps the face's designed colors.
+                }
+            } else if (mode != MODE_DEFAULT && isRecolorable(view.currentTextColor)) {
+                // Roughly half of the crDroid layouts carry no role tags at all. Recolour those by
+                // heuristic so the colour modes still apply, but only for colours that are clearly
+                // "the default clock colour" (white / a system palette tone) - never the faces'
+                // deliberately designed colours (the IDE syntax highlighting, the OOS red hour, the
+                // transparent alignment spacers) and never near-black text, which on these layouts
+                // always sits on a light chip and would become unreadable.
+                view.setTextColor(if (mode == MODE_ACCENT) accent else customColor)
             }
             if (roles.contains("nolineheight")) {
                 view.includeFontPadding = false
@@ -167,11 +229,238 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
         }
     }
 
+    /** True for "generic" clock colours that a colour mode may safely override. */
+    private fun isRecolorable(color: Int): Boolean {
+        if (Color.alpha(color) < 0x40) return false // transparent alignment spacers
+        val lum = (0.2126f * Color.red(color) + 0.7152f * Color.green(color) +
+            0.0722f * Color.blue(color)) / 255f
+        if (lum < 0.15f) return false // black-on-white chips (stylish2 / stylish5 / stylish6)
+        return lum > 0.85f || paletteColors.contains(color or COLOR_ALPHA_MASK)
+    }
+
+    /** Opaque forms of the dynamic-colour tones the crDroid clock layouts actually reference. */
+    private val paletteColors: Set<Int> by lazy {
+        val out = HashSet<Int>()
+        for (palette in listOf("accent1", "accent2", "accent3")) {
+            for (shade in listOf(0, 10, 50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000)) {
+                val id = resources.getIdentifier("system_${palette}_$shade", "color", "android")
+                if (id != 0) out.add(context.getColor(id) or COLOR_ALPHA_MASK)
+            }
+        }
+        out
+    }
+
     private fun accentColor(): Int =
         context.getColor(android.R.color.system_accent1_100)
 
     // ---------------------------------------------------------------------------------------------
+    // Cross-package inflation of the picker's own layouts (primary render path).
+    // ---------------------------------------------------------------------------------------------
+
+    /**
+     * Inflates the crDroidSettings layout that the picker preview shows for [style], resolving every
+     * nested resource (font / drawable / raw) out of the Settings resource table.
+     *
+     * Returns null - so the caller can fall back to the hand-written builders - if the package or
+     * the layout cannot be resolved, or inflation throws.
+     */
+    private fun inflateFace(style: Int): View? {
+        if (style in PLACEHOLDER_STYLES) return null
+        val name = LAYOUT_NAMES.getOrNull(style) ?: return null
+        return try {
+            val res = context.packageManager.getResourcesForApplication(SETTINGS_PKG)
+            val layoutId = res.getIdentifier(name, "layout", SETTINGS_PKG)
+            if (layoutId == 0) {
+                Log.w(TAG, "layout $name not found in $SETTINGS_PKG")
+                return null
+            }
+            val inflater =
+                LayoutInflater.from(context).cloneInContext(ClockResContext(context, res))
+            inflater.setFactory2(LottieFactory(res, LOTTIE_RAW[style]))
+            val view = inflater.inflate(layoutId, this, false)
+            bindDynamicContent(view, res)
+            view
+        } catch (e: Exception) {
+            Log.w(TAG, "failed to inflate clock face $name", e)
+            null
+        }
+    }
+
+    /**
+     * A context that resolves *resources* against the Settings package while keeping SystemUI's
+     * class loader, main looper and everything else. This is what makes the compiled `@font/…`,
+     * `@drawable/…` and `@raw/…` ids inside the crDroid layouts resolve correctly: those ids belong
+     * to the Settings resource table, so the [Resources] (and the [Resources.Theme] that
+     * [Context.obtainStyledAttributes] goes through) must be the Settings ones.
+     *
+     * The class loader deliberately stays SystemUI's, so `com.airbnb.lottie.LottieAnimationView`
+     * still resolves out of SystemUI's own bundled Lottie.
+     */
+    private class ClockResContext(base: Context, private val res: Resources) : ContextWrapper(base) {
+        private val clockTheme: Resources.Theme =
+            res.newTheme().apply { applyStyle(android.R.style.Theme_DeviceDefault, true) }
+
+        override fun getResources(): Resources = res
+
+        override fun getAssets(): AssetManager = res.assets
+
+        override fun getTheme(): Resources.Theme = clockTheme
+    }
+
+    /**
+     * Constructs Lottie views without their [AttributeSet].
+     *
+     * `app:lottie_*` are library attributes: the ids baked into the Settings layout belong to
+     * Settings' copy of Lottie, while [LottieAnimationView] reads SystemUI's copy's ids. Letting the
+     * view parse those attributes would read unrelated entries out of the Settings table and can
+     * hand Lottie a bogus raw-resource id, whose default failure listener *throws*. So the animation
+     * is wired up explicitly here instead, and a swallowing failure listener is installed.
+     */
+    private class LottieFactory(private val res: Resources, private val rawName: String?) :
+        LayoutInflater.Factory2 {
+
+        override fun onCreateView(
+            parent: View?,
+            name: String,
+            context: Context,
+            attrs: AttributeSet,
+        ): View? {
+            if (name != KeyguardCustomClockView.LOTTIE_CLASS) return null
+            return LottieAnimationView(context).apply {
+                setFailureListener { t ->
+                    Log.w(KeyguardCustomClockView.TAG, "lottie composition failed", t)
+                }
+                val rawId =
+                    if (rawName == null) 0
+                    else res.getIdentifier(rawName, "raw", KeyguardCustomClockView.SETTINGS_PKG)
+                if (rawId != 0) {
+                    // Lottie auto-closes the stream once the async parse completes.
+                    setAnimation(res.openRawResource(rawId), rawName)
+                    setRepeatCount(LottieDrawable.INFINITE)
+                    playAnimation()
+                }
+            }
+        }
+
+        override fun onCreateView(name: String, context: Context, attrs: AttributeSet): View? =
+            onCreateView(null, name, context, attrs)
+    }
+
+    /**
+     * Fills in the placeholders the crDroid layouts ship with ("Username", "Device Name", "Eight
+     * Seventeen"), matched by the layouts' own role tags first and by id as a fallback.
+     */
+    @Suppress("DEPRECATION") // android.widget.AnalogClock: the "Simple Analog" face is built on it.
+    private fun bindDynamicContent(root: View, res: Resources) {
+        val idUserName = res.getIdentifier("user_name", "id", SETTINGS_PKG)
+        val idDeviceName = res.getIdentifier("device_name", "id", SETTINGS_PKG)
+        val idProfileIcon = res.getIdentifier("user_profile_icon", "id", SETTINGS_PKG)
+        val idWordHour = res.getIdentifier("word_clock", "id", SETTINGS_PKG)
+        val idWordMinute = res.getIdentifier("word_min", "id", SETTINGS_PKG)
+
+        forEachView(root) { v ->
+            val roles = (v.tag as? String)?.split("|") ?: emptyList()
+            when {
+                // "Simple Analog" declares wrap_content and the framework's default dial is a 380dp
+                // vector, so unconstrained it measures to the full column width. Clamp it.
+                v is android.widget.AnalogClock -> {
+                    val lp = v.layoutParams
+                    if (lp != null && lp.width == ViewGroup.LayoutParams.WRAP_CONTENT) {
+                        lp.width = dp(ANALOG_CLOCK_DP)
+                        lp.height = dp(ANALOG_CLOCK_DP)
+                        v.layoutParams = lp
+                    }
+                }
+                v is TextView &&
+                    (roles.contains("username") || (idUserName != 0 && v.id == idUserName)) ->
+                    userName()?.let { v.text = it }
+                v is TextView &&
+                    (roles.contains("device_name") || (idDeviceName != 0 && v.id == idDeviceName)) ->
+                    v.text = deviceName()
+                v is ImageView &&
+                    (roles.contains("profile_picture") ||
+                        (idProfileIcon != 0 && v.id == idProfileIcon)) ->
+                    userIcon()?.let { v.setImageDrawable(it) }
+            }
+        }
+
+        val hourWord = if (idWordHour == 0) null else root.findViewById<TextView>(idWordHour)
+        val minuteWord = if (idWordMinute == 0) null else root.findViewById<TextView>(idWordMinute)
+        if (hourWord != null || minuteWord != null) {
+            startWordTicker(hourWord, minuteWord)
+        }
+    }
+
+    private fun forEachView(view: View, action: (View) -> Unit) {
+        action(view)
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) forEachView(view.getChildAt(i), action)
+        }
+    }
+
+    private fun userName(): String? =
+        try {
+            context.getSystemService(UserManager::class.java)?.userName?.takeIf { it.isNotEmpty() }
+        } catch (e: Exception) {
+            null
+        }
+
+    private fun deviceName(): String =
+        Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME)
+            ?.takeIf { it.isNotEmpty() } ?: Build.MODEL
+
+    private fun userIcon(): Drawable? =
+        try {
+            context.getSystemService(UserManager::class.java)?.getUserIcon(context.userId)?.let {
+                BitmapDrawable(resources, it)
+            }
+        } catch (e: Exception) {
+            null
+        }
+
+    // ---------------------------------------------------------------------------------------------
+    // Word clock ("Text Clock", picker index 18). The layout ships static placeholder words; unlike
+    // every other face it has no TextClock to tick itself, so it is driven from here.
+    // ---------------------------------------------------------------------------------------------
+
+    private var wordTicker: Runnable? = null
+
+    private fun startWordTicker(hourWord: TextView?, minuteWord: TextView?) {
+        val tick =
+            object : Runnable {
+                override fun run() {
+                    updateWordClock(hourWord, minuteWord)
+                    val now = System.currentTimeMillis()
+                    handler.postDelayed(this, MINUTE_MS - (now % MINUTE_MS) + 100L)
+                }
+            }
+        wordTicker = tick
+        tick.run()
+    }
+
+    private fun stopWordTicker() {
+        wordTicker?.let { handler.removeCallbacks(it) }
+        wordTicker = null
+    }
+
+    private fun updateWordClock(hourWord: TextView?, minuteWord: TextView?) {
+        val cal = Calendar.getInstance()
+        val hour = cal.get(Calendar.HOUR).let { if (it == 0) 12 else it }
+        val minute = cal.get(Calendar.MINUTE)
+        hourWord?.text = numberToWord(hour)
+        minuteWord?.text = if (minute == 0) "O'Clock" else numberToWord(minute)
+    }
+
+    private fun numberToWord(n: Int): String =
+        when {
+            n < 20 -> WORD_UNITS[n]
+            n % 10 == 0 -> WORD_TENS[n / 10]
+            else -> WORD_TENS[n / 10] + "-" + WORD_UNITS[n % 10].lowercase()
+        }
+
+    // ---------------------------------------------------------------------------------------------
     // Clock faces. Each maps to a picker index in crDroidSettings ClockUtils.CLOCK_LAYOUTS.
+    // Retained as the fallback render path when cross-package inflation is unavailable.
     // ---------------------------------------------------------------------------------------------
 
     private fun clockGravity(style: Int): Int =
@@ -187,7 +476,7 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
             else -> Gravity.TOP or Gravity.CENTER_HORIZONTAL
         }
 
-    private fun buildClock(style: Int): View =
+    private fun legacyBuildClock(style: Int): View =
         when (style) {
             STYLE_OOS -> buildOos()
             STYLE_OOS2 -> buildOos2()
@@ -737,6 +1026,124 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
 
     companion object {
         const val VIEW_TAG = "ichthys_custom_clock"
+
+        private const val TAG = "IchthysClock"
+
+        /** crDroidSettings sources + res are compiled into the Settings apk. */
+        private const val SETTINGS_PKG = "com.android.settings"
+
+        private const val LOTTIE_CLASS = "com.airbnb.lottie.LottieAnimationView"
+
+        private val COLOR_ALPHA_MASK = 0xFF000000.toInt()
+
+        /** START | END | HORIZONTAL_GRAVITY_MASK - the horizontal bits of a gravity, RTL included. */
+        private val HORIZONTAL_GRAVITY_BITS =
+            Gravity.HORIZONTAL_GRAVITY_MASK or Gravity.RELATIVE_HORIZONTAL_GRAVITY_MASK
+
+        private const val MINUTE_MS = 60_000L
+
+        /** Rendered size of the "Simple Analog" face (its layout declares no size at all). */
+        private const val ANALOG_CLOCK_DP = 200
+
+        private val WORD_UNITS =
+            arrayOf(
+                "Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
+                "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen",
+                "Seventeen", "Eighteen", "Nineteen",
+            )
+
+        private val WORD_TENS =
+            arrayOf("", "", "Twenty", "Thirty", "Forty", "Fifty")
+
+        /**
+         * Picker index -> crDroidSettings layout resource name. Mirrors
+         * `crDroidSettings/src/com/crdroid/settings/fragments/lockscreen/ClockUtils.kt`
+         * `CLOCK_LAYOUTS`; index 0 ("Default Clock") is never inflated - style 0 hands the lockscreen
+         * back to the stock AOSP clock.
+         */
+        private val LAYOUT_NAMES =
+            arrayOf(
+                "keyguard_clock_default", // 0  Default Clock (unused, stock clock is shown)
+                "keyguard_clock_oos", // 1  OnePlus Clock
+                "keyguard_clock_oos2", // 2  OnePlus Clock 2
+                "keyguard_clock_center", // 3  Center Clock
+                "keyguard_clock_simple", // 4  Simple Clock
+                "keyguard_clock_miui", // 5  MIUI Clock
+                "keyguard_clock_ide", // 6  IDE Clock
+                "keyguard_clock_moto", // 7  Moto Clock
+                "keyguard_clock_stylish", // 8  Stylish Clock
+                "keyguard_clock_stylish2", // 9  Stylish Clock 2
+                "keyguard_clock_stylish3", // 10 Stylish Clock 3
+                "keyguard_clock_stylish4", // 11 Stylish Clock 4
+                "keyguard_clock_stylish5", // 12 Stylish Clock 5
+                "keyguard_clock_stylish6", // 13 Stylish Clock 6
+                "keyguard_clock_stylish7", // 14 Stylish Clock 7
+                "keyguard_clock_stylish8", // 15 Stylish Clock 8
+                "keyguard_clock_stylish9", // 16 Stylish Clock 9
+                "keyguard_clock_stylish10", // 17 Stylish Clock 10
+                "keyguard_clock_word", // 18 Text Clock
+                "keyguard_clock_life", // 19 LifeStyle Clock
+                "keyguard_clock_a9", // 20 Android 9 Vibe
+                "keyguard_clock_nos1", // 21 NothingOS 1 Clock
+                "keyguard_clock_nos2", // 22 NothingOS 2 Clock
+                "keyguard_clock_num", // 23 Stacked Clock
+                "keyguard_clock_accent", // 24 X Factor
+                "keyguard_clock_analog", // 25 Simple Analog
+                "keyguard_clock_block", // 26 Block
+                "keyguard_clock_bubble", // 27 Bubble
+                "keyguard_clock_label", // 28 Label Clock
+                "keyguard_clock_ios", // 29 iOS Clock
+                "keyguard_clock_taden", // 30 Taden Clock
+                "keyguard_clock_mont", // 31 Mont Clock
+                "keyguard_clock_encode", // 32 Encode Clock
+                "keyguard_clock_nos3", // 33 NOS Clock 3
+                "keyguard_anci_clock_outline", // 34 Anci Outline
+                "keyguard_anci_clock_ovalium", // 35 Anci Ovalium
+                "keyguard_anci_clock_rectangle", // 36 Anci Rectangle
+                "keyguard_anci_clock_wallet", // 37 Anci Wallet
+                "keyguard_anci_clockdate_clavicula", // 38 Anci Clavicula
+                "keyguard_anci_clockdate_kln", // 39 Anci KLN
+                "keyguard_anci_clockdate_miring", // 40 Anci Miring
+                "keyguard_anci_clockdate_scapula", // 41 Anci Scapula
+                "keyguard_anci_clockdate_sternum", // 42 Anci Sternum
+                "keyguard_sparkCircle", // 43 Spark Circle
+                "keyguard_sparkList", // 44 Spark List
+                "keyguard_clock_miui2", // 45 HyperOS Clock
+                "keyguard_clock_ios2", // 46 iOS 2
+                "keyguard_clock_ios3", // 47 iOS 3
+                "keyguard_clock_ios4", // 48 iOS 4
+                "keyguard_clock_ios5", // 49 iOS 5
+                "keyguard_clock_ios6", // 50 iOS 6
+                "keyguard_clock_ios7", // 51 iOS 7
+                "keyguard_clock_ios8", // 52 iOS 8
+                "keyguard_clock_ios9", // 53 iOS 9
+                "keyguard_clock_ios10", // 54 iOS 10
+                "keyguard_clock_ios11", // 55 iOS 11
+                "keyguard_clock_ios12", // 56 iOS 12
+                "keyguard_clock_ios13", // 57 iOS 13
+                "keyguard_clock_ios14", // 58 iOS 14
+                "keyguard_clock_big1", // 59 Big 1
+                "keyguard_clock_big2", // 60 Big 2
+                "keyguard_clock_big3", // 61 Big 3
+                "keyguard_clock_big4", // 62 Big 4
+                "keyguard_clock_sweet", // 63 Sweet
+                "keyguard_clock_pixel", // 64 Pixel
+                "keyguard_clock_samurai", // 65 Samurai
+                "keyguard_clock_gateway", // 66 Gateway
+                "keyguard_clock_tall", // 67 Tall clock
+            )
+
+        /** Picker index -> `@raw` Lottie animation the face's LottieAnimationView plays. */
+        private val LOTTIE_RAW: Map<Int, String> =
+            mapOf(35 to "ovalium", 36 to "rectangle", 37 to "wallet")
+
+        /**
+         * Indices whose crDroid layout is a stub rather than a clock, so inflating it would leave the
+         * lockscreen with no time at all. 33 "NOS Clock 3" is a single TextView reading "Nothing
+         * analog clock (No preview)" - it was never implemented upstream. These fall through to
+         * [legacyBuildClock] so the user always gets a readable clock.
+         */
+        private val PLACEHOLDER_STYLES = setOf(33)
 
         private const val STYLE_DEFAULT = 0
         private const val STYLE_OOS = 1

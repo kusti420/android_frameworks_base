@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The Android Open Source Project. Licensed under the Apache License 2.0. -->
+<!--
+  One card in the Stack (tilt) fan.
+
+  Geometry, all of it measured off a One UI 8 screenshot at 1080x2400 / 420dpi and then converted
+  to dp, so it is resolution independent:
+
+      card face      260dp x 528dp   (measured 681 x 1387 px)
+      corner radius  20dp            (measured ~53 px)
+      app icon       52dp            (measured ~138 px of masked artwork)
+      fan step       72dp            (measured 188 px between neighbouring card centres)
+
+  Three nested frames rather than one, because each does a job the others cannot:
+
+  * The ROOT is the item view. It is the full height of the list so that StackStyle can centre the
+    fan vertically without the layout manager's help (a horizontal LinearLayoutManager pins its
+    children to the top of the viewport), and exactly one card wide so that touch dispatch — which
+    IS Z ordered, unlike ItemTouchHelper's hit test — hands taps to the card that is visually on
+    top. StackStyle shrinks the layout footprint back down to one 72dp step with a negative item
+    decoration; the card keeps its real width and simply overhangs its neighbours.
+
+  * The GROUP is the part that recedes: card face plus the icon that overhangs it. Its height is
+    the face plus one icon (528 + 52) and the face is centred in it, which puts the group's centre
+    exactly on the face's centre — that is the point StackStyle scales about, and it can read it
+    straight off this view instead of having the numbers hard coded on both sides. The bottom
+    margin lifts the fan clear of the host's "Close all" pill.
+
+  * The FACE is the card itself: rounded, clipped to its own outline, raised for a shadow.
+
+  No ✕ and no title on the card: One UI's tilt stack shows neither (its "App label" switch is off
+  by default), and RecentsCardBinder null-checks every view, so leaving them out is all it takes.
+  The zero-sized, GONE dismiss view is not an affordance — it is the only handle the host offers
+  onto dismissal (OneUiRecentsActivity wires a click listener onto @id/oneui_recents_card_dismiss
+  and nothing else), so StackStyle's swipe-to-dismiss calls through it. callOnClick() invokes the
+  listener directly and does not care that the view is GONE.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="260dp"
+    android:layout_height="match_parent"
+    android:clipChildren="false"
+    android:clipToPadding="false"
+    android:clickable="true"
+    android:focusable="true">
+
+    <!-- No bottom margin here on purpose. This originally carried 72dp to clear the host's
+         floating "Close all" pill, but the host RecyclerView now reserves that space itself as
+         bottom padding. With center_vertical gravity a bottom margin also shifts the group up by
+         half its value, so keeping both double-counted the clearance and sat the deck ~36dp too
+         high on screen. -->
+    <FrameLayout
+        android:id="@+id/oneui_recents_stack_group"
+        android:layout_width="match_parent"
+        android:layout_height="580dp"
+        android:layout_gravity="center_vertical"
+        android:clipChildren="false">
+
+        <FrameLayout
+            android:id="@+id/oneui_recents_stack_face"
+            android:layout_width="match_parent"
+            android:layout_height="528dp"
+            android:layout_gravity="center_vertical"
+            android:background="@drawable/oneui_recents_stack_card_bg"
+            android:clipToOutline="true"
+            android:elevation="10dp">
+
+            <!-- MATRIX asks RecentsCardBinder for the One UI treatment: the snapshot scaled to the
+                 card's width and pinned to its top, so the card reads as a small live window onto
+                 the app rather than a letterboxed thumbnail. -->
+            <ImageView
+                android:id="@id/oneui_recents_card_thumbnail"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="matrix"
+                android:contentDescription="@null" />
+
+            <!-- Depth dimming. A scrim over the snapshot rather than alpha on the card, because
+                 the background here is blurred wallpaper, not a scrim: fading the card itself
+                 would make the wallpaper show THROUGH the cards behind the front one, which reads
+                 as ghosting rather than as distance. -->
+            <View
+                android:id="@+id/oneui_recents_stack_dim"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="#FF000000"
+                android:alpha="0" />
+
+        </FrameLayout>
+
+        <!-- Centred on the face's top edge: the group is one icon taller than the face and the
+             face is centred in it, so an icon pinned to the group's top lands with its own centre
+             exactly on the face's top edge. Elevated past the face so it draws over it — siblings
+             are drawn in Z order, and the face is raised for its shadow. -->
+        <ImageView
+            android:id="@id/oneui_recents_card_icon"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:layout_gravity="top|center_horizontal"
+            android:elevation="12dp"
+            android:scaleType="fitCenter"
+            android:contentDescription="@null" />
+
+    </FrameLayout>
+
+    <View
+        android:id="@id/oneui_recents_card_dismiss"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone" />
+
+</FrameLayout>

@@ -36,6 +36,7 @@ import com.android.systemui.shade.domain.interactor.enableDualShade
 import com.android.systemui.shade.domain.interactor.enableSingleShade
 import com.android.systemui.shade.domain.interactor.enableSplitShade
 import com.android.systemui.testKosmos
+import com.android.systemui.util.settings.fakeSettings
 import com.google.common.truth.Truth.assertThat
 import org.junit.Before
 import org.junit.Test
@@ -59,7 +60,7 @@ class QSColumnsInteractorTest : SysuiTestCase() {
                 R.integer.quick_settings_split_shade_num_columns,
                 3,
             )
-            qsColumnsRepository = QSColumnsRepository(mainResources, configurationRepository)
+            qsColumnsRepository = QSColumnsRepository(mainResources, configurationRepository, fakeSettings)
         }
     private lateinit var underTest: QSColumnsInteractor
 

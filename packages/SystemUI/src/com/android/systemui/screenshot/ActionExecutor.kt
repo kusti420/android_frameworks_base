@@ -38,6 +38,7 @@ import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.user.data.repository.UserRepository
 import com.android.systemui.user.utils.UserScopedService
 import dagger.assisted.Assisted
+import kotlinx.coroutines.delay
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.CoroutineScope
@@ -74,6 +75,27 @@ constructor(
                 windowTransition.second,
             )
         }
+        // IchthysOS: fallback dismiss — if the target activity doesn't participate in
+        // shared element transitions (e.g. Gallery3D), hideSharedElements() never fires
+        // and the screenshot preview lingers indefinitely. Dismiss after a timeout.
+        applicationScope.launch("$TAG#transitionTimeout") {
+            delay(1500)
+            if (isPendingSharedTransition) {
+                Log.d(TAG, "Shared transition timed out, dismissing")
+                isPendingSharedTransition = false
+                finishDismiss.invoke()
+            }
+        }
+    }
+
+    // IchthysOS: launch intent and dismiss without shared element transition.
+    // Used for edit action when the target editor (Gallery3D) doesn't support
+    // shared element transitions, which would cause the preview to linger.
+    fun launchIntentAndDismiss(intent: Intent, user: UserHandle) {
+        applicationScope.launch("$TAG#launchAndDismiss") {
+            intentExecutor.launchIntent(intent, user, true, null, null)
+        }
+        viewProxy.requestDismissal(null)
     }
 
     fun sendPendingIntent(pendingIntent: PendingIntent) {

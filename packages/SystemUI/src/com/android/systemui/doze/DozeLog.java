@@ -555,6 +555,9 @@ public class DozeLog implements Dumpable {
             case PULSE_REASON_FINGERPRINT_PULSE_SHOW_AUTH_UI: return "fingerprint-pulse-auth-ui";
             case PULSE_REASON_FINGERPRINT_PULSE_SHOW_FULL_UI: return "fingerprint-pulse-full-ui";
             case PULSE_REASON_MINMODE: return "minmode";
+            case REASON_SENSOR_TILT: return "tilt";
+            case REASON_SENSOR_HANDWAVE: return "handwave";
+            case REASON_SENSOR_POCKET: return "pocket";
             default: throw new IllegalArgumentException("invalid reason: " + pulseReason);
         }
     }
@@ -589,7 +592,8 @@ public class DozeLog implements Dumpable {
             PULSE_REASON_FINGERPRINT_PULSE_SHOW_FULL_UI,
             REASON_SENSOR_UDFPS_LONG_PRESS,
             REASON_SENSOR_QUICK_PICKUP,
-            PULSE_REASON_FINGERPRINT_ACTIVATED, PULSE_REASON_MINMODE
+            PULSE_REASON_FINGERPRINT_ACTIVATED, PULSE_REASON_MINMODE,
+            REASON_SENSOR_TILT, REASON_SENSOR_HANDWAVE, REASON_SENSOR_POCKET
     })
     public @interface Reason {}
     public static final int PULSE_REASON_NONE = -1;
@@ -609,6 +613,12 @@ public class DozeLog implements Dumpable {
     public static final int PULSE_REASON_FINGERPRINT_PULSE_SHOW_AUTH_UI = 13;
     public static final int PULSE_REASON_FINGERPRINT_PULSE_SHOW_FULL_UI = 14;
     public static final int PULSE_REASON_MINMODE = 15;
+    /** crDroid doze gesture: device tilted/raised (TYPE_TILT_DETECTOR). */
+    public static final int REASON_SENSOR_TILT = 16;
+    /** crDroid doze gesture: hand waved over the proximity sensor (short near->far). */
+    public static final int REASON_SENSOR_HANDWAVE = 17;
+    /** crDroid doze gesture: device removed from a pocket/bag (long near->far). */
+    public static final int REASON_SENSOR_POCKET = 18;
 
-    public static final int TOTAL_REASONS = 16;
+    public static final int TOTAL_REASONS = 19;
 }

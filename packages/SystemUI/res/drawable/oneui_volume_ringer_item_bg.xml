@@ -17,9 +17,11 @@
 <!-- Custom Options: One UI unselected ringer button - a neutral-dark rounded well. The accent lives
      only on the active icon, never on the button fill. Same inset/shape structure as the stock
      volume_ringer_item_bg so the binder's InsetDrawable -> GradientDrawable cast keeps working.
+     The 6dp inset shrinks the 48dp drawer button down to a 36dp well, exactly the width of the One
+     UI slider capsule (OneUiVolumeSpecs.capsuleWidth), so the button and the capsule line up.
      Original asset. -->
 <inset xmlns:android="http://schemas.android.com/apk/res/android"
-    android:inset="4dp">
+    android:inset="6dp">
     <shape android:shape="rectangle">
         <corners android:radius="@dimen/volume_dialog_background_square_corner_radius" />
         <solid android:color="#FF2A2A2C" />

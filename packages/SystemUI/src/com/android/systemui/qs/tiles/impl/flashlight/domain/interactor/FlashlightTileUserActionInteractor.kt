@@ -26,6 +26,7 @@ import com.android.systemui.qs.tiles.base.domain.interactor.QSTileUserActionInte
 import com.android.systemui.qs.tiles.base.domain.model.QSTileInput
 import com.android.systemui.qs.tiles.base.shared.model.QSTileUserAction
 import com.android.systemui.statusbar.policy.FlashlightController
+import android.util.Log
 import dagger.Lazy
 import javax.inject.Inject
 
@@ -43,15 +44,26 @@ constructor(
         with(input) {
             when (action) {
                 is QSTileUserAction.Click -> {
+                    Log.e(TAG, "Click: strengthFlag=${FlashlightStrength.isEnabled} data=${input.data} monkey=${ActivityManager.isUserAMonkey()}")
                     if (FlashlightStrength.isEnabled) {
-                        if (
-                            !ActivityManager.isUserAMonkey() &&
-                                input.data is FlashlightModel.Available.Level
-                        ) {
-                            // Note: no Click response for Binary state. See ToggleClick.
-                            flashlightInteractor.get().setEnabled(true)
-                            // the ui code runs on the main thread
-                            flashlightDialogDelegate.get().showDialog(input.action.expandable)
+                        if (!ActivityManager.isUserAMonkey()) {
+                            when (input.data) {
+                                is FlashlightModel.Available.Level -> {
+                                    Log.e(TAG, "Click: Level state, showing brightness dialog")
+                                    flashlightInteractor.get().setEnabled(true)
+                                    // the ui code runs on the main thread
+                                    flashlightDialogDelegate.get().showDialog(input.action.expandable)
+                                }
+                                // IchthysOS: handle Binary state on Click — devices without
+                                // adjustable brightness levels should still toggle on tap
+                                is FlashlightModel.Available.Binary -> {
+                                    Log.e(TAG, "Click: Binary state enabled=${input.data.enabled}, toggling to ${!input.data.enabled}")
+                                    flashlightController.setFlashlight(!input.data.enabled)
+                                }
+                                else -> {
+                                    Log.e(TAG, "Click: unhandled state ${input.data}")
+                                }
+                            }
                         }
                     } else { // preserve old behavior at the cost of some redundancy
                         if (
@@ -74,4 +86,8 @@ constructor(
                 is QSTileUserAction.LongClick -> {}
             }
         }
+
+    companion object {
+        private const val TAG = "FlashTileAction"
+    }
 }

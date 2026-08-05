@@ -90,9 +90,7 @@ public class UnlaunchableAppActivity extends Activity
             return;
         }
 
-        boolean showEmergencyCallButton =
-                (targetPackageName != null && targetPackageName.equals(
-                        mTelecomManager.getDefaultDialerPackage(UserHandle.of(mUserId))));
+        boolean showEmergencyCallButton = false;
 
         final AlertDialog.Builder builder;
         if (showEmergencyCallButton) {

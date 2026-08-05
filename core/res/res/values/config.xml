@@ -1527,7 +1527,8 @@
     <!-- Enable emergency call when sim is locked or puk locked. Some countries/carriers do not
          allow emergency calls to be placed without the IMSI, which is locked in the SIM.
          If so, this should be set to 'false' in an overlay. -->
-    <bool name="config_enable_emergency_call_while_sim_locked">true</bool>
+    <!-- IchthysOS: no emergency call affordances. -->
+    <bool name="config_enable_emergency_call_while_sim_locked">false</bool>
 
     <!-- Is the lock-screen disabled for new users by default -->
     <bool name="config_disableLockscreenByDefault">false</bool>
@@ -4676,7 +4677,8 @@
     <bool name="config_emergencyGestureEnabled">false</bool>
 
     <!-- Default value for Use Emergency SOS in Settings false = disabled, true = enabled -->
-    <bool name="config_defaultEmergencyGestureEnabled">true</bool>
+    <!-- IchthysOS: no emergency affordances. -->
+    <bool name="config_defaultEmergencyGestureEnabled">false</bool>
 
     <!-- Default value for Use Play countdown alarm in Settings false = disabled, true = enabled -->
     <bool name="config_defaultEmergencyGestureSoundEnabled">false</bool>
@@ -4983,8 +4985,8 @@
 
     <!-- Do not translate. Mcc codes whose existence trigger the presence of emergency
          affordances-->
+    <!-- IchthysOS: no emergency affordances. -->
     <string-array name="config_emergency_iso_country_codes" translatable="false">
-        <item>in</item>
     </string-array>
 
     <!-- Package name for the device provisioning package. -->

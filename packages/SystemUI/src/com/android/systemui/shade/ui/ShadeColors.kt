@@ -22,11 +22,38 @@ import com.android.internal.graphics.ColorUtils
 import com.android.systemui.res.R
 
 object ShadeColors {
-    /** Custom Options "pitch black": paint the shade/QS panel opaque black over the blur. */
-    private const val BLACK = 0xFF000000.toInt()
-
+    /**
+     * IchthysOS: true when the Abyss palette is selected in the Theme Engine
+     * (Settings.Secure theme_engine_style_mode: 0 = Monet, 1 = Abyss). Was custom_pitch_black,
+     * which tied the shade's whole appearance to the pure-black switch; that switch now only
+     * drives the bottom rung of the surface ladder, which these colours read through.
+     */
     private fun isPitchBlack(context: Context): Boolean =
-        Settings.Secure.getInt(context.contentResolver, "custom_pitch_black", 0) == 1
+        Settings.Secure.getInt(context.contentResolver, "theme_engine_style_mode", 0) == 1
+
+    /**
+     * IchthysOS: pitch black no longer means flat #000 for every shade surface. ThemeOverlayHelper
+     * derives a tinted near-black ladder from the user's accent seed (black -> dark blue ->
+     * purple-ish blue) and publishes it on the system_* dark roles, so the shade reads those
+     * instead of hardcoding black and stays consistent with Settings, QS and every app that
+     * follows the system dark theme. These are deliberately the *_dark roles: pitch black is a
+     * dark-only mode, and the shade must not pick up light-theme surfaces when the user has the
+     * system in light mode.
+     */
+    private fun ladder(context: Context, colorRes: Int): Int =
+        context.resources.getColor(colorRes, context.theme)
+
+    /** Deepest rung - true black, for the scrim that sits behind everything. */
+    private fun pitchBlackBackground(context: Context): Int =
+        ladder(context, android.R.color.system_background_dark)
+
+    /** Base panel surface - the shade/QS panel itself. */
+    private fun pitchBlackPanel(context: Context): Int =
+        ladder(context, android.R.color.system_surface_dark)
+
+    /** Container rung - the rounded rect notifications sit on, one step above the panel. */
+    private fun pitchBlackContainer(context: Context): Int =
+        ladder(context, android.R.color.system_surface_container_dark)
 
     /**
      * Calculate notification shade panel color.
@@ -38,7 +65,7 @@ object ShadeColors {
      */
     @JvmStatic
     fun shadePanel(context: Context, blurSupported: Boolean, withScrim: Boolean): Int {
-        if (isPitchBlack(context)) return BLACK
+        if (isPitchBlack(context)) return pitchBlackPanel(context)
         return if (blurSupported) {
             if (withScrim) {
                 ColorUtils.compositeColors(
@@ -55,7 +82,7 @@ object ShadeColors {
 
     @JvmStatic
     fun notificationScrim(context: Context, blurSupported: Boolean): Int {
-        if (isPitchBlack(context)) return BLACK
+        if (isPitchBlack(context)) return pitchBlackPanel(context)
         return if (blurSupported) {
             notificationScrimStandard(context)
         } else {
@@ -65,7 +92,7 @@ object ShadeColors {
 
     @JvmStatic
     fun shadePanelScrimBehind(context: Context): Int {
-        if (isPitchBlack(context)) return BLACK
+        if (isPitchBlack(context)) return pitchBlackBackground(context)
         return context.resources.getColor(
             com.android.internal.R.color.shade_panel_scrim,
             context.theme,
@@ -81,7 +108,7 @@ object ShadeColors {
         blurSupported: Boolean,
         composited: Boolean,
     ): Int {
-        if (isPitchBlack(context)) return BLACK
+        if (isPitchBlack(context)) return pitchBlackContainer(context)
         val surfaceEffect0Color =
             context.resources.getColor(
                 com.android.internal.R.color.customColorSurfaceEffect0,

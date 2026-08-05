@@ -94,6 +94,13 @@ class LockSettingsStorage {
     private static final String REPAIR_MODE_DIRECTORY = "repair-mode/";
     private static final String REPAIR_MODE_PERSISTENT_FILE = "pst";
 
+    /**
+     * IchthysOS: salted scrypt hash of the user's duress ("emergency wipe") credential.  Lives in
+     * device-encrypted storage because it must be checkable at the first unlock after boot, before
+     * credential-encrypted storage exists.  See {@link DuressCredentialManager}.
+     */
+    private static final String DURESS_CREDENTIAL_FILE = "duress.dat";
+
     private static final Object DEFAULT = new Object();
 
     private static final String[] SETTINGS_TO_BACKUP = new String[] {
@@ -415,6 +422,33 @@ class LockSettingsStorage {
 
     public void deleteRepairModePersistentData() {
         deleteFile(getRepairModePersistentDataFile());
+    }
+
+    /**
+     * IchthysOS: file holding the salted scrypt hash of the user's duress credential.  Stored in
+     * the user's device-encrypted system directory, next to the synthetic password state.
+     */
+    @VisibleForTesting
+    File getDuressCredentialFile(int userId) {
+        // Derived from the synthetic password directory (i.e. /data/system_de/<userId>/spblob) so
+        // that tests which redirect that directory redirect this file too.
+        return new File(getSyntheticPasswordDirectoryForUser(userId).getParentFile(),
+                DURESS_CREDENTIAL_FILE);
+    }
+
+    /** Returns the serialized duress credential data for the user, or null if there is none. */
+    public byte[] readDuressCredentialData(int userId) {
+        return readFile(getDuressCredentialFile(userId));
+    }
+
+    /** Atomically replaces the user's duress credential data. */
+    public void writeDuressCredentialData(int userId, byte[] data) {
+        writeFile(getDuressCredentialFile(userId), data);
+    }
+
+    /** Removes the user's duress credential data, zeroizing the file first. */
+    public void deleteDuressCredentialData(int userId) {
+        deleteFile(getDuressCredentialFile(userId));
     }
 
     /**

@@ -1077,8 +1077,10 @@ public class RecoverableKeyStoreManager {
                     createLockscreenCredential(keyguardCredentialsType, decryptedCredentials)) {
                 ArrayUtils.zeroize(decryptedCredentials);
                 decryptedCredentials = null;
-                VerifyCredentialResponse verifyResponse =
-                        lockSettingsService.verifyCredential(credential, userId, 0);
+                // IchthysOS: a guess arriving from a remote device must never be able to trigger
+                // the duress wipe.  Only credentials typed locally at a credential prompt do.
+                VerifyCredentialResponse verifyResponse = lockSettingsService.verifyCredential(
+                        credential, userId, 0, /* allowDuressTrigger= */ false);
                 return handleVerifyCredentialResponse(verifyResponse, userId);
             }
         } finally {
