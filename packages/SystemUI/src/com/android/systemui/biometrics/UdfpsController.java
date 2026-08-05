@@ -34,7 +34,10 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.graphics.Color;
+import android.graphics.PixelFormat;
 import android.graphics.Rect;
+import android.graphics.drawable.GradientDrawable;
 import android.hardware.biometrics.BiometricFingerprintConstants;
 import android.hardware.biometrics.BiometricPrompt;
 import android.hardware.biometrics.SensorProperties;
@@ -50,12 +53,14 @@ import android.os.CancellationSignal;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.os.SystemProperties;
 import android.os.Trace;
 import android.os.VibrationAttributes;
 import android.os.VibrationEffect;
 import android.provider.Settings;
 import android.util.Log;
 import android.view.HapticFeedbackConstants;
+import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
@@ -205,6 +210,13 @@ public class UdfpsController implements DozeReceiver, Dumpable {
     // Optional custom "recognizing" animation played behind the UDFPS icon on the keyguard.
     // Loaded from the external com.crdroid.udfps.animations package; null when unavailable.
     @Nullable private UdfpsAnimation mUdfpsAnimation;
+
+    // White circle overlay for optical UDFPS illumination (replaces removed UdfpsSurfaceView).
+    @Nullable private View mIlluminationView;
+    @Nullable private View mFodDimView;
+    // FOD dim layer: full-screen black overlay to reduce light bleed into the optical sensor.
+    // Samsung's kernel DRM pipeline would normally create this, but the SurfaceFlinger UDFPS
+    // extension is not present in this tree, so we create it manually here.
 
     // The ID of the pointer for which ACTION_DOWN has occurred. -1 means no pointer is active.
     private int mActivePointerId = MotionEvent.INVALID_POINTER_ID;
@@ -878,6 +890,11 @@ public class UdfpsController implements DozeReceiver, Dumpable {
                 mFingerprintManager.onUdfpsUiEvent(FingerprintManager.UDFPS_UI_OVERLAY_SHOWN,
                         overlay.getRequestId(), mSensorProps.sensorId);
             }
+            // Put the stray-light dim up once for the whole FOD session so it
+            // never flashes per touch. Only the illumination cycles per touch.
+            if (isOptical() && isDimSessionHeld()) {
+                showDimLayer();
+            }
         } else {
             Log.d(TAG, "showUdfpsOverlay | the overlay is already showing");
         }
@@ -896,6 +913,8 @@ public class UdfpsController implements DozeReceiver, Dumpable {
                 mUdfpsAnimation.setIsKeyguard(false);
             }
             final boolean removed = mOverlay.hide();
+            hideIlluminationOverlay();
+            hideDimLayer();
             mKeyguardViewManager.hideAlternateBouncer(
                     /* updateScrim */ true,
                     /* clearDismissAction */ false
@@ -913,6 +932,7 @@ public class UdfpsController implements DozeReceiver, Dumpable {
         if (!isOptical()) {
             return;
         }
+        hideIlluminationOverlay();
         if (mUdfpsDisplayMode != null) {
             mUdfpsDisplayMode.disable(null);
         }
@@ -1116,6 +1136,10 @@ public class UdfpsController implements DozeReceiver, Dumpable {
             mDeviceEntryFaceAuthInteractor.onUdfpsSensorTouched();
         }
         mOnFingerDown = true;
+        if (isOptical()) {
+            Log.e(TAG, "onFingerDown | isOptical=true, calling showIlluminationOverlay");
+            showIlluminationOverlay();
+        }
         mFingerprintManager.onPointerDown(requestId, mSensorProps.sensorId, pointerId, x, y,
                 minor, major, orientation, time, gestureStart, isAod);
         Trace.endAsyncSection("UdfpsController.e2e.onPointerDown", 0);
@@ -1171,6 +1195,7 @@ public class UdfpsController implements DozeReceiver, Dumpable {
             mFingerprintManager.onPointerUp(requestId, mSensorProps.sensorId, pointerId, x,
                     y, minor, major, orientation, time, gestureStart, isAod);
             if (isOptical()) {
+                hideIlluminationOverlay();
                 for (Callback cb : mCallbacks) {
                     cb.onFingerUp();
                 }
@@ -1189,7 +1214,7 @@ public class UdfpsController implements DozeReceiver, Dumpable {
         }
         if (com.android.internal.util.crdroid.Utils.isPackageInstalled(mContext,
                 "com.crdroid.udfps.animations")) {
-            mUdfpsAnimation = new UdfpsAnimation(mContext, mWindowManager, mSensorProps);
+            mUdfpsAnimation = new UdfpsAnimation(mContext, mWindowManager, mSensorProps, mKeyguardStateController);
             mUdfpsAnimation.updatePosition();
         }
     }
@@ -1207,6 +1232,191 @@ public class UdfpsController implements DozeReceiver, Dumpable {
     private void hideUdfpsAnimation() {
         if (mUdfpsAnimation != null) {
             mUdfpsAnimation.hide();
+        }
+    }
+
+    private void showIlluminationOverlay() {
+        if (mIlluminationView != null) {
+            Log.e(TAG, "showIlluminationOverlay | skipped, view already exists");
+            return;
+        }
+
+        final Rect bounds = mOverlayParams.getSensorBounds();
+        if (bounds.isEmpty()) {
+            Log.e(TAG, "showIlluminationOverlay | sensor bounds empty, overlayParams=" + mOverlayParams);
+            return;
+        }
+
+        Log.e(TAG, "showIlluminationOverlay | creating white circle at bounds=" + bounds);
+
+        // Optional dim layer, added BEFORE the circle so the circle stays on top.
+        // Blocks stray light from the surrounding screen (the whole panel sits at
+        // 547 nits during finger-mask HBM), which measurably matters: the only run
+        // that ever cleared the rem=92 enrollment stage had this layer.
+        // Held for the whole enrollment session (see showUdfpsOverlay) so it does
+        // not flash per touch — only the illumination itself needs to cycle.
+        if (!isDimSessionHeld()) {
+            showDimLayer();
+        }
+
+        // === ILLUMINATION CIRCLE ===
+        // The sensor sees light from this circle reflected off the finger.
+        View view = new View(mContext);
+        GradientDrawable circle = new GradientDrawable();
+        circle.setShape(GradientDrawable.OVAL);
+        circle.setColor(getCircleColor());
+        view.setBackground(circle);
+
+        final int scale = SystemProperties.getInt(PROP_CIRCLE_SCALE, 100);
+        if (scale != 100) {
+            final int dx = bounds.width() * (scale - 100) / 200;
+            final int dy = bounds.height() * (scale - 100) / 200;
+            bounds.inset(-dx, -dy);
+            Log.e(TAG, "showIlluminationOverlay | circle scaled to " + scale + "% -> " + bounds);
+        }
+
+        WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                bounds.width(),
+                bounds.height(),
+                WindowManager.LayoutParams.TYPE_NAVIGATION_BAR_PANEL,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                        // Without FLAG_LAYOUT_IN_SCREEN the y offset is measured from
+                        // below the status bar, drawing the illumination disc ~100px
+                        // BELOW the sensor. Matches Utils.FINGERPRINT_OVERLAY_LAYOUT_PARAM_FLAGS.
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.TRANSLUCENT);
+        params.gravity = Gravity.TOP | Gravity.LEFT;
+        params.x = bounds.left;
+        params.y = bounds.top;
+        // Do not let system-bar insets shift the disc, and allow it to sit under
+        // a display cutout region if the panel geometry ever requires it.
+        params.setFitInsetsTypes(0);
+        params.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+        params.setTitle("UdfpsIllumination");
+        params.privateFlags = WindowManager.LayoutParams.PRIVATE_FLAG_TRUSTED_OVERLAY;
+        // Keep the illumination disc out of screenshots/recordings, matching
+        // OneUI (whose FOD light never appears in a screengrab). Purely
+        // cosmetic — it does not change what the sensor sees.
+        params.flags |= WindowManager.LayoutParams.FLAG_SECURE;
+
+        try {
+            mWindowManager.addView(view, params);
+            mIlluminationView = view;
+            // Report where the disc ACTUALLY landed on screen vs where the sensor is.
+            final Rect want = new Rect(bounds);
+            view.post(() -> {
+                int[] loc = new int[2];
+                view.getLocationOnScreen(loc);
+                Log.e(TAG, "illumination placement | requested=" + want
+                        + " actualOnScreen=[" + loc[0] + "," + loc[1] + " "
+                        + view.getWidth() + "x" + view.getHeight() + "]"
+                        + (loc[0] == want.left && loc[1] == want.top ? " MATCH" : " *** OFFSET ***"));
+            });
+            Log.e(TAG, "showIlluminationOverlay | SUCCESS bounds=" + bounds
+                    + " size=" + bounds.width() + "x" + bounds.height());
+        } catch (RuntimeException e) {
+            Log.e(TAG, "showIlluminationOverlay | failed", e);
+        }
+    }
+
+    // ---- Runtime-tunable UDFPS optics (no rebuild needed to sweep these) ----
+    //   persist.sys.udfps.dim_alpha    0-255  black overlay alpha, 0 = no dim   (default 0)
+    //   persist.sys.udfps.dim_session  bool   dim held for whole enroll session (default true)
+    //   persist.sys.udfps.circle_scale int %  illumination disc size            (default 100)
+    //   persist.sys.udfps.circle_color hex    ARGB circle colour                (default FFFFFFFF)
+    // Apply with e.g.  adb shell setprop persist.sys.udfps.dim_alpha 230
+    // then leave and re-enter the enrollment screen (no reboot required).
+    private static final String PROP_DIM_ALPHA = "persist.sys.udfps.dim_alpha";
+    private static final String PROP_DIM_SESSION = "persist.sys.udfps.dim_session";
+    private static final String PROP_CIRCLE_SCALE = "persist.sys.udfps.circle_scale";
+    private static final String PROP_CIRCLE_COLOR = "persist.sys.udfps.circle_color";
+
+    private boolean isDimSessionHeld() {
+        return SystemProperties.getBoolean(PROP_DIM_SESSION, true);
+    }
+
+    private int getCircleColor() {
+        try {
+            return (int) Long.parseLong(
+                    SystemProperties.get(PROP_CIRCLE_COLOR, "FFFFFFFF"), 16);
+        } catch (NumberFormatException e) {
+            return 0xFFFFFFFF;
+        }
+    }
+
+    private void showDimLayer() {
+        if (mFodDimView != null) {
+            return;
+        }
+        // Default 0 = no dim. The dim layer was only ever a crutch for the
+        // mispositioned illumination disc (see FLAG_LAYOUT_IN_SCREEN above);
+        // with the disc correctly over the sensor, enrollment and auth both
+        // work with the screen at normal brightness, matching stock OneUI.
+        final int alpha = SystemProperties.getInt(PROP_DIM_ALPHA, 0);
+        if (alpha <= 0) {
+            return;
+        }
+        try {
+            android.util.DisplayMetrics dm = mContext.getResources().getDisplayMetrics();
+            View dimView = new View(mContext);
+            dimView.setBackgroundColor((Math.min(alpha, 255) << 24));
+
+            WindowManager.LayoutParams dimParams = new WindowManager.LayoutParams(
+                    dm.widthPixels,
+                    dm.heightPixels,
+                    WindowManager.LayoutParams.TYPE_NAVIGATION_BAR_PANEL,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                            | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                            | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                            | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                            | WindowManager.LayoutParams.FLAG_SECURE,
+                    PixelFormat.TRANSLUCENT);
+            dimParams.gravity = Gravity.TOP | Gravity.LEFT;
+            dimParams.x = 0;
+            dimParams.y = 0;
+            dimParams.setFitInsetsTypes(0);
+            dimParams.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+            dimParams.setTitle("UdfpsFodDimLayer");
+            dimParams.privateFlags = WindowManager.LayoutParams.PRIVATE_FLAG_TRUSTED_OVERLAY;
+
+            mWindowManager.addView(dimView, dimParams);
+            mFodDimView = dimView;
+            Log.e(TAG, "showDimLayer | added, alpha=" + alpha);
+        } catch (RuntimeException e) {
+            Log.e(TAG, "showDimLayer | failed", e);
+        }
+    }
+
+    private void hideDimLayer() {
+        if (mFodDimView == null) {
+            return;
+        }
+        try {
+            mWindowManager.removeView(mFodDimView);
+        } catch (RuntimeException e) {
+            Log.e(TAG, "hideDimLayer | remove failed", e);
+        }
+        mFodDimView = null;
+    }
+
+    private void hideIlluminationOverlay() {
+        if (mIlluminationView != null) {
+            Log.e(TAG, "hideIlluminationOverlay | removing illumination view");
+            try {
+                mWindowManager.removeView(mIlluminationView);
+            } catch (RuntimeException e) {
+                Log.e(TAG, "hideIlluminationOverlay | illumination remove failed", e);
+            }
+            mIlluminationView = null;
+        }
+        // Only tear the dim down here when it is NOT session-held; otherwise it
+        // is removed once at hideUdfpsOverlay so it never flashes per touch.
+        if (!isDimSessionHeld()) {
+            hideDimLayer();
         }
     }
 
