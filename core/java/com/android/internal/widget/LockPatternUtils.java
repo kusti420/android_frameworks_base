@@ -465,7 +465,7 @@ public class LockPatternUtils {
     public static final int SET_DURESS_ERROR = 6;
 
     /** Minimum length of a duress credential.  Mirrors DuressCredentialManager. */
-    public static final int MIN_DURESS_CREDENTIAL_LENGTH = 6;
+    public static final int MIN_DURESS_CREDENTIAL_LENGTH = 4;
 
     /**
      * Sets, replaces or removes the duress credential of the given user.
