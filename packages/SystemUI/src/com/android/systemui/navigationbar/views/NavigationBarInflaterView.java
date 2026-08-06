@@ -209,10 +209,14 @@ public class NavigationBarInflaterView extends FrameLayout {
     }
 
     void setAlternativeOrder(boolean alternativeOrder) {
-        if (alternativeOrder != mAlternativeOrder) {
-            mAlternativeOrder = alternativeOrder;
-            updateAlternativeOrder();
-        }
+        // IchthysOS: always re-apply, do not skip when the value is unchanged. The button groups
+        // are re-inflated after this is first set (e.g. on rotation, or when the default rather
+        // than an explicit setting supplies the value), and the freshly inflated ReverseLinearLayouts
+        // come up in stock order. Skipping on "no change" left them that way, so a reversed order
+        // only stuck if the user toggled the setting after the views existed.
+        // ReverseLinearLayout.setAlternativeOrder() is idempotent, so re-applying is safe.
+        mAlternativeOrder = alternativeOrder;
+        updateAlternativeOrder();
     }
 
     private void updateAlternativeOrder() {

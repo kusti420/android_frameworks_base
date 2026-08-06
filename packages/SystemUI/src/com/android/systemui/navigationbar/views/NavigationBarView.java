@@ -164,6 +164,13 @@ public class NavigationBarView extends FrameLayout {
     private final ContextualButtonGroup mContextualButtonGroup;
 
     // crDroid Navigation tab: invert the navigation button order (navigationbar_key_order).
+    //
+    // IchthysOS ships the reversed order (recents, home, back) out of the box, so the default when
+    // the user has never touched the setting is 1, not AOSP's 0. Settings' built-in control
+    // (ButtonNavigationSettingsOrderStore) uses the same default so the toggle matches what is on
+    // screen; once the user picks either option the value is written explicitly and wins.
+    static final int NAV_KEY_ORDER_DEFAULT = 1;
+
     private boolean mInvertNavLayout;
     private final ContentObserver mNavKeyOrderObserver = new ContentObserver(
             new Handler(Looper.getMainLooper())) {
@@ -1062,7 +1069,8 @@ public class NavigationBarView extends FrameLayout {
     // crDroid Navigation tab: re-read navigationbar_key_order and re-apply the button order.
     private void updateInvertNavLayout() {
         mInvertNavLayout = Settings.Secure.getIntForUser(getContext().getContentResolver(),
-                Settings.Secure.NAVIGATIONBAR_KEY_ORDER, 0, UserHandle.USER_CURRENT) != 0;
+                Settings.Secure.NAVIGATIONBAR_KEY_ORDER, NAV_KEY_ORDER_DEFAULT,
+                UserHandle.USER_CURRENT) != 0;
         mNavigationInflaterView.setAlternativeOrder(
                 (mCurrentRotation == Surface.ROTATION_90) ^ mInvertNavLayout);
     }
