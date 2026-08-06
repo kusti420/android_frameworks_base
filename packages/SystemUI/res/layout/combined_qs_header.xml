@@ -105,6 +105,20 @@ frame when animating QS <-> QQS transition
         app:shortDatePattern="@string/abbrev_month_day_no_year"
     />
 
+    <!-- IchthysOS: adaptive-brightness and brightness-floor toggles, hosted in the dead space
+         between the date and the status icons of the *expanded* QS header. Constrained (and made
+         visible) only by @xml/qs_header; @xml/qqs_header and @xml/large_screen_shade_header keep it
+         GONE so it can never appear in the collapsed shade or the split-shade header.
+         Content is set by ShadeHeaderController. -->
+    <androidx.compose.ui.platform.ComposeView
+        android:id="@+id/brightness_toggles"
+        android:layout_width="wrap_content"
+        android:layout_height="0dp"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="@id/date"
+        app:layout_constraintEnd_toStartOf="@id/shade_header_system_icons"
+        app:layout_constraintTop_toTopOf="@id/date" />
+
     <include
         android:id="@+id/carrier_group"
         layout="@layout/shade_carrier_group"

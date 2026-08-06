@@ -73,4 +73,13 @@
             app:layout_constraintEnd_toStartOf="@id/end_guide"
             app:layout_constraintTop_toTopOf="parent" />
     </Constraint>
+    <!-- IchthysOS: brightness toggles belong to the expanded QS header only (see @xml/qs_header). -->
+    <Constraint
+        android:id="@+id/brightness_toggles">
+        <PropertySet
+            android:visibility="gone"
+            android:alpha="0"
+            />
+    </Constraint>
+
 </ConstraintSet>
