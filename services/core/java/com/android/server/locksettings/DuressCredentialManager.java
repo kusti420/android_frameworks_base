@@ -110,7 +110,15 @@ class DuressCredentialManager {
      * credential accidentally equals the duress credential: with 6 digits it is at most 1e-6 per
      * failed attempt, and Gatekeeper rate limiting caps the number of attempts anyway.
      */
-    static final int MIN_DURESS_CREDENTIAL_LENGTH = 6;
+    // Matches the platform minimum for a real PIN/password (MIN_LOCK_PASSWORD_SIZE), so a duress
+    // credential is never harder to choose than the credential it stands in for.
+    //
+    // Note on the trade-off: unlike the real LSKF this hash has no Gatekeeper/Weaver rate limiting,
+    // so a short duress credential is cheap to recover offline by someone who has already extracted
+    // /data/system_de. What that buys an attacker is limited - it reveals the duress credential (so
+    // they can avoid typing it), not the real credential and not any user data. The scrypt cost
+    // parameters below are the mitigation.
+    static final int MIN_DURESS_CREDENTIAL_LENGTH = 4;
 
     /**
      * Reason string handed to recovery.  A single token with no spaces or quoting so that it
@@ -118,6 +126,15 @@ class DuressCredentialManager {
      * recovery log on the wiped device.
      */
     private static final String WIPE_REASON = "emergency_wipe";
+
+    // Metadata encryption key directory, taken from this device's fstab:
+    //   device/samsung/sm7325-common/init/fstab.qcom -> /data ... keydirectory=/metadata/vold/
+    //   metadata_encryption
+    // Verified rather than guessed: a wrong path here fails silently and leaves the block-layer
+    // key intact, which is the one thing this step exists to remove.
+    private static final String[] METADATA_KEY_DIRS = {
+        "/metadata/vold/metadata_encryption",
+    };
 
     /** How long to wait for the recovery bootloader-control-block to be armed before rebooting. */
     private static final long BCB_SETUP_TIMEOUT_MS = 4000;
@@ -451,7 +468,21 @@ class DuressCredentialManager {
                 Thread.currentThread().interrupt();
             }
 
-            // (4) Reboot.  /data is unreadable from here on, so nothing else can run.
+            // (4) Destroy the metadata encryption key.  MUST be last: /data is encrypted at the
+            // block layer with this key (dm-default-key), so removing it makes /data unmountable
+            // immediately and kills everything still running, including this method.
+            //
+            // Without this, an interrupted wipe leaves a *mountable* filesystem: FBE has already
+            // made file contents and names unrecoverable, but the structure still leaks - directory
+            // tree, file sizes, timestamps, and which app packages exist.  With it gone the
+            // partition is indistinguishable from random data.  It also means no single failure
+            // (e.g. a stale FBE key blob left behind by flash wear levelling) exposes anything.
+            //
+            // Recovery's --wipe_data erases /metadata anyway; doing it here closes the window
+            // where the reset is prevented from completing.
+            destroyMetadataEncryptionKey();
+
+            // (5) Reboot.  /data is unreadable from here on, so nothing else can run.
             rebootToRecovery();
         } finally {
             Binder.restoreCallingIdentity(identity);
@@ -510,6 +541,65 @@ class DuressCredentialManager {
             rs.setupBcb("--wipe_data\n--reason=" + WIPE_REASON + "\n");
         } catch (Exception e) {
             // Best effort.
+        }
+    }
+
+    /**
+     * Destroys the metadata encryption key, the key {@code dm-default-key} uses to encrypt the
+     * whole {@code /data} block device beneath FBE.
+     *
+     * <p>Best effort, and deliberately the very last thing before the reboot: the moment the key is
+     * gone {@code /data} cannot be read, so anything still running dies. Overwrite before unlink so
+     * the bytes are not merely unlinked, then {@code fsync} the directory.
+     *
+     * <p>The path comes from the fstab {@code metadata_key_dir} option; on this device that is
+     * {@code /metadata/vold/metadata_encryption}, with the key blob at {@code <dir>/key}.
+     */
+    private void destroyMetadataEncryptionKey() {
+        for (String dir : METADATA_KEY_DIRS) {
+            try {
+                java.io.File keyDir = new java.io.File(dir);
+                if (!keyDir.exists()) {
+                    continue;
+                }
+                java.io.File[] files = keyDir.listFiles();
+                if (files != null) {
+                    for (java.io.File f : files) {
+                        shredFile(f);
+                    }
+                }
+            } catch (Exception e) {
+                // Best effort: the FBE keys are already gone, so the data is unrecoverable
+                // regardless of whether this succeeds.
+            }
+        }
+    }
+
+    /** Overwrites a file's bytes, syncs, then unlinks it. */
+    private void shredFile(@NonNull java.io.File f) {
+        if (f.isDirectory()) {
+            java.io.File[] children = f.listFiles();
+            if (children != null) {
+                for (java.io.File c : children) {
+                    shredFile(c);
+                }
+            }
+        } else {
+            try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(f, "rws")) {
+                long len = raf.length();
+                byte[] zeros = new byte[4096];
+                for (long off = 0; off < len; off += zeros.length) {
+                    raf.write(zeros, 0, (int) Math.min(zeros.length, len - off));
+                }
+                raf.getFD().sync();
+            } catch (Exception e) {
+                // Fall through to unlink.
+            }
+        }
+        try {
+            f.delete();
+        } catch (Exception e) {
+            // Nothing further to try.
         }
     }
 

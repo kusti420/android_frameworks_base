@@ -1366,7 +1366,7 @@ public class UdfpsController implements DozeReceiver, Dumpable {
             final int cur = android.provider.Settings.System.getIntForUser(
                     mContext.getContentResolver(),
                     android.provider.Settings.System.SCREEN_BRIGHTNESS,
-                    max, UserHandle.USER_CURRENT);
+                    max, android.os.UserHandle.USER_CURRENT);
             if (max <= 0) {
                 return DEFAULT_DIM_ALPHA;
             }
@@ -1387,8 +1387,12 @@ public class UdfpsController implements DozeReceiver, Dumpable {
         if (mFodDimView != null) {
             return;
         }
-        // -1 (default) = derive the dim from the current screen brightness; >=0 pins it.
-        final int configured = SystemProperties.getInt(PROP_DIM_ALPHA, -1);
+        // Default 255 = fully black surround, which reproduces the screen-off behaviour: on OLED
+        // every pixel outside the disc is then genuinely off, so raising the panel to fingerprint
+        // HBM lights only the sensor area and the rest of the display cannot visibly change.
+        // Dimming by anything less still lets the HBM jump show through on the remaining content.
+        // -1 selects the brightness-scaled mode; any other value >= 0 pins the alpha.
+        final int configured = SystemProperties.getInt(PROP_DIM_ALPHA, 255);
         final int alpha = configured >= 0 ? configured : computeAutoDimAlpha();
         if (alpha <= 0) {
             return;
@@ -1405,9 +1409,11 @@ public class UdfpsController implements DozeReceiver, Dumpable {
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                             | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                             | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-                            | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-                            | WindowManager.LayoutParams.FLAG_SECURE,
+                            | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                     PixelFormat.TRANSLUCENT);
+            // NOTE: deliberately NOT FLAG_SECURE. This layer is full-screen, so marking it secure
+            // blanks the entire screenshot while it is up. Only the illumination disc itself is
+            // FLAG_SECURE (see showIlluminationOverlay), which is what OneUI hides.
             dimParams.gravity = Gravity.TOP | Gravity.LEFT;
             dimParams.x = 0;
             dimParams.y = 0;
