@@ -811,6 +811,10 @@ public class NetworkPolicyManagerService extends INetworkPolicyManager.Stub {
     }
 
     private static class RestrictedModeObserver extends ContentObserver {
+        /** IchthysOS: opt-in gate for restricted networking mode. Off by default. */
+        private static final String PROP_RESTRICTED_NETWORKING_ALLOWED =
+                "persist.sys.restricted_networking_mode_allowed";
+
         private final Context mContext;
         private final RestrictedModeListener mListener;
 
@@ -823,7 +827,32 @@ public class NetworkPolicyManagerService extends INetworkPolicyManager.Stub {
                     this);
         }
 
+        /**
+         * IchthysOS: restricted networking mode is gated behind an opt-in property.
+         *
+         * On a fresh /data, Settings.Global.RESTRICTED_NETWORKING_MODE is seeded to 1 as the
+         * platform package (pkg:android, defaultSystemSet:true) via the legacy-settings
+         * migration path, which writes straight to SettingsState and so bypasses both
+         * Settings.Global.putStringForUser() and SettingsProvider.mutateGlobalSetting().
+         * Instrumenting both of those logged zero writes across several boots, so nothing
+         * re-applies it at runtime -- but it comes back on every factory reset, and the
+         * seeded value is latched as the system default (SettingsState.Setting.update()),
+         * which makes it unfixable from adb.
+         *
+         * The effect is severe and non-obvious: netd's resolver rejects every lookup from
+         * any uid lacking CONNECTIVITY_USE_RESTRICTED_NETWORKS with "network access
+         * blocked" (DnsProxyListener), which surfaces in apps as ERR_NAME_NOT_RESOLVED --
+         * it looks like broken DNS, not a firewall. System uids (shell included) are
+         * exempt, so `adb shell ping` keeps working and hides the problem.
+         *
+         * IchthysOS exposes no UI for this feature and configures no device policy that
+         * needs it, so it stays off unless deliberately enabled:
+         *     adb shell setprop persist.sys.restricted_networking_mode_allowed true
+         */
         public boolean isRestrictedModeEnabled() {
+            if (!SystemProperties.getBoolean(PROP_RESTRICTED_NETWORKING_ALLOWED, false)) {
+                return false;
+            }
             return Settings.Global.getInt(mContext.getContentResolver(),
                     Settings.Global.RESTRICTED_NETWORKING_MODE, 0) != 0;
         }
