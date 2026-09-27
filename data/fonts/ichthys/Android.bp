@@ -1,0 +1,66 @@
+// IchthysOS: product fonts for the "Shoal" design (tracker#50). SIL OFL 1.1.
+package {
+    default_applicable_licenses: ["frameworks_base_data_fonts_ichthys_license"],
+}
+
+license {
+    name: "frameworks_base_data_fonts_ichthys_license",
+    visibility: [":__subpackages__"],
+    license_kinds: ["SPDX-license-identifier-OFL"],
+    license_text: [
+        "OFL-syne.txt",
+        "OFL-instrumentsans.txt",
+        "OFL-jetbrainsmono.txt",
+        "OFL-outfit.txt",
+        "OFL-ibmplexsans.txt",
+    ],
+}
+
+prebuilt_font {
+    name: "IchthysSyne-VF.ttf",
+    src: "Syne-VF.ttf",
+    filename: "Syne-VF.ttf",
+    product_specific: true,
+}
+
+prebuilt_font {
+    name: "IchthysInstrumentSans-VF.ttf",
+    src: "InstrumentSans-VF.ttf",
+    filename: "InstrumentSans-VF.ttf",
+    product_specific: true,
+}
+
+prebuilt_font {
+    name: "IchthysJetBrainsMono-VF.ttf",
+    src: "JetBrainsMono-VF.ttf",
+    filename: "JetBrainsMono-VF.ttf",
+    product_specific: true,
+}
+
+prebuilt_font {
+    name: "IchthysOutfit-VF.ttf",
+    src: "Outfit-VF.ttf",
+    filename: "Outfit-VF.ttf",
+    product_specific: true,
+}
+
+prebuilt_font {
+    name: "IchthysIBMPlexSans-VF.ttf",
+    src: "IBMPlexSans-VF.ttf",
+    filename: "IBMPlexSans-VF.ttf",
+    product_specific: true,
+}
+
+prebuilt_etc {
+    name: "fonts_customization.xml",
+    src: "fonts_customization.xml",
+    filename: "fonts_customization.xml",
+    product_specific: true,
+    required: [
+        "IchthysSyne-VF.ttf",
+        "IchthysInstrumentSans-VF.ttf",
+        "IchthysJetBrainsMono-VF.ttf",
+        "IchthysOutfit-VF.ttf",
+        "IchthysIBMPlexSans-VF.ttf",
+    ],
+}

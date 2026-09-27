@@ -236,7 +236,10 @@ prebuilt_etc {
     srcs: [
         "ichthys/presets/abyss.nix",
         "ichthys/presets/kelp.nix",
+        "ichthys/presets/koi.nix",
         "ichthys/presets/paper.nix",
         "ichthys/presets/reef.nix",
     ],
+    // The presets name these font families (data/fonts/ichthys).
+    required: ["fonts_customization.xml"],
 }

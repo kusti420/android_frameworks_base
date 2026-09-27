@@ -137,7 +137,10 @@ public final class IchthysConfigService extends SystemService {
     private LinkedHashMap<String, Object> target(LinkedHashMap<String, Object> declared,
             boolean merge) {
         final LinkedHashMap<String, Object> wanted = new LinkedHashMap<>(declared);
-        final Object preset = declared.get("theme.preset");
+        // A declarative apply that doesn't name a preset gets the default one (koi), like any
+        // other option left out; --merge only touches what the file names.
+        final Object preset = declared.containsKey("theme.preset") ? declared.get("theme.preset")
+                : merge ? null : mSchema.get("theme.preset").defaultValue;
         if (preset instanceof String && !"none".equals(preset)) {
             for (Map.Entry<String, Object> e : loadPreset((String) preset).entrySet()) {
                 if (e.getKey().startsWith("theme.") && !wanted.containsKey(e.getKey())) {

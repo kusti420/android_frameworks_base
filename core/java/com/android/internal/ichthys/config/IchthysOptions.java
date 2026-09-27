@@ -32,7 +32,7 @@ final class IchthysOptions {
     private IchthysOptions() {}
 
     /** Theme presets shipped in /product/etc/ichthys/presets/&lt;name&gt;.nix. */
-    public static final String[] PRESETS = {"none", "abyss", "reef", "kelp", "paper"};
+    public static final String[] PRESETS = {"none", "koi", "abyss", "reef", "kelp", "paper"};
 
     static void register(OptionSchema s) {
         registerTheme(s);
@@ -47,7 +47,7 @@ final class IchthysOptions {
     // theme.*
 
     private static void registerTheme(OptionSchema s) {
-        s.add(Option.enumeration("theme.preset", PRESETS, PRESETS, "none",
+        s.add(Option.enumeration("theme.preset", PRESETS, PRESETS, "koi",
                 "Theme preset. Its theme.* values apply wherever this file doesn't set them.",
                 setting(SECURE, "ichthys_theme_preset")));
         s.add(Option.color("theme.accent", "wallpaper",
@@ -86,6 +86,22 @@ final class IchthysOptions {
         s.add(Option.string("theme.font.display", null,
                 "Font family for large titles and clocks in IchthysOS UI, null for default.",
                 setting(SECURE, "ichthys_theme_font_display")));
+        s.add(Option.string("theme.font.text", null,
+                "Font family for body text in IchthysOS UI (e.g. \"instrument-sans\"), null for "
+                        + "the system font.",
+                setting(SECURE, "ichthys_theme_font_text")));
+        s.add(Option.string("theme.font.mono", null,
+                "Font family for numbers in IchthysOS UI (e.g. \"jetbrains-mono\"), null for the "
+                        + "text font.",
+                setting(SECURE, "ichthys_theme_font_mono")));
+        s.add(Option.enumeration("theme.surface", new String[] {"hairline", "tonal"},
+                new String[] {"hairline", "tonal"}, "hairline",
+                "Panel style in IchthysOS UI: hairline-outlined on the ground (Koi) or filled tonal "
+                        + "surfaces (Abyss).",
+                setting(SECURE, "ichthys_theme_surface")));
+        s.add(Option.bool("theme.iconBadges", Boolean.TRUE,
+                "Show Settings category icons as outlined, color-coded badges.",
+                setting(SECURE, "ichthys_settings_icon_badges")));
     }
 
     // ---------------------------------------------------------------------------------------------

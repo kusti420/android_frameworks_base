@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    IchthysOS: extra named font families (all SIL OFL 1.1, from github.com/google/fonts).
+    Used by the "Shoal" design: Syne (display), Instrument Sans (body), JetBrains Mono
+    (numerals); Outfit + IBM Plex Sans back the original "Abyss" preset. Referenced by name,
+    e.g. Typeface.create("syne", Typeface.NORMAL) / android:fontFamily="syne".
+-->
+<fonts-modification version="1">
+    <family customizationType="new-named-family" name="syne">
+        <font weight="400" style="normal">Syne-VF.ttf<axis tag="wght" stylevalue="400" /></font>
+        <font weight="500" style="normal">Syne-VF.ttf<axis tag="wght" stylevalue="500" /></font>
+        <font weight="600" style="normal">Syne-VF.ttf<axis tag="wght" stylevalue="600" /></font>
+        <font weight="700" style="normal">Syne-VF.ttf<axis tag="wght" stylevalue="700" /></font>
+        <font weight="800" style="normal">Syne-VF.ttf<axis tag="wght" stylevalue="800" /></font>
+    </family>
+    <family customizationType="new-named-family" name="instrument-sans">
+        <font weight="400" style="normal">InstrumentSans-VF.ttf<axis tag="wght" stylevalue="400" /></font>
+        <font weight="500" style="normal">InstrumentSans-VF.ttf<axis tag="wght" stylevalue="500" /></font>
+        <font weight="600" style="normal">InstrumentSans-VF.ttf<axis tag="wght" stylevalue="600" /></font>
+        <font weight="700" style="normal">InstrumentSans-VF.ttf<axis tag="wght" stylevalue="700" /></font>
+    </family>
+    <family customizationType="new-named-family" name="jetbrains-mono">
+        <font weight="400" style="normal">JetBrainsMono-VF.ttf<axis tag="wght" stylevalue="400" /></font>
+        <font weight="500" style="normal">JetBrainsMono-VF.ttf<axis tag="wght" stylevalue="500" /></font>
+        <font weight="600" style="normal">JetBrainsMono-VF.ttf<axis tag="wght" stylevalue="600" /></font>
+        <font weight="700" style="normal">JetBrainsMono-VF.ttf<axis tag="wght" stylevalue="700" /></font>
+    </family>
+    <family customizationType="new-named-family" name="outfit">
+        <font weight="400" style="normal">Outfit-VF.ttf<axis tag="wght" stylevalue="400" /></font>
+        <font weight="500" style="normal">Outfit-VF.ttf<axis tag="wght" stylevalue="500" /></font>
+        <font weight="600" style="normal">Outfit-VF.ttf<axis tag="wght" stylevalue="600" /></font>
+        <font weight="700" style="normal">Outfit-VF.ttf<axis tag="wght" stylevalue="700" /></font>
+    </family>
+    <family customizationType="new-named-family" name="ibm-plex-sans">
+        <font weight="400" style="normal">IBMPlexSans-VF.ttf<axis tag="wght" stylevalue="400" /></font>
+        <font weight="500" style="normal">IBMPlexSans-VF.ttf<axis tag="wght" stylevalue="500" /></font>
+        <font weight="600" style="normal">IBMPlexSans-VF.ttf<axis tag="wght" stylevalue="600" /></font>
+        <font weight="700" style="normal">IBMPlexSans-VF.ttf<axis tag="wght" stylevalue="700" /></font>
+    </family>
+</fonts-modification>

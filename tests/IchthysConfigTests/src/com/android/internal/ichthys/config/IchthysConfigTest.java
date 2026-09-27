@@ -220,4 +220,31 @@ public class IchthysConfigTest {
     private static List<Object> list(Object o) {
         return (List<Object>) o;
     }
+
+    /** Every shipped preset parses and type-checks (koi, abyss, ...). */
+    @Test
+    public void shippedPresetsAreValid() throws Exception {
+        final java.io.File dir = new java.io.File("frameworks/base/data/etc/ichthys/presets");
+        if (!dir.isDirectory()) {
+            return; // not run from the tree root (e.g. atest on device)
+        }
+        final OptionSchema s = OptionSchema.create();
+        final java.io.File[] files = dir.listFiles((d, n) -> n.endsWith(".nix"));
+        assertTrue(files != null && files.length >= 5);
+        for (java.io.File f : files) {
+            final String text = new String(java.nio.file.Files.readAllBytes(f.toPath()),
+                    java.nio.charset.StandardCharsets.UTF_8);
+            final LinkedHashMap<String, Object> flat = s.evaluate(NixParser.parse(text));
+            assertTrue(f.getName(), flat.keySet().stream().allMatch(k -> k.startsWith("theme.")));
+        }
+    }
+
+    @Test
+    public void shoalDefaults() throws Exception {
+        final OptionSchema s = OptionSchema.create();
+        assertEquals("koi", s.get("theme.preset").defaultValue);
+        assertEquals("hairline", s.get("theme.surface").defaultValue);
+        assertEquals(Boolean.TRUE, s.get("theme.iconBadges").defaultValue);
+        expectEvalError(s, "{ theme.surface = \"glass\"; }", "hairline");
+    }
 }
