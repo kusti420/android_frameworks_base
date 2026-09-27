@@ -2337,8 +2337,52 @@ public class SettingsProvider extends ContentProvider {
                 // BluetoothAdapter.getAddress() (see BluetoothManagerService for details).
                     getContext().checkCallingOrSelfPermission(Manifest.permission.LOCAL_MAC_ADDRESS)
                             == PackageManager.PERMISSION_GRANTED;
+            case KEYBOX_SETTING ->
+                // IchthysOS: this undeclared setting holds a keybox, i.e. attestation PRIVATE keys.
+                // Undeclared secure settings are readable by every app, so any app could copy it.
+                // Only system / root, and apps the user explicitly listed as attestation targets,
+                // may read it; everyone else (including adb shell) sees it as absent, which also
+                // keeps the keybox out of non-target app processes. (kusti420/ichthysos-tracker#13)
+                    isKeyboxReadableByCaller();
             default -> true;
         };
+    }
+
+    private static final String KEYBOX_SETTING = "spoof_trickystore_keybox";
+    private static final String KEYBOX_TARGET_SETTING = "spoof_trickystore_target";
+
+    private boolean isKeyboxReadableByCaller() {
+        final int appId = UserHandle.getAppId(Binder.getCallingUid());
+        if (appId == Process.SYSTEM_UID || appId == Process.ROOT_UID) {
+            return true;
+        }
+        final String callingPackage = getCallingPackage();
+        if (callingPackage == null) {
+            return false;
+        }
+        final String targets;
+        synchronized (mLock) {
+            final SettingsState settings = mSettingsRegistry.getSettingsLocked(
+                    SETTINGS_TYPE_SECURE, UserHandle.getCallingUserId());
+            final Setting setting = settings != null
+                    ? settings.getSettingLocked(KEYBOX_TARGET_SETTING) : null;
+            targets = setting != null ? setting.getValue() : null;
+        }
+        if (targets == null) {
+            return false;
+        }
+        // Same format KeyboxAttestation parses: one package per line, optionally suffixed with
+        // '!' (full chain) or '?' (leaf only). An empty list grants nobody.
+        for (String line : targets.split("\n")) {
+            String pkg = line.trim();
+            if (pkg.endsWith("!") || pkg.endsWith("?")) {
+                pkg = pkg.substring(0, pkg.length() - 1).trim();
+            }
+            if (!pkg.isEmpty() && pkg.equals(callingPackage)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private int resolveOwningUserIdForSecureSetting(int userId, String setting) {
