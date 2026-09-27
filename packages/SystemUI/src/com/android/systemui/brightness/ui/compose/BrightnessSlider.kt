@@ -106,6 +106,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.android.settingslib.display.BrightnessUtils
@@ -826,7 +827,10 @@ fun BrightnessToggleButtons(modifier: Modifier = Modifier, tint: Color = Color.W
     }
 }
 
-/** The two buttons themselves, shared by the header and the (collapsed-header) inline layouts. */
+/**
+ * The two buttons themselves, shared by the header and the (collapsed-header) inline layouts.
+ * IchthysOS: floor (min) first, adaptive on the right, as the owner asked.
+ */
 @Composable
 private fun BrightnessToggleButtonsContent(
     context: Context,
@@ -834,30 +838,6 @@ private fun BrightnessToggleButtonsContent(
     enabled: Boolean,
     tint: Color,
 ) {
-    BrightnessRowToggle(
-        iconRes =
-            if (floorState.autoMode) R.drawable.ic_ichthys_auto_brightness
-            else R.drawable.ic_ichthys_auto_brightness_off,
-        contentDescription =
-            stringResource(
-                if (floorState.autoMode) R.string.ichthys_accessibility_auto_brightness_on
-                else R.string.ichthys_accessibility_auto_brightness_off
-            ),
-        checked = floorState.autoMode,
-        enabled = enabled,
-        iconSize = AutoBrightnessIconSize,
-        checkedAlpha = 1f,
-        tint = tint,
-        onClick = {
-            Settings.System.putIntForUser(
-                context.contentResolver,
-                Settings.System.SCREEN_BRIGHTNESS_MODE,
-                if (floorState.autoMode) Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL
-                else Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC,
-                UserHandle.USER_CURRENT,
-            )
-        },
-    )
     // The floor clamps *auto*-brightness, so it is meaningless in manual mode. Disabled rather than
     // hidden: it sits immediately next to the adaptive toggle, and making it vanish the instant you
     // tap that neighbour would reflow the row under the user's finger and hide the fact that the
@@ -880,6 +860,30 @@ private fun BrightnessToggleButtonsContent(
                 context.contentResolver,
                 Settings.System.AUTO_BRIGHTNESS_MIN_FLOOR_ENABLED,
                 if (floorState.enabled) 0 else 1,
+                UserHandle.USER_CURRENT,
+            )
+        },
+    )
+    BrightnessRowToggle(
+        iconRes =
+            if (floorState.autoMode) R.drawable.ic_ichthys_auto_brightness
+            else R.drawable.ic_ichthys_auto_brightness_off,
+        contentDescription =
+            stringResource(
+                if (floorState.autoMode) R.string.ichthys_accessibility_auto_brightness_on
+                else R.string.ichthys_accessibility_auto_brightness_off
+            ),
+        checked = floorState.autoMode,
+        enabled = enabled,
+        iconSize = AutoBrightnessIconSize,
+        checkedAlpha = 1f,
+        tint = tint,
+        onClick = {
+            Settings.System.putIntForUser(
+                context.contentResolver,
+                Settings.System.SCREEN_BRIGHTNESS_MODE,
+                if (floorState.autoMode) Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL
+                else Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC,
                 UserHandle.USER_CURRENT,
             )
         },
@@ -981,14 +985,35 @@ fun BrightnessSliderContainer(
         } else {
             0
         }
-    Row(
+    // IchthysOS: the slider always gets the full width. The percentage (and, in the layouts that
+    // host them inline, the floor + adaptive toggles) sit in a slim label row above it.
+    Column(
         modifier =
             modifier
                 .padding(vertical = { dimensions.verticalPadding.roundToPx() })
                 .fillMaxWidth()
                 .sysuiResTag("brightness_slider"),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = { 4.dp.roundToPx() }),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "$brightnessPercent%",
+                color = Color.White.copy(alpha = 0.7f),
+                fontSize = 13.sp,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier.weight(1f),
+            )
+            if (showBrightnessToggles) {
+                BrightnessToggleButtonsContent(
+                    context = context,
+                    floorState = floorState,
+                    enabled = enabled && !isRestricted,
+                    tint = Color.White,
+                )
+            }
+        }
         BrightnessSlider(
             enabled = enabled && !isRestricted,
             gammaValue = gamma,
@@ -1018,7 +1043,7 @@ fun BrightnessSliderContainer(
                         dimensions.backgroundRoundedCorner,
                         containerColor,
                     )
-                    .weight(1f)
+                    .fillMaxWidth()
                     .pointerInteropFilter {
                         if (
                             it.actionMasked == MotionEvent.ACTION_UP ||
@@ -1050,31 +1075,6 @@ fun BrightnessSliderContainer(
                 )
             },
         )
-        // IchthysOS: trailing controls — the brightness percentage, plus the toggle buttons in the
-        // layouts that still host them inline ([showToggles]; elsewhere they live in the expanded QS
-        // header). Pinned to the TOP of the row with an explicit slider-sized height instead of
-        // riding the Row's CenterVertically: when the floor handle is on, the slider's Column
-        // reserves 42dp of knob space BELOW the track, so centring against that taller column would
-        // drop these controls well under the slider.
-        Row(
-            modifier = Modifier.align(Alignment.Top).height(BrightnessRowControlHeight),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "$brightnessPercent%",
-                color = Color.White,
-                fontSize = 13.sp,
-                modifier = Modifier.padding(start = { 12.dp.roundToPx() }),
-            )
-            if (showBrightnessToggles) {
-                BrightnessToggleButtonsContent(
-                    context = context,
-                    floorState = floorState,
-                    enabled = enabled && !isRestricted,
-                    tint = Color.White,
-                )
-            }
-        }
     }
 }
 
