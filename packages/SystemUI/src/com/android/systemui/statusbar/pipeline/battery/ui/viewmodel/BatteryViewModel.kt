@@ -34,6 +34,7 @@ import com.android.systemui.statusbar.pipeline.battery.domain.interactor.Battery
 import com.android.systemui.statusbar.pipeline.battery.domain.interactor.BatteryAttributionModel.Unknown
 import com.android.systemui.statusbar.pipeline.battery.data.repository.BatteryRepositoryImpl
 import com.android.systemui.statusbar.pipeline.battery.domain.interactor.BatteryInteractor
+import com.android.systemui.statusbar.pipeline.battery.shared.model.BatteryCustomization
 import com.android.systemui.statusbar.pipeline.battery.shared.ui.BatteryColors
 import com.android.systemui.statusbar.pipeline.battery.shared.ui.BatteryGlyph
 import dagger.assisted.AssistedFactory
@@ -54,6 +55,8 @@ sealed class BatteryViewModel(
     // key (see [QsHeader]).
     showPercentNextToIconFlow: Flow<Boolean>,
     @Application context: Context,
+    // IchthysOS: the QS header can override the style and percent side (qs_* keys).
+    private val isQsHeader: Boolean = false,
 ) : HydratedActivatable() {
 
     val level by interactor.level.hydratedStateOf(initialValue = 0)
@@ -62,15 +65,43 @@ sealed class BatteryViewModel(
 
     val isCharging: Boolean by interactor.isCharging.hydratedStateOf(initialValue = false)
 
+    /** IchthysOS: all extra battery icon options (#37). */
+    val customization: BatteryCustomization by
+        interactor.customization.hydratedStateOf(initialValue = BatteryCustomization())
+
     /**
-     * crDroid [LineageSettings.System.STATUS_BAR_BATTERY_STYLE]. Only the "text only" value
-     * ([BatteryRepositoryImpl.BATTERY_STYLE_TEXT]) is rendered distinctly by the unified battery;
-     * all other values render as the default portrait battery.
+     * crDroid [LineageSettings.System.STATUS_BAR_BATTERY_STYLE], or for the QS header its own
+     * `qs_battery_style` when set. See [BatteryRepositoryImpl.BATTERY_STYLE_PORTRAIT] and friends.
      */
+    private val effectiveStyle: Flow<Int> =
+        combine(interactor.batteryStyle, interactor.customization) { style, custom ->
+            if (isQsHeader && custom.qsStyle != BatteryCustomization.QS_STYLE_FOLLOW) {
+                custom.qsStyle
+            } else {
+                style
+            }
+        }
+
     val batteryStyle: Int by
-        interactor.batteryStyle.hydratedStateOf(
-            initialValue = BatteryRepositoryImpl.BATTERY_STYLE_PORTRAIT
-        )
+        effectiveStyle.hydratedStateOf(initialValue = BatteryRepositoryImpl.BATTERY_STYLE_PORTRAIT)
+
+    /** IchthysOS: percent text beside the icon goes after (right of) it instead of before. */
+    val percentAfterIcon: Boolean by
+        interactor.customization
+            .map { if (isQsHeader) it.qsPercentAfterIcon else it.percentAfterIcon }
+            .hydratedStateOf(initialValue = false)
+
+    // IchthysOS: "percent only while charging" gates every percent display.
+    private val percentAllowed: Flow<Boolean> =
+        combine(interactor.customization, interactor.isCharging) { custom, charging ->
+            !custom.percentChargingOnly || charging
+        }
+
+    /** IchthysOS: user icon size, as a factor of the stock height. Apply to the icon's height. */
+    val iconScale: Float by
+        interactor.customization
+            .map { it.scalePercent / 100f }
+            .hydratedStateOf(initialValue = 1f)
 
     /**
      * crDroid "next to icon" percent mode ([LineageSettings.System.STATUS_BAR_SHOW_BATTERY_PERCENT]
@@ -78,13 +109,14 @@ sealed class BatteryViewModel(
      * than as glyphs inside it. In this mode the inside glyphs are suppressed below.
      */
     val showPercentNextToIcon: Boolean by
-        showPercentNextToIconFlow.hydratedStateOf(initialValue = false)
+        combine(showPercentNextToIconFlow, percentAllowed) { nextTo, allowed -> nextTo && allowed }
+            .hydratedStateOf(initialValue = false)
 
     private val _glyphList: Flow<List<BatteryGlyph>> =
         combine(
-            shouldShowPercent,
+            combine(shouldShowPercent, percentAllowed) { show, allowed -> show && allowed },
             showPercentNextToIconFlow,
-            interactor.batteryStyle,
+            effectiveStyle,
             interactor.level,
         ) { showPercent, nextToIcon, style, level ->
             // The "text only" style always renders the percentage as the battery, regardless of the
@@ -108,11 +140,12 @@ sealed class BatteryViewModel(
 
     /** The current attribution, if any */
     protected val attributionGlyph: Flow<BatteryGlyph?> =
-        interactor.batteryAttributionType.map {
-            when (it) {
-                Charging -> BatteryGlyph.Bolt
+        combine(interactor.batteryAttributionType, interactor.customization) { attr, custom ->
+            when (attr) {
+                // IchthysOS: the bolt / plus can be switched off
+                Charging -> if (custom.showChargingIndicator) BatteryGlyph.Bolt else null
 
-                PowerSave -> BatteryGlyph.Plus
+                PowerSave -> if (custom.showPowerSaveIndicator) BatteryGlyph.Plus else null
 
                 Defend -> BatteryGlyph.Defend
 
@@ -125,7 +158,12 @@ sealed class BatteryViewModel(
     val attribution: BatteryGlyph? by attributionGlyph.hydratedStateOf(initialValue = null)
 
     private val _colorProfile: Flow<ColorProfile> =
-        combine(interactor.batteryAttributionType, interactor.isCritical) { attr, isCritical ->
+        combine(interactor.batteryAttributionType, interactor.level, interactor.customization) {
+            attr,
+            level,
+            custom ->
+            // IchthysOS: user-set low level instead of the fixed 20 % critical level
+            val isCritical = level != null && level <= custom.lowLevel
             when (attr) {
                 Charging,
                 Defend ->
@@ -304,6 +342,7 @@ sealed class BatteryViewModel(
             shouldShowPercent = interactor.isQsBatteryPercentSettingEnabled,
             showPercentNextToIconFlow = interactor.isQsBatteryPercentNextToIconEnabled,
             context = context,
+            isQsHeader = true,
         ) {
 
         @AssistedFactory

@@ -735,7 +735,11 @@ private fun addBatteryComposable(
                         statusBarViewModel.unifiedBatteryViewModel.create()
                     }
                 UnifiedBattery(
-                    modifier = Modifier.sysUiResTagContainer().height(height).wrapContentWidth(),
+                    // IchthysOS: user battery icon size (#37)
+                    modifier =
+                        Modifier.sysUiResTagContainer()
+                            .height(height * viewModel.iconScale)
+                            .wrapContentWidth(),
                     viewModel = viewModel,
                     isDarkProvider = { statusBarViewModel.areaDark },
                 )
@@ -787,7 +791,8 @@ private fun addEndSideComposable(
                     UnifiedBattery(
                         viewModel = viewModel,
                         isDarkProvider = { statusBarViewModel.areaDark },
-                        modifier = Modifier.height(height).wrapContentWidth(),
+                        // IchthysOS: user battery icon size (#37)
+                        modifier = Modifier.height(height * viewModel.iconScale).wrapContentWidth(),
                     )
                 }
             }

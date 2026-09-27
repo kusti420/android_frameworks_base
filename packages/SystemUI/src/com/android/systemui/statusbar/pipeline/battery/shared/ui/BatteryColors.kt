@@ -42,6 +42,18 @@ sealed interface BatteryColors {
     val attribution: Color
 
     /**
+     * IchthysOS: a theme color set with the user's fill / state colors applied on top
+     * (kusti420/ichthysos-tracker#37). Built by the battery composables, never stored.
+     */
+    data class Custom(
+        override val glyph: Color,
+        override val fill: Color,
+        override val backgroundOnly: Color,
+        override val backgroundWithGlyph: Color,
+        override val attribution: Color,
+    ) : BatteryColors
+
+    /**
      * Light theme: light background, dark icons
      *
      * For color profiles that are non-default ([Charging], [Error], [PowerSave]), the foreground

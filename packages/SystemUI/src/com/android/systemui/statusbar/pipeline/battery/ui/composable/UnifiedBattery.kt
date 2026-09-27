@@ -53,6 +53,7 @@ import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.layout.onLayoutRectChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -178,59 +179,112 @@ fun UnifiedBattery(
 ) {
     var bounds by remember { mutableStateOf(Rect()) }
 
-    val colorProvider = {
-        if (isDarkProvider().isDarkTheme(bounds)) {
-            viewModel.colorProfile.dark
-        } else {
-            viewModel.colorProfile.light
-        }
+    // IchthysOS: accent shades for the "system accent" fill mode (#37)
+    val context = LocalContext.current
+    val accentOnDark =
+        remember(context) { Color(context.getColor(android.R.color.system_accent1_200)) }
+    val accentOnLight =
+        remember(context) { Color(context.getColor(android.R.color.system_accent1_600)) }
+
+    val paletteProvider = {
+        val dark = isDarkProvider().isDarkTheme(bounds)
+        val profile: BatteryColors =
+            if (dark) viewModel.colorProfile.dark else viewModel.colorProfile.light
+        profile.customizedFor(viewModel.customization, if (dark) accentOnDark else accentOnLight)
     }
+    val colorProvider = { paletteProvider().colors }
+
+    val style = viewModel.batteryStyle
 
     // crDroid "text only" battery style: render just the percentage glyphs, with no battery frame
-    // or cap. All other styles use the default portrait rendering (circle / dotted-circle are not
-    // supported by the unified Compose battery and fall through to portrait).
-    val isTextOnly = viewModel.batteryStyle == BatteryRepositoryImpl.BATTERY_STYLE_TEXT
+    // or cap.
+    val isTextOnly = style == BatteryRepositoryImpl.BATTERY_STYLE_TEXT
+    // IchthysOS: the A17 unified pill is the "landscape" style; "hidden" draws no icon; every
+    // other value (portrait by default, circles, unknown) goes to [IchthysBattery].
+    val isLandscape = style == BatteryRepositoryImpl.BATTERY_STYLE_LANDSCAPE
+    val isHidden = style == BatteryRepositoryImpl.BATTERY_STYLE_HIDDEN
+    val isIchthysStyle = !isTextOnly && !isLandscape && !isHidden
+
+    // Percent "inside" the icon where it doesn't fit (portrait, filled circle, hidden) is drawn as
+    // text beside the icon instead.
+    val insideAsText =
+        viewModel.glyphList.isNotEmpty() &&
+            (isHidden || (isIchthysStyle && !styleFitsPercentInside(style)))
 
     // crDroid "next to icon" percent mode: draw the percentage as text beside the battery icon.
     // The inside glyphs are already suppressed by the view model in this mode. Skipped for the
     // "text only" style, which already renders the digits as the whole battery.
-    val showPercentNextToIcon = viewModel.showPercentNextToIcon && !isTextOnly
+    val showPercentNextToIcon = (viewModel.showPercentNextToIcon && !isTextOnly) || insideAsText
+
+    val trackBounds: Modifier.() -> Modifier = {
+        onLayoutRectChanged { relativeLayoutBounds ->
+            bounds = with(relativeLayoutBounds.boundsInScreen) { Rect(left, top, right, bottom) }
+        }
+    }
 
     val batteryIcon: @Composable (Modifier) -> Unit = { iconModifier ->
-        BatteryLayout(
-            attribution = viewModel.attribution,
-            levelProvider = { viewModel.level },
-            isFullProvider = { viewModel.isFull },
-            glyphsProvider = { viewModel.glyphList },
-            colorsProvider = colorProvider,
-            isTextOnly = isTextOnly,
-            modifier =
-                iconModifier.sysuiResTag(BatteryViewModel.TEST_TAG).onLayoutRectChanged {
-                    relativeLayoutBounds ->
-                    bounds =
-                        with(relativeLayoutBounds.boundsInScreen) {
-                            Rect(left, top, right, bottom)
-                        }
+        if (isIchthysStyle) {
+            IchthysBattery(
+                style = style,
+                levelProvider = { viewModel.level },
+                attributionProvider = { viewModel.attribution },
+                glyphsProvider = {
+                    if (styleFitsPercentInside(style)) viewModel.glyphList else emptyList()
                 },
-            contentDescription = viewModel.contentDescription.load() ?: "",
+                paletteProvider = paletteProvider,
+                frameThicknessProvider = { viewModel.customization.frameThickness },
+                modifier = iconModifier.sysuiResTag(BatteryViewModel.TEST_TAG).trackBounds(),
+                contentDescription = viewModel.contentDescription.load() ?: "",
+            )
+        } else {
+            BatteryLayout(
+                attribution = viewModel.attribution,
+                levelProvider = { viewModel.level },
+                isFullProvider = { viewModel.isFull },
+                glyphsProvider = { viewModel.glyphList },
+                colorsProvider = colorProvider,
+                isTextOnly = isTextOnly,
+                modifier = iconModifier.sysuiResTag(BatteryViewModel.TEST_TAG).trackBounds(),
+                contentDescription = viewModel.contentDescription.load() ?: "",
+            )
+        }
+    }
+
+    val percentText: @Composable (Modifier) -> Unit = { textModifier ->
+        // Use the status bar icon tint ([BatteryColors.attribution]) so the percent stays
+        // high-contrast on any background (white on a dark bar, dark on a light bar).
+        val baseStyle = BatteryViewModel.getStatusBarBatteryTextStyle(LocalContext.current)
+        Text(
+            text = NumberFormat.getPercentInstance().format((viewModel.level ?: 0) / 100f),
+            color = colorProvider().attribution,
+            style =
+                baseStyle.copy(
+                    fontSize = baseStyle.fontSize * viewModel.iconScale,
+                    fontWeight =
+                        if (viewModel.customization.percentBold) FontWeight.Bold
+                        else baseStyle.fontWeight,
+                ),
+            maxLines = 1,
+            modifier = textModifier,
         )
     }
 
-    if (showPercentNextToIcon) {
+    if (isHidden) {
+        // No icon; only the percentage if the user asked for one.
+        if (showPercentNextToIcon) {
+            Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+                percentText(Modifier.trackBounds())
+            }
+        }
+    } else if (showPercentNextToIcon) {
         Row(
             modifier = modifier,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Use the status bar icon tint ([BatteryColors.attribution]) so the percent stays
-            // high-contrast on any background (white on a dark bar, dark on a light bar).
-            Text(
-                text = NumberFormat.getPercentInstance().format((viewModel.level ?: 0) / 100f),
-                color = colorProvider().attribution,
-                style = BatteryViewModel.getStatusBarBatteryTextStyle(LocalContext.current),
-                maxLines = 1,
-            )
+            if (!viewModel.percentAfterIcon) percentText(Modifier)
             batteryIcon(Modifier.fillMaxHeight())
+            if (viewModel.percentAfterIcon) percentText(Modifier)
         }
     } else {
         batteryIcon(modifier)

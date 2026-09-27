@@ -379,13 +379,15 @@ private fun QuickSettingsChip(
                     ChipHighlightModel.Transparent -> viewModel.areaDark
                     ChipHighlightModel.Weak -> viewModel.areaDark
                 }
+            val batteryViewModel =
+                rememberViewModel("DesktopStatusBar.BatteryViewModel") {
+                    viewModel.unifiedBatteryViewModel.create()
+                }
             UnifiedBattery(
-                viewModel =
-                    rememberViewModel("DesktopStatusBar.BatteryViewModel") {
-                        viewModel.unifiedBatteryViewModel.create()
-                    },
+                viewModel = batteryViewModel,
                 isDarkProvider = { batteryDarkProvider },
-                modifier = Modifier.height(batteryHeight),
+                // IchthysOS: user battery icon size (#37)
+                modifier = Modifier.height(batteryHeight * batteryViewModel.iconScale),
             )
         }
     }

@@ -58,7 +58,10 @@ fun BatteryWithEstimate(
             UnifiedBattery(
                 viewModel = viewModel,
                 isDarkProvider = isDarkProvider,
-                modifier = Modifier.height(batteryHeight).align(Alignment.CenterVertically),
+                // IchthysOS: user battery icon size (#37)
+                modifier =
+                    Modifier.height(batteryHeight * viewModel.iconScale)
+                        .align(Alignment.CenterVertically),
             )
         }
         if (showEstimate) {

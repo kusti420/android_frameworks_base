@@ -72,8 +72,9 @@ object UnifiedBatteryViewBinder {
                                         .toDp()
                                 }
                             UnifiedBattery(
+                                // IchthysOS: user battery icon size (#37)
                                 modifier =
-                                    Modifier.height(height)
+                                    Modifier.height(height * viewModel.iconScale)
                                         .wrapContentWidth()
                                         .sysuiResTag(BatteryViewModel.TEST_TAG),
                                 viewModel = viewModel,
