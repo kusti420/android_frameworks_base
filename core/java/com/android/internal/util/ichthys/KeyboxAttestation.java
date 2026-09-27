@@ -283,7 +283,17 @@ public final class KeyboxAttestation {
     }
 
     /** Write a diagnostic crumb to Settings.Global so we can read it from adb shell. */
+    /**
+     * IchthysOS: diagnostics only when {@code persist.sys.keybox.debug} is set. Unconditionally
+     * this wrote "genKey|<package>" to Settings.Global (readable by every app) on every key
+     * generation in every app, i.e. a cross-app activity log, plus a failing settings IPC for
+     * callers that can't write Global settings.
+     */
+    private static final boolean DIAG =
+            android.os.SystemProperties.getBoolean("persist.sys.keybox.debug", false);
+
     private static void breadcrumb(Context context, String msg) {
+        if (!DIAG) return;
         try {
             Settings.Global.putString(context.getContentResolver(),
                     "ichthys_keybox_diag", msg);

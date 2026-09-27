@@ -245,7 +245,7 @@ public final class PropImitationHooks {
             if (!isGms && !PACKAGE_VENDING.equals(packageName) && !isTestTarget) {
                 return;
             }
-            final Map<String, String> config = readConfig(context);
+            final Map<String, String> config = withoutRuntimeSdk(readConfig(context));
             if (config.isEmpty()) {
                 if (DEBUG) {
                     Log.d(TAG, "no pif config stored; leaving " + processName + " untouched");
@@ -260,6 +260,26 @@ public final class PropImitationHooks {
             // Deliberately broad: this runs on every GMS start and must never break app launch.
             Log.e(TAG, "failed to apply the Play Integrity spoof for " + packageName, t);
         }
+    }
+
+    /**
+     * Drops the running SDK level (SDK_INT / PREVIEW_SDK_INT and their aliases) from a config.
+     * Community and fetched pif.json files often carry {@code SDK_INT=32}, but microG's GmsCore
+     * runs entirely under the com.google.android.gms package we spoof, so applying it would make
+     * location, push and accounts take pre-Android 13 code paths. The verdict only cares about
+     * DEVICE_INITIAL_SDK_INT, which is kept.
+     */
+    private static Map<String, String> withoutRuntimeSdk(Map<String, String> config) {
+        final Map<String, String> out = new HashMap<>(config);
+        for (Iterator<Map.Entry<String, String>> it = out.entrySet().iterator(); it.hasNext(); ) {
+            final Map.Entry<String, String> e = it.next();
+            final PropImitationTargets.Assignment a =
+                    PropImitationTargets.resolve(e.getKey(), e.getValue());
+            if (a != null && ("SDK_INT".equals(a.field) || "PREVIEW_SDK_INT".equals(a.field))) {
+                it.remove();
+            }
+        }
+        return out;
     }
 
     private static boolean isPhotosSpoofEnabled(Context context) {
