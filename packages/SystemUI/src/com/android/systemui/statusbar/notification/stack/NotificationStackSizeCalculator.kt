@@ -27,6 +27,7 @@ import com.android.systemui.res.R
 import com.android.systemui.scene.shared.flag.SceneContainerFlag
 import com.android.systemui.shade.ShadeDisplayAware
 import com.android.systemui.shade.domain.interactor.ShadeModeInteractor
+import com.android.systemui.shared.settings.data.repository.SystemSettingsRepository
 import com.android.systemui.statusbar.LockscreenShadeTransitionController
 import com.android.systemui.statusbar.StatusBarState.KEYGUARD
 import com.android.systemui.statusbar.SysuiStatusBarStateController
@@ -47,6 +48,9 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 private const val TAG = "NotifStackSizeCalc"
+
+/** IchthysOS: lock screen notification limit override (0-12, -1 = device default). */
+private const val LOCKSCREEN_MAX_NOTIFS_KEY = "ichthys_lockscreen_max_notifs"
 private val DEBUG = Compile.IS_DEBUG && Log.isLoggable(TAG, Log.DEBUG)
 private val SPEW = Compile.IS_DEBUG && Log.isLoggable(TAG, Log.VERBOSE)
 
@@ -67,7 +71,13 @@ constructor(
     private val shadeModeInteractor: ShadeModeInteractor,
     private val seenNotificationsInteractor: SeenNotificationsInteractor,
     @Application private val scope: CoroutineScope,
+    // IchthysOS: user override of the lock screen notification limit (last, defaulted, so the
+    // existing test constructions keep compiling).
+    private val systemSettings: SystemSettingsRepository? = null,
 ) {
+
+    /** IchthysOS: Settings.System [LOCKSCREEN_MAX_NOTIFS_KEY]; -1 = device default. */
+    @Volatile private var userMaxKeyguardNotifications = -1
 
     /**
      * Maximum # notifications to show on Keyguard; extras will be collapsed in an overflow shelf.
@@ -99,6 +109,14 @@ constructor(
     private var minimalismSettingEnabled = false
 
     init {
+        systemSettings?.let { settings ->
+            scope.launch {
+                settings.intSetting(LOCKSCREEN_MAX_NOTIFS_KEY, -1).collect {
+                    userMaxKeyguardNotifications = it
+                    updateResources()
+                }
+            }
+        }
         updateResources()
         if (NotificationMinimalism.isEnabled) {
             scope.launch { trackLockScreenNotificationMinimalismSettingChanges() }
@@ -445,7 +463,8 @@ constructor(
 
     fun updateResources() {
         maxKeyguardNotifications =
-            infiniteIfNegative(resources.getInteger(R.integer.keyguard_max_notification_count))
+            if (userMaxKeyguardNotifications >= 0) userMaxKeyguardNotifications
+            else infiniteIfNegative(resources.getInteger(R.integer.keyguard_max_notification_count))
         maxNotificationsExcludesMedia = NotificationMinimalism.isEnabled
 
         dividerHeight =
