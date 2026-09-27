@@ -16,6 +16,16 @@
 -->
 <resources>
 
+    <!-- IchthysOS: connectivity / captive-portal checks go to GrapheneOS' check servers instead
+         of connectivitycheck.gstatic.com / www.google.com. Captive-portal mode stays "prompt",
+         so hotel and airport Wi-Fi logins still work. (kusti420/ichthysos-tracker#15) -->
+    <string name="config_captive_portal_http_url" translatable="false">http://connectivitycheck.grapheneos.network/generate_204</string>
+    <string name="config_captive_portal_https_url" translatable="false">https://connectivitycheck.grapheneos.network/generate_204</string>
+    <string-array name="config_captive_portal_fallback_urls" translatable="false">
+        <item>http://grapheneos.online/gen_204</item>
+        <item>https://grapheneos.online/generate_204</item>
+    </string-array>
+
     <!-- Send the hostname (DHCP option 12) so the lease shows up named in a router's client
          list. LineageOS' NetworkStackOverlay already sets this; repeated here so the ROM does
          not depend on vendor/lineage being in the tree. -->
