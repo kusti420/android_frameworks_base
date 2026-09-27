@@ -674,6 +674,9 @@ final class ActivityRecord extends WindowToken {
     long mInputDispatchingTimeoutMillis = DEFAULT_DISPATCHING_TIMEOUT_MILLIS;
 
     private boolean mShowWhenLocked;
+    /** IchthysOS: intent extra set by SystemUI's lock screen calculator shortcut. */
+    private static final String ICHTHYS_EXTRA_LOCKSCREEN_SHORTCUT =
+            "org.ichthys.extra.LOCKSCREEN_SHORTCUT";
     private boolean mInheritShowWhenLocked;
     private boolean mTurnScreenOn;
 
@@ -1972,6 +1975,16 @@ final class ActivityRecord extends WindowToken {
         launchedFromProcessName = _caller != null ? _caller.mName : null;
         launchedFromFeatureId = _launchedFromFeature;
         mLaunchSourceType = determineLaunchSourceType(_launchedFromUid, _caller);
+        // IchthysOS: the lock screen calculator shortcut opens the calculator over the keyguard
+        // without unlocking. Only honoured when SystemUI itself launched this activity with the
+        // marker, and only for this activity: anything it starts, shares to or links out to
+        // still requires unlocking.
+        if (_intent.getBooleanExtra(ICHTHYS_EXTRA_LOCKSCREEN_SHORTCUT, false)
+                && _launchedFromPackage != null
+                && _launchedFromPackage.equals(
+                        _service.getSysUiServiceComponentLocked().getPackageName())) {
+            mShowWhenLocked = true;
+        }
         shortComponentName = _intent.getComponent().flattenToShortString();
         resolvedType = _resolvedType;
         componentSpecified = _componentSpecified;

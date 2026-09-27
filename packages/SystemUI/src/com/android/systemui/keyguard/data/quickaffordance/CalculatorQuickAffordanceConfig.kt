@@ -30,8 +30,8 @@ import kotlinx.coroutines.flow.flow
 
 /**
  * IchthysOS: lock screen shortcut that opens the default calculator (Vanilla on IchthysOS), found
- * through the standard APP_CALCULATOR category so any calculator the user installs works. The
- * calculator is a normal app, so it opens after unlocking.
+ * through the standard APP_CALCULATOR category so any calculator the user installs works. It opens
+ * over the lock screen without unlocking; only the calculator's own screen is shown.
  */
 @SysUISingleton
 class CalculatorQuickAffordanceConfig
@@ -77,8 +77,10 @@ constructor(@ShadeDisplayAware private val context: Context) : KeyguardQuickAffo
         val intent = calculatorIntent()
         return if (intent != null) {
             KeyguardQuickAffordanceConfig.OnTriggeredResult.StartActivity(
-                intent = intent,
-                canShowWhileLocked = false,
+                // The window manager lets this one activity show over the keyguard when SystemUI
+                // launches it with this marker (ActivityRecord); nothing else is unlocked.
+                intent = intent.putExtra(EXTRA_LOCKSCREEN_SHORTCUT, true),
+                canShowWhileLocked = true,
             )
         } else {
             KeyguardQuickAffordanceConfig.OnTriggeredResult.Handled(actionLaunched = false)
@@ -104,4 +106,8 @@ constructor(@ShadeDisplayAware private val context: Context) : KeyguardQuickAffo
     }
 
     private fun isAvailable(): Boolean = calculatorIntent() != null
+
+    private companion object {
+        const val EXTRA_LOCKSCREEN_SHORTCUT = "org.ichthys.extra.LOCKSCREEN_SHORTCUT"
+    }
 }
