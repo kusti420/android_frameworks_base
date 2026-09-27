@@ -298,15 +298,16 @@ public class PackageInfoUtils {
         }
 
         // IchthysOS: signature spoofing, the platform half of running microG in place of Play
-        // services. A privileged package holding FAKE_PACKAGE_SIGNATURE may declare the
-        // certificate it wants reported, so apps that verify Play services' signature accept
-        // microG's GmsCore. Restricted to privileged packages -- see FakeSignatureUtils.
+        // services. microG's privileged GmsCore / FakeStore may be reported with Google's Play
+        // certificate, so apps that verify Play services' signature accept them. Nothing else
+        // may spoof anything -- see FakeSignatureUtils.
         if ((flags & (PackageManager.GET_SIGNATURES | PackageManager.GET_SIGNING_CERTIFICATES))
                 != 0) {
             final Signature fakeSignature = FakeSignatureUtils.getFakeSignature(
                     pkg.getMetaData(),
                     pkg.getRequestedPermissions().contains(
                             FakeSignatureUtils.PERMISSION_FAKE_PACKAGE_SIGNATURE),
+                    pkgSetting.isPrivileged(),
                     pkg.getPackageName());
             if (fakeSignature != null) {
                 final Signature[] fake = new Signature[] {fakeSignature};
