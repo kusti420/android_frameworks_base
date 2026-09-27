@@ -48,6 +48,8 @@ import android.util.Xml;
 import com.android.modules.utils.TypedXmlPullParser;
 import com.android.modules.utils.TypedXmlSerializer;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
 import org.xmlpull.v1.XmlPullParser;
 
 import java.io.File;
@@ -104,6 +106,10 @@ public final class IchthysPreinstallController {
 
     private final Context mContext;
     private final Handler mHandler;
+    /** userId -> Obtainium seeding attempts so far. Only touched on {@link #mHandler}. */
+    private final Map<Integer, Integer> mSeedAttempts = new HashMap<>();
+    private static final int SEED_MAX_ATTEMPTS = 5;
+    private static final long SEED_RETRY_MS = 30_000;
     private final AtomicFile mStateFile = new AtomicFile(STATE_FILE);
     /** userId -> (packageName -> state). Only touched on {@link #mHandler}. */
     private final Map<Integer, Map<String, String>> mState = new HashMap<>();
@@ -197,9 +203,17 @@ public final class IchthysPreinstallController {
 
         if (!userState.containsKey(OBTAINIUM_PROMPTED) && OBTAINIUM_APPS_JSON.isFile()
                 && isInstalled(pm, OBTAINIUM)) {
-            if (postObtainiumPrompt(userId)) {
+            // Seed Obtainium's store directly (no tap). Emulated storage can still be coming up
+            // right after unlock, so retry a few times before falling back to the import prompt.
+            final int attempt = mSeedAttempts.getOrDefault(userId, 0);
+            if (seedObtainium(userId)
+                    || (attempt >= SEED_MAX_ATTEMPTS && postObtainiumPrompt(userId))) {
                 userState.put(OBTAINIUM_PROMPTED, STATE_INSTALLED);
+                mSeedAttempts.remove(userId);
                 changed = true;
+            } else if (attempt < SEED_MAX_ATTEMPTS) {
+                mSeedAttempts.put(userId, attempt + 1);
+                mHandler.postDelayed(() -> processUser(userId), SEED_RETRY_MS);
             }
         }
         if (changed) {
@@ -267,6 +281,45 @@ public final class IchthysPreinstallController {
      * One notification per user: tapping it opens Obtainium's {@code obtainium://apps/} deep link
      * with every bundled app's source preconfigured, which Obtainium imports after one confirmation.
      */
+    /**
+     * Pre-registers the bundled apps in Obtainium by writing one {@code <package>.json} per app
+     * (Obtainium's own stored-app format) into its
+     * {@code Android/data/dev.imranr.obtainium/files/app_data/}, which Obtainium loads at startup
+     * without asking. Only ExternalStorageProvider may write another app's Android/data, so the
+     * files go through its system-only {@code ichthys_seed_app_data} call. Existing files are
+     * left alone. Obtainium fills in defaults and the installed versions on its first check.
+     *
+     * @return true if the files were written (or already there)
+     */
+    private boolean seedObtainium(int userId) {
+        try {
+            final JSONArray apps = new JSONArray(new String(
+                    Files.readAllBytes(OBTAINIUM_APPS_JSON.toPath()), StandardCharsets.UTF_8));
+            final String[] names = new String[apps.length()];
+            final String[] contents = new String[apps.length()];
+            for (int i = 0; i < apps.length(); i++) {
+                final JSONObject app = apps.getJSONObject(i);
+                names[i] = app.getString("id") + ".json";
+                contents[i] = app.toString();
+            }
+            final Bundle extras = new Bundle();
+            extras.putString("subdir", "files/app_data");
+            extras.putStringArray("names", names);
+            extras.putStringArray("contents", contents);
+            final Context userContext = mContext.createContextAsUser(UserHandle.of(userId), 0);
+            final Bundle out = userContext.getContentResolver().call(
+                    "com.android.externalstorage.documents", "ichthys_seed_app_data", OBTAINIUM,
+                    extras);
+            final boolean ok = out != null && out.getBoolean("ok");
+            Slog.i(TAG, "seeded Obtainium for user " + userId + ": ok=" + ok + " written="
+                    + (out == null ? 0 : out.getInt("written")));
+            return ok;
+        } catch (Exception e) {
+            Slog.w(TAG, "could not seed Obtainium for user " + userId, e);
+            return false;
+        }
+    }
+
     private boolean postObtainiumPrompt(int userId) {
         final String json;
         try {
