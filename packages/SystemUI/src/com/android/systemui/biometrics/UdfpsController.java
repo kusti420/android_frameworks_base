@@ -1323,8 +1323,10 @@ public class UdfpsController implements DozeReceiver, Dumpable {
     }
 
     // ---- Runtime-tunable UDFPS optics (no rebuild needed to sweep these) ----
-    //   persist.sys.udfps.dim_alpha    0-255  black overlay alpha, 0 = no dim   (default 0)
-    //   persist.sys.udfps.dim_session  bool   dim held for whole enroll session (default true)
+    //   persist.sys.udfps.dim_alpha    -1 = auto (brightness-scaled, 40-200), 0 = no dim,
+    //                                  1-255 = fixed alpha                      (default -1)
+    //   persist.sys.udfps.dim_session  bool   dim held for whole enroll session (default false:
+    //                                         dim only while the finger is down)
     //   persist.sys.udfps.circle_scale int %  illumination disc size            (default 100)
     //   persist.sys.udfps.circle_color hex    ARGB circle colour                (default FFFFFFFF)
     // Apply with e.g.  adb shell setprop persist.sys.udfps.dim_alpha 230
@@ -1335,7 +1337,7 @@ public class UdfpsController implements DozeReceiver, Dumpable {
     private static final String PROP_CIRCLE_COLOR = "persist.sys.udfps.circle_color";
 
     private boolean isDimSessionHeld() {
-        return SystemProperties.getBoolean(PROP_DIM_SESSION, true);
+        return SystemProperties.getBoolean(PROP_DIM_SESSION, false);
     }
 
     private int getCircleColor() {
@@ -1374,7 +1376,8 @@ public class UdfpsController implements DozeReceiver, Dumpable {
             // the screen out and never leave it completely undimmed.
             final float ratio = Math.max(0f, Math.min(1f, (float) cur / (float) max));
             final int alpha = Math.round((1f - ratio) * 255f);
-            return Math.max(40, Math.min(235, alpha));
+            // Capped at 200 so the UI underneath always stays readable, even at minimum brightness.
+            return Math.max(40, Math.min(200, alpha));
         } catch (RuntimeException e) {
             Log.w(TAG, "computeAutoDimAlpha failed, using default", e);
             return DEFAULT_DIM_ALPHA;
@@ -1387,12 +1390,10 @@ public class UdfpsController implements DozeReceiver, Dumpable {
         if (mFodDimView != null) {
             return;
         }
-        // Default 255 = fully black surround, which reproduces the screen-off behaviour: on OLED
-        // every pixel outside the disc is then genuinely off, so raising the panel to fingerprint
-        // HBM lights only the sensor area and the rest of the display cannot visibly change.
-        // Dimming by anything less still lets the HBM jump show through on the remaining content.
-        // -1 selects the brightness-scaled mode; any other value >= 0 pins the alpha.
-        final int configured = SystemProperties.getInt(PROP_DIM_ALPHA, 255);
+        // Default -1 = brightness-scaled dim (computeAutoDimAlpha). A fully black surround (255)
+        // hid the HBM jump completely but also hid the lockscreen and the enrollment UI, so the
+        // user could not see what they were unlocking into. Any value >= 0 pins the alpha.
+        final int configured = SystemProperties.getInt(PROP_DIM_ALPHA, -1);
         final int alpha = configured >= 0 ? configured : computeAutoDimAlpha();
         if (alpha <= 0) {
             return;
