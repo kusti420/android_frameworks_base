@@ -238,6 +238,7 @@ open class SettingsPreferenceGroupAdapter @JvmOverloads constructor(
             val hasIconSpace = iconFrame != null && iconFrame.visibility != View.GONE
             drawableStateLayout.extraDrawableState =
                 stateSetOf(mItemPositionStates[position], hasIconSpace)
+            applyIchthysSurface(v)
         } else { // Handle the background of the preferences that are group divider
             val backgroundRes = getRoundCornerDrawableRes(position, isSelected = false)
             val (paddingStart, paddingEnd) = getStartEndPadding(position)
@@ -250,6 +251,51 @@ open class SettingsPreferenceGroupAdapter @JvmOverloads constructor(
             v.setBackgroundResource(backgroundRes)
             // Restore the preserved vertical padding and apply the calculated horizontal padding.
             v.setPaddingRelative(paddingStart, paddingTop, paddingEnd, paddingBottom)
+            applyIchthysSurface(v)
+        }
+    }
+
+    /**
+     * IchthysOS "Shoal" surfaces (theme.surface / Settings.Secure ichthys_theme_surface):
+     * "hairline" (default, Koi) draws each group as a 1dp outline on the page ground with no fill;
+     * "tonal" (Abyss) keeps the filled surface and drops the outline.
+     */
+    private fun applyIchthysSurface(v: View) {
+        val bg = v.background?.mutate() ?: return
+        val hairline =
+            android.provider.Settings.Secure.getString(
+                v.context.contentResolver, "ichthys_theme_surface") != "tonal"
+        val strokePx =
+            TypedValue.applyDimension(
+                    TypedValue.COMPLEX_UNIT_DIP, 1f, v.resources.displayMetrics)
+                .toInt()
+                .coerceAtLeast(1)
+        val outline = v.context.getColor(R.color.settingslib_materialColorOutlineVariant)
+        forEachShape(bg) { shape ->
+            if (hairline) {
+                shape.setColor(android.graphics.Color.TRANSPARENT)
+                shape.setStroke(strokePx, outline)
+            } else {
+                shape.setStroke(0, android.graphics.Color.TRANSPARENT)
+            }
+        }
+        v.invalidate()
+    }
+
+    private fun forEachShape(
+        d: android.graphics.drawable.Drawable,
+        block: (android.graphics.drawable.GradientDrawable) -> Unit,
+    ) {
+        when (d) {
+            is android.graphics.drawable.GradientDrawable -> block(d)
+            is android.graphics.drawable.LayerDrawable ->
+                for (i in 0 until d.numberOfLayers) d.getDrawable(i)?.let { forEachShape(it, block) }
+            is android.graphics.drawable.DrawableContainer ->
+                (d.constantState as? android.graphics.drawable.DrawableContainer.DrawableContainerState)
+                    ?.children
+                    ?.forEach { child -> child?.let { forEachShape(it, block) } }
+            is android.graphics.drawable.DrawableWrapper -> d.drawable?.let { forEachShape(it, block) }
+            else -> {}
         }
     }
 
