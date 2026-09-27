@@ -3349,6 +3349,16 @@ public final class SystemServer implements Dumpable {
             mSystemServiceManager.startServiceFromJar(DEVICE_LOCK_SERVICE_CLASS,
                     DEVICE_LOCK_APEX_PATH);
             t.traceEnd();
+        } else {
+            // IchthysOS: the device_lock feature is switched off (ichthys-unavailable-features.xml,
+            // tracker#33), but the controller app in the APEX still receives BOOT_COMPLETED and
+            // crashes without the service. Disable it; the setting persists across boots.
+            try {
+                mPackageManager.setApplicationEnabledSetting("com.android.devicelockcontroller",
+                        PackageManager.COMPONENT_ENABLED_STATE_DISABLED, 0);
+            } catch (IllegalArgumentException | SecurityException e) {
+                Slog.i(TAG, "devicelockcontroller not disabled: " + e.getMessage());
+            }
         }
 
         if (android.permission.flags.Flags.sensitiveNotificationAppProtection()
