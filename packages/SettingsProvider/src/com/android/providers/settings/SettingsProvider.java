@@ -2363,7 +2363,8 @@ public class SettingsProvider extends ContentProvider {
         final String targets;
         synchronized (mLock) {
             final SettingsState settings = mSettingsRegistry.getSettingsLocked(
-                    SETTINGS_TYPE_SECURE, UserHandle.getCallingUserId());
+                    SETTINGS_TYPE_SECURE, UserHandle.getCallingUserId(),
+                    Context.DEVICE_ID_DEFAULT);
             final Setting setting = settings != null
                     ? settings.getSettingLocked(KEYBOX_TARGET_SETTING) : null;
             targets = setting != null ? setting.getValue() : null;
