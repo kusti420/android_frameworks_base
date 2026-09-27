@@ -9,6 +9,13 @@ package {
     default_applicable_licenses: ["frameworks_base_license"],
 }
 
+// IchthysOS: the pure-Java ichthys.nix parser and option schema, also built for host tests
+// (tests/IchthysConfigTests).
+filegroup {
+    name: "ichthys-config-sources",
+    srcs: ["com/android/internal/ichthys/config/*.java"],
+}
+
 aidl_library {
     name: "HardwareBuffer_aidl",
     hdrs: ["android/hardware/HardwareBuffer.aidl"],
