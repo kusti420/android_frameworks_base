@@ -321,10 +321,12 @@ constructor(
         dumpManager.registerDumpable(this)
     }
 
-    /** Whether the user has left the AOSP smartspace enabled (lockscreen_smartspace_enabled). */
+    /** Whether the user enabled the AOSP smartspace (lockscreen_smartspace_enabled). IchthysOS: off by
+     *  default, there is no smartspace provider plugin, and crDroid greys out lockscreen weather
+     *  while it is on. */
     val isSmartspaceUserEnabled: Boolean
         get() =
-            secureSettings.getIntForUser(LOCKSCREEN_SMARTSPACE_ENABLED, 1, userTracker.userId) == 1
+            secureSettings.getIntForUser(LOCKSCREEN_SMARTSPACE_ENABLED, 0, userTracker.userId) == 1
 
     val isEnabled: Boolean
         get() = plugin != null && isSmartspaceUserEnabled
