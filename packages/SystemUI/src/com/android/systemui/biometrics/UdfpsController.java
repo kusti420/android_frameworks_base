@@ -476,6 +476,9 @@ public class UdfpsController implements DozeReceiver, Dumpable {
 
         if (!mOverlayParams.equals(overlayParams)) {
             mOverlayParams = overlayParams;
+            if (mUdfpsAnimation != null) {
+                mUdfpsAnimation.setOverlayParams(mOverlayParams);
+            }
 
             if (mOverlay != null && mOverlay.getRequestReason() == REASON_AUTH_KEYGUARD) {
                 mOverlay.updateOverlayParams(mOverlayParams);
@@ -880,11 +883,11 @@ public class UdfpsController implements DozeReceiver, Dumpable {
             mOnFingerDown = false;
             mAttemptedToDismissKeyguard = false;
             mOrientationListener.enable();
-            // (Re)create the recognizing animation with the current sensor location and enable it
-            // only on the keyguard, mirroring crDroid behavior.
+            // IchthysOS: (re)create the press-effects window with the current sensor geometry.
+            // It decides per request reason (keyguard / app prompt / enrollment) whether to play.
             updateUdfpsAnimation();
             if (mUdfpsAnimation != null) {
-                mUdfpsAnimation.setIsKeyguard(requestReason == REASON_AUTH_KEYGUARD);
+                mUdfpsAnimation.setRequestReason(requestReason);
             }
             if (mFingerprintManager != null) {
                 mFingerprintManager.onUdfpsUiEvent(FingerprintManager.UDFPS_UI_OVERLAY_SHOWN,
@@ -910,7 +913,7 @@ public class UdfpsController implements DozeReceiver, Dumpable {
                 onFingerUp(mOverlay.getRequestId(), oldView);
             }
             if (mUdfpsAnimation != null) {
-                mUdfpsAnimation.setIsKeyguard(false);
+                mUdfpsAnimation.setRequestReason(-1);
             }
             final boolean removed = mOverlay.hide();
             hideIlluminationOverlay();
@@ -1212,11 +1215,10 @@ public class UdfpsController implements DozeReceiver, Dumpable {
             mUdfpsAnimation.removeAnimation();
             mUdfpsAnimation = null;
         }
-        if (com.android.internal.util.crdroid.Utils.isPackageInstalled(mContext,
-                "com.crdroid.udfps.animations")) {
-            mUdfpsAnimation = new UdfpsAnimation(mContext, mWindowManager, mSensorProps, mKeyguardStateController);
-            mUdfpsAnimation.updatePosition();
-        }
+        // IchthysOS: always available; built-in effects don't need the crDroid animation pack.
+        mUdfpsAnimation = new UdfpsAnimation(mContext, mWindowManager, mKeyguardStateController,
+                mKeyguardUpdateMonitor);
+        mUdfpsAnimation.setOverlayParams(mOverlayParams);
     }
 
     public boolean isAnimationEnabled() {
@@ -1258,6 +1260,10 @@ public class UdfpsController implements DozeReceiver, Dumpable {
         if (!isDimSessionHeld()) {
             showDimLayer();
         }
+
+        // IchthysOS: press effects go between the dim (below) and the illumination disc (above),
+        // so they are visible and never cover the light the sensor needs.
+        showUdfpsAnimation();
 
         // === ILLUMINATION CIRCLE ===
         // The sensor sees light from this circle reflected off the finger.

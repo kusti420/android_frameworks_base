@@ -25,6 +25,7 @@ import com.android.compose.animation.scene.ObservableTransitionState
 import com.android.compose.animation.scene.SceneKey
 import com.android.compose.animation.scene.TransitionKey
 import com.android.keyguard.AuthInteractionProperties
+import com.android.systemui.biometrics.IchthysFpHaptics
 import com.android.systemui.CoreStartable
 import com.android.systemui.Flags
 import com.android.systemui.animation.ActivityTransitionAnimator
@@ -566,7 +567,9 @@ constructor(
                         launch {
                             deviceEntryHapticsInteractor.playSuccessHapticOnDeviceEntry.collect {
                                 currentScene ->
-                                if (Flags.msdlFeedback()) {
+                                if (IchthysFpHaptics.handleSuccess(vibratorHelper)) {
+                                    // IchthysOS: suppressed or custom pattern played.
+                                } else if (Flags.msdlFeedback()) {
                                     msdlPlayer.playToken(
                                         MSDLToken.UNLOCK,
                                         authInteractionProperties,
@@ -581,7 +584,9 @@ constructor(
 
                         launch {
                             deviceEntryHapticsInteractor.playErrorHaptic.collect { currentScene ->
-                                if (Flags.msdlFeedback()) {
+                                if (IchthysFpHaptics.handleError(vibratorHelper)) {
+                                    // IchthysOS: suppressed or custom pattern played.
+                                } else if (Flags.msdlFeedback()) {
                                     msdlPlayer.playToken(
                                         MSDLToken.FAILURE,
                                         authInteractionProperties,

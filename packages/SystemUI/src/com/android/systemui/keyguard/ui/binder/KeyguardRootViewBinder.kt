@@ -36,6 +36,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import com.android.app.tracing.coroutines.launchTraced as launch
 import com.android.keyguard.AuthInteractionProperties
+import com.android.systemui.biometrics.IchthysFpHaptics
 import com.android.systemui.Flags
 import com.android.systemui.Flags.msdlFeedback
 import com.android.systemui.common.ui.ConfigurationState
@@ -138,7 +139,9 @@ object KeyguardRootViewBinder {
                     if (deviceEntryHapticsInteractor != null && vibratorHelper != null) {
                         launch {
                             deviceEntryHapticsInteractor.playSuccessHapticOnDeviceEntry.collect {
-                                if (msdlFeedback()) {
+                                if (IchthysFpHaptics.handleSuccess(vibratorHelper)) {
+                                    // IchthysOS: suppressed or custom pattern played.
+                                } else if (msdlFeedback()) {
                                     msdlPlayer?.playToken(
                                         MSDLToken.UNLOCK,
                                         authInteractionProperties,
@@ -154,7 +157,9 @@ object KeyguardRootViewBinder {
 
                         launch {
                             deviceEntryHapticsInteractor.playErrorHaptic.collect {
-                                if (msdlFeedback()) {
+                                if (IchthysFpHaptics.handleError(vibratorHelper)) {
+                                    // IchthysOS: suppressed or custom pattern played.
+                                } else if (msdlFeedback()) {
                                     msdlPlayer?.playToken(
                                         MSDLToken.FAILURE,
                                         authInteractionProperties,

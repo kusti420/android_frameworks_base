@@ -37,6 +37,8 @@ import com.airbnb.lottie.LottieDrawable
 import com.android.internal.util.crdroid.Utils
 import com.android.systemui.Dependency
 import com.android.systemui.biometrics.UdfpsFpIconDrawable
+import com.android.systemui.biometrics.IchthysFpIconDrawable
+import com.android.systemui.biometrics.IchthysUdfpsSettings
 import com.android.systemui.biometrics.UdfpsIconDrawable
 import com.android.systemui.common.ui.view.TouchHandlingView
 import com.android.systemui.log.TouchHandlingViewLogger
@@ -79,6 +81,16 @@ constructor(
     private val udfpsIconPackageInstalled: Boolean =
         Utils.isPackageInstalled(context, "com.crdroid.udfps.icons")
 
+    // IchthysOS: built-in fingerprint icon styles (IchthysFpIconDrawable), re-applied live.
+    private val ichthysIconKeys: Set<String> =
+        setOf(
+            IchthysUdfpsSettings.ICON_STYLE,
+            IchthysUdfpsSettings.ICON_COLOR_MODE,
+            IchthysUdfpsSettings.ICON_COLOR,
+            IchthysUdfpsSettings.ICON_OPACITY,
+            IchthysUdfpsSettings.ICON_ON_AOD,
+        ).map { "system:$it" }.toSet()
+
     init {
         setupIconStates()
         setupIconTransitions()
@@ -90,15 +102,15 @@ constructor(
         addIconImageView()
         addTouchHandlingView()
 
-        if (udfpsIconPackageInstalled) {
-            runCatching {
-                Dependency.get(TunerService::class.java).addTunable(this, udfpsIconKey)
-            }
+        runCatching {
+            val keys = ichthysIconKeys.toMutableList()
+            if (udfpsIconPackageInstalled) keys += udfpsIconKey
+            Dependency.get(TunerService::class.java).addTunable(this, *keys.toTypedArray())
         }
     }
 
     override fun onTuningChanged(key: String?, newValue: String?) {
-        if (key == udfpsIconKey) {
+        if (key == udfpsIconKey || (key != null && key in ichthysIconKeys)) {
             // Rebuild the animated state-list drawable so the FINGERPRINT state picks up the new
             // custom icon (or reverts to the stock fingerprint icon).
             iconView.setImageDrawable(null)
@@ -166,7 +178,13 @@ constructor(
                     0,
                     UserHandle.USER_CURRENT,
                 ) != 0
-        if (customUdfpsIcon) {
+        if (IchthysFpIconDrawable.isEnabled(context)) {
+            animatedIconDrawable.addState(
+                getIconState(IconType.FINGERPRINT, false),
+                IchthysFpIconDrawable(context, /* aod= */ false),
+                R.id.locked_fp,
+            )
+        } else if (customUdfpsIcon) {
             fingerprintDrawable.setBounds(0, 0, bgView.width, bgView.height)
             animatedIconDrawable.addState(
                 getIconState(IconType.FINGERPRINT, false),
@@ -195,14 +213,23 @@ constructor(
             R.id.unlocked_aod,
         )
         // FINGERPRINT
-        LottieCompositionFactory.fromRawRes(mContext, R.raw.udfps_aod_fp).addListener { result ->
-            aodFpDrawable.setComposition(result)
+        if (IchthysFpIconDrawable.isEnabledOnAod(context)) {
+            animatedIconDrawable.addState(
+                getIconState(IconType.FINGERPRINT, true),
+                IchthysFpIconDrawable(context, /* aod= */ true),
+                R.id.udfps_aod_fp,
+            )
+        } else {
+            LottieCompositionFactory.fromRawRes(mContext, R.raw.udfps_aod_fp).addListener {
+                result ->
+                aodFpDrawable.setComposition(result)
+            }
+            animatedIconDrawable.addState(
+                getIconState(IconType.FINGERPRINT, true),
+                aodFpDrawable,
+                R.id.udfps_aod_fp,
+            )
         }
-        animatedIconDrawable.addState(
-            getIconState(IconType.FINGERPRINT, true),
-            aodFpDrawable,
-            R.id.udfps_aod_fp,
-        )
 
         // WILDCARD: should always be the last state added since any states will match with this
         // and therefore won't get matched with subsequent states.
