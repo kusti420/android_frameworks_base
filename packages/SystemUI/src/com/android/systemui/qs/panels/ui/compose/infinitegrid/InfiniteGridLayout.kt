@@ -98,6 +98,23 @@ constructor(
         val squishiness by viewModel.squishinessViewModel.squishiness.collectAsStateWithLifecycle()
         val scope = rememberCoroutineScope()
 
+        // IchthysOS "Shoal": wide connectivity tiles + honeycomb of icon circles.
+        if (rememberShoalQsEnabled()) {
+            ShoalTileGrid(
+                tiles = tiles,
+                squishiness = { squishiness },
+                coroutineScope = scope,
+                tileHapticsViewModelFactory = tileHapticsViewModelFactory,
+                detailsViewModel = detailsViewModel,
+                listening = listening,
+                requestToggleTextFeedback = textFeedbackViewModel::requestShowFeedback,
+                enableRevealEffect = enableRevealEffect,
+                modifier = modifier,
+            )
+            TileListener(tiles, listening)
+            return
+        }
+
         val bounceables =
             remember(sizedTiles) { List(sizedTiles.size) { BounceableTileViewModel() } }
         val spans by remember(sizedTiles) { derivedStateOf { sizedTiles.fastMap { it.width } } }
