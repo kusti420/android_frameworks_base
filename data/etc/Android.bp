@@ -227,3 +227,16 @@ prebuilt_etc {
     sub_dir: "advanced-protection-config",
     src: "advanced-protection-config.xml",
 }
+
+// IchthysOS theme presets for ichthys.nix `theme.preset` (tracker#50).
+prebuilt_etc {
+    name: "ichthys_theme_presets",
+    product_specific: true,
+    sub_dir: "ichthys/presets",
+    srcs: [
+        "ichthys/presets/abyss.nix",
+        "ichthys/presets/kelp.nix",
+        "ichthys/presets/paper.nix",
+        "ichthys/presets/reef.nix",
+    ],
+}
