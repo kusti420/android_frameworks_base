@@ -3344,6 +3344,16 @@ public final class SystemServer implements Dumpable {
         mSystemServiceManager.startService(HEALTHCONNECT_MANAGER_SERVICE_CLASS);
         t.traceEnd();
 
+        // IchthysOS: declarative OS configuration (ichthys.nix) and theme engine (tracker#50).
+        t.traceBegin("StartIchthysConfigService");
+        try {
+            mSystemServiceManager.startService(
+                    com.android.server.ichthys.IchthysConfigService.class);
+        } catch (Throwable e) {
+            reportWtf("starting IchthysConfigService", e);
+        }
+        t.traceEnd();
+
         if (mPackageManager.hasSystemFeature(PackageManager.FEATURE_DEVICE_LOCK)) {
             t.traceBegin("DeviceLockService");
             mSystemServiceManager.startServiceFromJar(DEVICE_LOCK_SERVICE_CLASS,
