@@ -93,6 +93,7 @@ import com.android.systemui.scene.ui.view.WindowRootView
 import com.android.systemui.shade.ui.composable.VariableDayDate
 import com.android.systemui.statusbar.BatteryBarView
 import com.android.systemui.statusbar.CutoutRingView
+import com.android.systemui.statusbar.IchthysBtBatteryView
 import com.android.systemui.statusbar.NetworkTraffic
 import com.android.systemui.statusbar.StatusBarWeather
 import com.android.systemui.statusbar.StatusBarAlwaysUseRegionSampling
@@ -654,6 +655,23 @@ private fun addCrDroidStatusBarViews(
     startContainer.addView(weather)
     darkIconDispatcher.addDarkReceiver(weather)
 
+    // IchthysOS "Shoal": connected Bluetooth device battery pill, right after the status icon
+    // lattice (so it sits between the icons and the battery). Self-managing; shown only in the
+    // zig-zag layout while a device reports a level.
+    val btBattery =
+        IchthysBtBatteryView(context).apply {
+            layoutParams =
+                LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                    )
+                    .apply { gravity = android.view.Gravity.CENTER_VERTICAL }
+        }
+    phoneStatusBarView.findViewById<ViewGroup>(R.id.system_icons)?.let { systemIcons ->
+        systemIcons.addView(btBattery, minOf(1, systemIcons.childCount))
+        darkIconDispatcher.addDarkReceiver(btBattery)
+    }
+
     // Battery bar: a full-width bar along the bottom edge of the status bar. Added directly to the
     // PhoneStatusBarView (a FrameLayout) so it spans the whole width and sits below the icon row,
     // clear of the start/end-side Compose overlays. It self-observes its settings + battery state.
@@ -686,6 +704,7 @@ private fun addCrDroidStatusBarViews(
         darkIconDispatcher.removeDarkReceiver(logo)
         darkIconDispatcher.removeDarkReceiver(networkTraffic)
         darkIconDispatcher.removeDarkReceiver(weather)
+        darkIconDispatcher.removeDarkReceiver(btBattery)
     }
 }
 

@@ -91,6 +91,11 @@ public class Clock extends TextView implements
             "system:status_bar_clock_period_separator";
     private static final String STATUS_BAR_CLOCK_BOLD =
             "system:status_bar_clock_bold";
+    // IchthysOS "Shoal": in the zig-zag status bar layout the clock uses the theme's monospaced
+    // numeral face (theme.font.mono), falling back to the platform monospace family.
+    // Plain tuner keys are Settings.Secure.
+    private static final String ICHTHYS_STATUSBAR_LAYOUT = "ichthys_statusbar_layout";
+    private static final String ICHTHYS_FONT_MONO = "ichthys_theme_font_mono";
     // Custom Options: crDroid clock auto-hide (LineageSettings.System boolean).
     private static final String STATUS_BAR_CLOCK_AUTO_HIDE =
             "lineagesystem:status_bar_clock_auto_hide";
@@ -287,6 +292,8 @@ public class Clock extends TextView implements
                     STATUS_BAR_CLOCK_DATE_FORMAT,
                     STATUS_BAR_CLOCK_PERIOD_SEPARATOR,
                     STATUS_BAR_CLOCK_BOLD,
+                    ICHTHYS_STATUSBAR_LAYOUT,
+                    ICHTHYS_FONT_MONO,
                     STATUS_BAR_CLOCK_AUTO_HIDE,
                     STATUS_BAR_CLOCK_POSITION,
                     STATUS_BAR_CLOCK_CHIP);
@@ -505,6 +512,14 @@ public class Clock extends TextView implements
                 mBoldStatusBarClock =
                         TunerService.parseIntegerSwitch(newValue, false);
                 applyBoldClockStyle();
+                break;
+            case ICHTHYS_STATUSBAR_LAYOUT:
+                mShoalLayout = "zigzag".equals(newValue);
+                applyShoalClockTypeface();
+                break;
+            case ICHTHYS_FONT_MONO:
+                mShoalMonoFamily = newValue;
+                applyShoalClockTypeface();
                 break;
             case STATUS_BAR_CLOCK_AUTO_HIDE:
                 mClockAutoHide = TunerService.parseIntegerSwitch(newValue, false);
@@ -764,6 +779,33 @@ public class Clock extends TextView implements
             return time;
         }
         return time.replace(':', '.').replace('：', '.');
+    }
+
+    private boolean mShoalLayout;
+    private String mShoalMonoFamily;
+    private Typeface mStockTypeface;
+
+    /** IchthysOS: monospaced numerals in the zig-zag layout; the stock face otherwise. */
+    private void applyShoalClockTypeface() {
+        if (!mIsStatusBar) {
+            return;
+        }
+        if (mStockTypeface == null) {
+            mStockTypeface = getTypeface() != null ? getTypeface() : Typeface.DEFAULT;
+        }
+        final int style = getTypeface() != null ? getTypeface().getStyle() : Typeface.NORMAL;
+        final Typeface base;
+        if (mShoalLayout) {
+            final String family = mShoalMonoFamily == null || mShoalMonoFamily.isEmpty()
+                    ? "monospace" : mShoalMonoFamily;
+            final Typeface named = Typeface.create(family, Typeface.NORMAL);
+            // An unknown family resolves to the default sans face; keep the numerals monospaced.
+            base = named == null || named.equals(Typeface.DEFAULT) ? Typeface.MONOSPACE : named;
+        } else {
+            base = mStockTypeface;
+        }
+        setTypeface(Typeface.create(base, style));
+        applyBoldClockStyle();
     }
 
     // Custom Options: bold the status bar clock typeface when enabled.

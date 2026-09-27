@@ -24,10 +24,15 @@ import android.annotation.Nullable;
 import android.content.Context;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
+import android.database.ContentObserver;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Paint.Style;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.UserHandle;
+import android.provider.Settings;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.view.View;
@@ -80,6 +85,36 @@ public class StatusIconContainer extends AlphaOptimizedLinearLayout {
 
     private Configuration mConfiguration;
 
+    // IchthysOS "Shoal": zig-zag lattice layout (Settings.Secure ichthys_statusbar_layout =
+    // "zigzag", written by the ichthys.nix option statusBar.layout). Icons become small discs in
+    // two rows, the lower row offset by half a pitch, which fits about twice as many icons in the
+    // same width. Geometry from the design: 11 dp discs, 2 dp gaps, 7 dp glyphs.
+    static final String LAYOUT_SETTING = "ichthys_statusbar_layout";
+    private static final int ZZ_MAX_ICONS = 16;
+    private static final float ZZ_CELL_DP = 11f;
+    private static final float ZZ_GAP_DP = 2f;
+    private static final float ZZ_ROW_GAP_DP = 0.67f;
+    private static final float ZZ_GLYPH_FRACTION = 7f / 11f;
+    private static final float ZZ_GLYPH_MAX_WIDTH_FRACTION = 9f / 11f;
+    /** Slots whose disc is filled with the accent while shown: states worth noticing. */
+    private static final Set<String> ZZ_ACTIVE_SLOTS = Set.of("vpn", "location", "hotspot",
+            "cast", "screen_record", "data_saver", "zen", "sensors_off", "connected_display");
+    private boolean mZigzag;
+    private float mZzCell;
+    private float mZzHalfPitch;
+    private float mZzRowGap;
+    private final ArrayList<float[]> mZzDiscs = new ArrayList<>();
+    private final Paint mZzDiscPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint mZzActiveFillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint mZzActiveRingPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final ContentObserver mLayoutObserver =
+            new ContentObserver(new Handler(Looper.getMainLooper())) {
+                @Override
+                public void onChange(boolean selfChange) {
+                    updateZigzag();
+                }
+            };
+
     public StatusIconContainer(Context context) {
         this(context, null);
     }
@@ -89,6 +124,53 @@ public class StatusIconContainer extends AlphaOptimizedLinearLayout {
         mConfiguration = new Configuration(context.getResources().getConfiguration());
         reloadDimens();
         setWillNotDraw(!DEBUG_OVERFLOW);
+        // Neutral translucent disc so it reads on light and dark status bars alike; the icon
+        // views keep their own dark/light tint.
+        mZzDiscPaint.setColor(Color.argb(60, 128, 128, 128));
+        updateZigzagColors();
+        mZigzag = readZigzag();
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        getContext().getContentResolver().registerContentObserver(
+                Settings.Secure.getUriFor(LAYOUT_SETTING), false, mLayoutObserver,
+                UserHandle.USER_ALL);
+        updateZigzag();
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        getContext().getContentResolver().unregisterContentObserver(mLayoutObserver);
+        super.onDetachedFromWindow();
+    }
+
+    private boolean readZigzag() {
+        return "zigzag".equals(Settings.Secure.getStringForUser(getContext().getContentResolver(),
+                LAYOUT_SETTING, UserHandle.USER_CURRENT));
+    }
+
+    private void updateZigzag() {
+        final boolean zigzag = readZigzag();
+        if (zigzag != mZigzag) {
+            mZigzag = zigzag;
+            requestLayout();
+            invalidate();
+        }
+    }
+
+    /** The accent follows the system (Monet) accent, which the ichthys theme engine drives. */
+    private void updateZigzagColors() {
+        final int accent = getContext().getColor(android.R.color.system_accent1_400);
+        mZzActiveFillPaint.setColor(accent);
+        mZzActiveFillPaint.setAlpha(96);
+        mZzActiveRingPaint.setColor(accent);
+        mZzActiveRingPaint.setStyle(Style.STROKE);
+    }
+
+    private float dp(float value) {
+        return value * getResources().getDisplayMetrics().density;
     }
 
     @Override
@@ -120,6 +202,24 @@ public class StatusIconContainer extends AlphaOptimizedLinearLayout {
     }
 
     @Override
+    protected void dispatchDraw(Canvas canvas) {
+        if (mZigzag && !mZzDiscs.isEmpty()) {
+            final float radius = mZzCell / 2f;
+            mZzActiveRingPaint.setStrokeWidth(Math.max(1f, mZzCell * 0.09f));
+            for (float[] disc : mZzDiscs) {
+                if (disc[2] > 0f) {
+                    canvas.drawCircle(disc[0], disc[1], radius, mZzActiveFillPaint);
+                    canvas.drawCircle(disc[0], disc[1],
+                            radius - mZzActiveRingPaint.getStrokeWidth() / 2f, mZzActiveRingPaint);
+                } else {
+                    canvas.drawCircle(disc[0], disc[1], radius, mZzDiscPaint);
+                }
+            }
+        }
+        super.dispatchDraw(canvas);
+    }
+
+    @Override
     protected void onLayout(boolean changed, int l, int t, int r, int b) {
         float midY = getHeight() / 2.0f;
 
@@ -133,8 +233,14 @@ public class StatusIconContainer extends AlphaOptimizedLinearLayout {
         }
 
         resetViewStates();
-        calculateIconTranslations();
+        if (mZigzag) {
+            calculateZigzagTranslations();
+        } else {
+            mZzDiscs.clear();
+            calculateIconTranslations();
+        }
         applyIconStates();
+        invalidate();
     }
 
     @Override
@@ -157,6 +263,10 @@ public class StatusIconContainer extends AlphaOptimizedLinearLayout {
 
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+        if (mZigzag) {
+            measureZigzag(widthMeasureSpec, heightMeasureSpec);
+            return;
+        }
         mMeasureViews.clear();
         int widthMode = MeasureSpec.getMode(widthMeasureSpec);
         final int specWidth = MeasureSpec.getSize(widthMeasureSpec);
@@ -198,6 +308,97 @@ public class StatusIconContainer extends AlphaOptimizedLinearLayout {
         setMeasuredDimension(
                 getMeasuredWidth(widthMode, specWidth, totalWidth),
                 getMeasuredHeight(heightMeasureSpec, mMeasureViews));
+    }
+
+    /** Zig-zag measure: icon i sits half a pitch left of icon i - 1, alternating rows. */
+    private void measureZigzag(int widthMeasureSpec, int heightMeasureSpec) {
+        mMeasureViews.clear();
+        for (int i = 0; i < getChildCount(); i++) {
+            StatusIconDisplayable icon = (StatusIconDisplayable) getChildAt(i);
+            if (icon.isIconVisible() && !icon.isIconBlocked()
+                    && !mIgnoredSlots.contains(icon.getSlot())) {
+                mMeasureViews.add((View) icon);
+            }
+        }
+        final int childWidthSpec = MeasureSpec.makeMeasureSpec(
+                MeasureSpec.getSize(widthMeasureSpec), MeasureSpec.UNSPECIFIED);
+        for (View child : mMeasureViews) {
+            measureChild(child, childWidthSpec, heightMeasureSpec);
+        }
+
+        mZzRowGap = Math.max(1f, dp(ZZ_ROW_GAP_DP));
+        float cell = dp(ZZ_CELL_DP);
+        final int heightMode = MeasureSpec.getMode(heightMeasureSpec);
+        if (heightMode != MeasureSpec.UNSPECIFIED) {
+            final float avail = MeasureSpec.getSize(heightMeasureSpec) - getPaddingTop()
+                    - getPaddingBottom();
+            cell = Math.max(1f, Math.min(cell, (avail - mZzRowGap) / 2f));
+        }
+        mZzCell = cell;
+        mZzHalfPitch = (cell + cell * ZZ_GAP_DP / ZZ_CELL_DP) / 2f;
+
+        final int shown = Math.min(mMeasureViews.size(), ZZ_MAX_ICONS);
+        int totalWidth = getPaddingLeft() + getPaddingRight();
+        if (shown > 0) {
+            totalWidth += (int) Math.ceil(cell + (shown - 1) * mZzHalfPitch);
+        }
+        final int widthMode = MeasureSpec.getMode(widthMeasureSpec);
+        final int specWidth = MeasureSpec.getSize(widthMeasureSpec);
+        final int width = widthMode == MeasureSpec.EXACTLY ? specWidth
+                : widthMode == MeasureSpec.AT_MOST ? Math.min(totalWidth, specWidth) : totalWidth;
+        final int height = heightMode == MeasureSpec.EXACTLY
+                ? MeasureSpec.getSize(heightMeasureSpec)
+                : (int) Math.ceil(2 * cell + mZzRowGap) + getPaddingTop() + getPaddingBottom();
+        mNeedsUnderflow = false;
+        setMeasuredDimension(width, height);
+    }
+
+    /**
+     * Places each visible icon, right to left, on the lattice: centred on its disc and scaled so
+     * its glyph fits. Icons past {@link #ZZ_MAX_ICONS} or beyond the available width are hidden
+     * (never drawn over the clock).
+     */
+    private void calculateZigzagTranslations() {
+        mLayoutStates.clear();
+        mZzDiscs.clear();
+        final float width = getWidth();
+        final float contentStart = getPaddingStart();
+        final float midY = getHeight() / 2.0f;
+        final float cell = mZzCell;
+        final float topCy = midY - (cell + mZzRowGap) / 2f;
+        final float bottomCy = midY + (cell + mZzRowGap) / 2f;
+        final boolean rtl = isLayoutRtl();
+        int shown = 0;
+        for (int i = getChildCount() - 1; i >= 0; i--) {
+            View child = getChildAt(i);
+            StatusIconDisplayable iconView = (StatusIconDisplayable) child;
+            StatusIconState state = getViewStateFromChild(child);
+            if (state == null) {
+                continue;
+            }
+            final float cx = width - getPaddingEnd() - cell / 2f - shown * mZzHalfPitch;
+            if (!iconView.isIconVisible() || iconView.isIconBlocked()
+                    || mIgnoredSlots.contains(iconView.getSlot())
+                    || shown >= ZZ_MAX_ICONS || cx - cell / 2f < contentStart) {
+                state.visibleState = STATE_HIDDEN;
+                continue;
+            }
+            final float cy = (shown % 2 == 0) ? topCy : bottomCy;
+            final int w = Math.max(1, child.getWidth());
+            final int h = Math.max(1, child.getHeight());
+            final float scale = Math.min(cell * ZZ_GLYPH_FRACTION / h,
+                    cell * ZZ_GLYPH_MAX_WIDTH_FRACTION / w);
+            final float drawCx = rtl ? width - cx : cx;
+            state.visibleState = STATE_ICON;
+            state.setXTranslation(drawCx - w / 2f);
+            state.setYTranslation(cy - midY, "statusIconContainer zigzag");
+            state.setScaleX(scale);
+            state.setScaleY(scale);
+            mLayoutStates.add(0, state);
+            mZzDiscs.add(new float[] {drawCx, cy,
+                    ZZ_ACTIVE_SLOTS.contains(iconView.getSlot()) ? 1f : 0f});
+            shown++;
+        }
     }
 
     private int getMeasuredHeight(int heightMeasureSpec, List<View> measuredChildren) {
@@ -249,6 +450,9 @@ public class StatusIconContainer extends AlphaOptimizedLinearLayout {
         if ((configDiff & (ActivityInfo.CONFIG_DENSITY | ActivityInfo.CONFIG_FONT_SCALE)) != 0) {
             reloadDimens();
         }
+        // Theme (accent) changes arrive as a configuration change.
+        updateZigzagColors();
+        invalidate();
     }
 
     /**
@@ -423,6 +627,10 @@ public class StatusIconContainer extends AlphaOptimizedLinearLayout {
             vs.initFrom(child);
             vs.setAlpha(1.0f, "statusIconContainer reset");
             vs.hidden = false;
+            // IchthysOS: the zig-zag layout scales and offsets icons; the row layout never does.
+            vs.setScaleX(1f);
+            vs.setScaleY(1f);
+            vs.setYTranslation(0f, "statusIconContainer reset");
         }
     }
 
