@@ -16,11 +16,25 @@
 
 package com.android.systemui.recents.oneui.styles;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
+import android.animation.ObjectAnimator;
+import android.animation.PropertyValuesHolder;
+import android.animation.ValueAnimator;
 import android.content.Context;
+import android.content.res.ColorStateList;
+import android.content.res.Configuration;
 import android.graphics.Insets;
+import android.graphics.Path;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
+import android.util.TypedValue;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
+import android.view.animation.Interpolator;
+import android.widget.TextView;
 
 import androidx.recyclerview.widget.ItemTouchHelper;
 import androidx.recyclerview.widget.RecyclerView;
@@ -30,63 +44,78 @@ import com.android.systemui.recents.oneui.RecentsStyle;
 import com.android.systemui.recents.oneui.RecentsTaskSource;
 import com.android.systemui.res.R;
 
+import java.util.WeakHashMap;
+
 /**
- * Samsung Grace UX recents — the Android 7.0 card stack, as it shipped on the Galaxy A-series.
+ * Samsung Grace UX recents — the Android 7.0 card stack as it shipped on the Galaxy A-series
+ * (SM-A310F, Samsung Experience 8.0).
  *
- * <p>Distinct from {@link GraceCascadeStyle}, which is AOSP 7.1.1's own
- * {@code TaskStackLayoutAlgorithm} restored. Samsung kept AOSP's activity class
- * ({@code com.android.systemui/.recents.RecentsActivity}) but did not keep its geometry, and the
- * differences are not cosmetic: they are what makes the stack read as Samsung rather than as
- * Nougat. Everything here was measured off photographs of an SM-A310F running stock firmware
- * A310FXXS5CTJ2 — 720x1280 at density 320, so 2.0 px/dp on a 360x640dp screen — and converted
- * through dp. Nothing is decompiled from, extracted from, or copied out of any Samsung binary.
- *
- * <h3>What the device actually does</h3>
- *
- * <p>Card edges, front to back, on that 720px-wide screen: left insets 55, 61, 67, 78 and 88.5px,
- * i.e. widths 610, 598, 586, 564 and 544px. Card tops: 305, 227, 149, 129 and 109px. Four facts
- * fall out of those two rows of numbers, and this class is those four facts:
+ * <p>Grace UX recents is AOSP 7.x's {@code TaskStackLayoutAlgorithm} with Samsung's
+ * "second view expanded", "snap action", "more round" and "lower app bar" changes switched on.
+ * This is a re-implementation of that behaviour from its measured parameters (the resource values
+ * and the formulas, as documented in {@code SPEC_RECENTS.md} Part 1 (b)); no Samsung code or
+ * image is used. Against the AOSP cascade ({@link GraceCascadeStyle}) it differs in that:
  *
  * <ul>
- *   <li><b>Cards taper.</b> AOSP's {@code getStackTransform} hard-assigns {@code scale = 1f} on
- *       every path; Samsung shrinks each card behind by ~2% of the front card's width. This is the
- *       single biggest structural divergence.
- *   <li><b>The taper is a uniform scale, not a narrower layout.</b> The ✕'s centre sits 50.5px in
- *       from the front card's right edge and 48.5px in on the card two back — a ratio of 0.960
- *       against a card-width ratio of 0.961 — and the icon's centre gives 0.956. Every inset inside
- *       the header shrinks with the card, so this is a view transform. Hence
- *       {@link GraceUxLayoutManager#measureCard} measures one size for every card and
- *       {@link GraceUxLayoutManager#applyTransform} scales about (centreX, top).
- *   <li><b>The stack has two regimes.</b> The gaps between card tops are 78, 78, 20, 20px and the
- *       per-card width insets are 6, 6, 11, 10.5px. Both step at the same place: the front three
- *       cards fan at one header per card and taper gently, and everything behind them collapses
- *       into a bunched pile that shrinks about twice as fast per card. That is a knee, not a smooth
- *       bezier, so this uses piecewise-linear arithmetic rather than AOSP's {@code Path}
- *       interpolator — see {@link GraceUxLayoutManager#offsetFor}.
- *   <li><b>Nothing is dimmed.</b> Sampling the same app (Settings) at depth 1 in one reference shot
- *       and depth 2 in the other gives exactly (81,176,211) both times. AOSP fades the back of its
- *       stack to 25% black; Grace UX separates cards purely with elevation shadows, which is why
- *       there is no dim overlay in {@code oneui_recents_card_graceux.xml}.
+ *   <li>the visible range is {@code [-1.82, +1.82]} and the curve is a nearly flat cubic into a
+ *       straight steep line: {@code M0,1 C0,1 fx/2,(1+fy)/2+.001 fx,fy L1,0} with
+ *       {@code fx = 0.65, fy = 0.85} (the with-navigation-key values);
+ *   <li>cards scale with depth: {@code ((1 - s) * 0.07 + 0.93) * 0.96} about their centre, where
+ *       {@code s} follows {@code M0,1 L.4,.6 L1,0}, so 0.893 at the back and 0.96 at the front;
+ *   <li>scrolling snaps to whole cards, offset by {@code minScrollP = -0.24}, and recents opens with
+ *       the <em>previous</em> app as the large card and the current one peeking below it;
+ *   <li>nothing is dimmed; the 7.x dim curve is still evaluated, but only to fade out cards that
+ *       have gone far back ({@code alpha = (0.30 - dim) * 20} once the dim passes 0.25);
+ *   <li>translationZ is {@code lerp(3, 24dp, clamp01(0.3 + x)) * 0.75};
+ *   <li>the card is taller: {@code stackH - initialTopOffset * 7/8 - 57px - navBar};
+ *   <li>a 44dp header with 6dp corners, a 200 x 34dp "CLOSE ALL" bar at the bottom, a 0.20 scrim,
+ *       and the "spread" enter/exit animation.
  * </ul>
- *
- * <p>"CLOSE ALL" at the bottom centre — the other confirmed divergence from AOSP, which put "Clear
- * all" in a band at the top — needs nothing here: the shared host layout already puts its pill
- * there. The reference device's is 199x34dp with a 12dp gap above it; the host's is 188x40dp, and
- * {@link #BOTTOM_OFFSET_DP} reserves room for the host's.
- *
- * <p>There is no ⋮ overflow menu. The real one sits in the activity's chrome at the top right, not
- * on a card, so a style cannot place it without reaching outside the contract, and everything it
- * opened on Grace UX (multi-window, pop-up view, app info) is plumbing this recents host does not
- * have. A dead ⋮ would be worse than none.
  */
 public class GraceUxStyle implements RecentsStyle {
+
+    /** RecentsView: black at 51/255. */
+    private static final int SCRIM = 0x33000000;
+    /** recents_close_all_button (values-sw360dp): 200 x 34dp, 6dp corners. */
+    private static final float CLOSE_ALL_WIDTH_DP = 200f;
+    private static final float CLOSE_ALL_HEIGHT_DP = 34f;
+    private static final float CLOSE_ALL_RADIUS_DP = 6f;
+    /**
+     * The button is centred in a 54dp container, 16dp above the navigation bar. The host already
+     * puts the button's bottom 14dp above it; the rest is a translation.
+     */
+    private static final float CLOSE_ALL_EXTRA_LIFT_DP = 16f + (54f - 34f) / 2f - 14f;
+    /** recents_show/hide_close_all_button: translateY 110%->0 in 300ms, 0->210% in 370ms. */
+    private static final long CLOSE_ALL_SHOW_MS = 300;
+    private static final long CLOSE_ALL_HIDE_MS = 370;
+    /** Spread enter 400ms, exit 333ms; alpha 233ms / 300ms; z delayed 200ms over 200ms. */
+    private static final long SPREAD_ENTER_MS = 400;
+    private static final long SPREAD_ENTER_ALPHA_MS = 233;
+    private static final long SPREAD_EXIT_MS = 333;
+    private static final long SPREAD_EXIT_ALPHA_MS = 300;
+    private static final long SPREAD_Z_DELAY_MS = 200;
+    private static final long SPREAD_Z_MS = 200;
+    /** recents_from_launcher_enter_spread: window alpha 300ms sine-in-out-80. */
+    private static final long SCRIM_IN_MS = 300;
+    /** Spread start: cards collapse to the stack origin at 0.7 x displayW / taskW. */
+    private static final float SPREAD_START_WIDTH_FRACTION = 0.7f;
+    /** SwipeHelper, unchanged from AOSP. */
+    private static final float SWIPE_SIZE_FACTOR = 1.5f;
+    private static final float SWIPE_DISMISS_FRACTION = 0.4f;
+    private static final float SWIPE_ESCAPE_DP_PER_S = 800f;
+
+    private GraceUxLayoutManager mLayoutManager;
+    private TextView mCloseAll;
+    private float mDensity = 1f;
 
     /** Required by {@code RecentsStyles.forType}. */
     public GraceUxStyle() {}
 
     @Override
     public RecyclerView.LayoutManager createLayoutManager(Context context) {
-        return new GraceUxLayoutManager(context);
+        mDensity = context.getResources().getDisplayMetrics().density;
+        mLayoutManager = new GraceUxLayoutManager(context);
+        return mLayoutManager;
     }
 
     @Override
@@ -95,22 +124,9 @@ public class GraceUxStyle implements RecentsStyle {
     }
 
     /**
-     * Sideways, either way, as on the device: Grace UX dismissed a task by flinging its card off
-     * the side.
-     *
-     * <p>Safe to hand to the host's stock {@link ItemTouchHelper} even though these cards overlap
-     * heavily. The helper picks its target with {@link RecyclerView#findChildViewUnder}, which walks
-     * children from the last index down and tests raw bounds with no notion of Z or scale, so a
-     * layout manager that attaches in ascending adapter order would have it scan the stack back to
-     * front and dismiss a card buried five layers down.
-     * {@link GraceUxLayoutManager#addViewInStackOrder} attaches in <em>descending</em> position
-     * order instead, which makes child index order identical to Z order and the stock hit test land
-     * on exactly the card the user can see.
-     *
-     * <p>The remaining inaccuracy is bounded and tiny: a back card's raw bounds are its unscaled
-     * ones, so a touch in the ~3dp strip between a tucked card's real left edge and its unscaled one
-     * resolves to that card anyway. Vertically it does not arise at all — a back card's unscaled
-     * overhang is underneath the front card, which is a later child and wins.
+     * Sideways, as on the device. Safe with the host's stock {@link ItemTouchHelper} because the
+     * layout manager attaches children in descending position order, so child index order is Z
+     * order and {@link RecyclerView#findChildViewUnder} lands on the card that is actually on top.
      */
     @Override
     public int getSwipeDirs() {
@@ -119,169 +135,292 @@ public class GraceUxStyle implements RecentsStyle {
 
     @Override
     public void onRecyclerViewCreated(RecyclerView recyclerView) {
-        // The host re-binds the whole tail after a dismissal so the depth transforms follow the new
-        // positions. With cards this heavily overlapped the default change animation cross-fades
-        // every one of them, which reads as a flicker through the entire stack. Remove and move are
-        // kept: they are what slides the cards behind a dismissed one down into its place.
+        // The host re-binds the whole tail after a dismissal; with overlapping cards the change
+        // animation would cross-fade every one of them. Remove and move stay.
         final RecyclerView.ItemAnimator animator = recyclerView.getItemAnimator();
         if (animator instanceof SimpleItemAnimator) {
             ((SimpleItemAnimator) animator).setSupportsChangeAnimations(false);
         }
+        // EnableSnapAction: flings and drag releases settle on whole cards.
+        recyclerView.setOnFlingListener(new RecyclerView.OnFlingListener() {
+            @Override
+            public boolean onFling(int velocityX, int velocityY) {
+                return mLayoutManager != null && mLayoutManager.snapFling(recyclerView, velocityY);
+            }
+        });
+        recyclerView.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            private boolean mDragged;
+
+            @Override
+            public void onScrollStateChanged(RecyclerView rv, int newState) {
+                if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
+                    mDragged = true;
+                    if (mLayoutManager != null) {
+                        mLayoutManager.cancelSnap();
+                    }
+                } else if (newState == RecyclerView.SCROLL_STATE_IDLE && mDragged) {
+                    mDragged = false;
+                    if (mLayoutManager != null) {
+                        mLayoutManager.snapToNearest(rv);
+                    }
+                }
+            }
+        });
     }
 
     @Override
     public void onBindCard(View card, RecentsTaskSource.TaskItem item, int position, int count) {
-        // Position, depth, taper and shadow are all scroll-driven and belong to the layout manager,
-        // which re-applies them immediately after this. What has to happen here is undoing whatever
-        // transform the recycled view died wearing — a card dismissed by a fling is parked off the
-        // side of the screen at some arbitrary alpha, and a card that fell off the back of the stack
-        // is scaled down — because RecyclerView hands views back exactly as they were left and stale
-        // transforms come back as ghost cards.
+        // Undo whatever the recycled view died wearing (a fling parks a card off to the side, a
+        // card that fell off the back is scaled down and faded); the layout manager re-applies the
+        // stack transform right after this.
         card.setTranslationX(0f);
         card.setTranslationY(0f);
-        card.setAlpha(1f);
-        card.setElevation(0f);
-        card.setScaleX(1f);
-        card.setScaleY(1f);
         card.setVisibility(View.VISIBLE);
+        // Samsung picks the header text colour by luminance; the light one is #fafafa.
+        final int fg = RecentsTaskSource.isDarkColor(item.color) ? 0xFFFAFAFA : 0xDE000000;
+        final TextView title = card.findViewById(R.id.oneui_recents_card_title);
+        if (title != null) {
+            title.setTextColor(fg);
+        }
+        final View dismiss = card.findViewById(R.id.oneui_recents_card_dismiss);
+        if (dismiss instanceof TextView) {
+            ((TextView) dismiss).setTextColor(fg);
+        }
+    }
+
+    // --- Backdrop: no blur, the wallpaper under a 0.20 black scrim.
+
+    @Override
+    public boolean usesBackdropBlur() {
+        return false;
+    }
+
+    @Override
+    public Integer getScrimColor(boolean blurEnabled) {
+        return SCRIM;
+    }
+
+    @Override
+    public boolean showsWallpaper() {
+        return true;
+    }
+
+    // --- CLOSE ALL (recents_close_button_bg.xml).
+
+    @Override
+    public void styleClearAll(TextView closeAll) {
+        mCloseAll = closeAll;
+        final GradientDrawable shape = new GradientDrawable();
+        shape.setColor(0x5A000000);
+        shape.setStroke(Math.max(1, Math.round(mDensity)), 0x40FAFAFA);
+        shape.setCornerRadius(CLOSE_ALL_RADIUS_DP * mDensity);
+        closeAll.setBackground(new RippleDrawable(ColorStateList.valueOf(0x29000000), shape, null));
+        closeAll.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f);
+        closeAll.setTypeface(Typeface.create("sans-serif-condensed", Typeface.BOLD));
+        closeAll.setAllCaps(true);
+        closeAll.setLetterSpacing(0f);
+        closeAll.setTextColor(0xFFFAFAFA);
+        final ViewGroup.LayoutParams lp = closeAll.getLayoutParams();
+        lp.width = Math.round(CLOSE_ALL_WIDTH_DP * mDensity);
+        lp.height = Math.round(CLOSE_ALL_HEIGHT_DP * mDensity);
+        closeAll.setLayoutParams(lp);
+        closeAll.setTranslationY(-CLOSE_ALL_EXTRA_LIFT_DP * mDensity);
+    }
+
+    // --- Spread animation (EnableSpreadAnimation).
+
+    /**
+     * Every card starts collapsed onto the stack origin — its top at the stack top, scaled to
+     * {@code 0.7 x displayW / taskW}, transparent, flat — and spreads to its place in the stack
+     * over 400ms {@code (0.33,0,0.1,1)}, fading in over 233ms, its shadow rising after 200ms.
+     * CLOSE ALL slides up from 110% of its height over 300ms.
+     */
+    @Override
+    public void animateEnter(RecyclerView recyclerView) {
+        final GraceUxLayoutManager lm = mLayoutManager;
+        if (lm == null) {
+            return;
+        }
+        RecentsMotion.fadeScrim(recyclerView, 0f, 1f, SCRIM_IN_MS, RecentsMotion.SINE_IN_OUT_80);
+        final float startScale = lm.spreadStartScale(recyclerView.getWidth());
+        for (int i = 0, n = recyclerView.getChildCount(); i < n; i++) {
+            final View card = recyclerView.getChildAt(i);
+            final float[] target = lm.targetOf(card);
+            if (target == null) {
+                continue;
+            }
+            final float startY = lm.spreadTranslationY(card, startScale);
+            final ObjectAnimator spread = ObjectAnimator.ofPropertyValuesHolder(card,
+                    PropertyValuesHolder.ofFloat(View.TRANSLATION_Y, startY, 0f),
+                    PropertyValuesHolder.ofFloat(View.SCALE_X, startScale, target[0]),
+                    PropertyValuesHolder.ofFloat(View.SCALE_Y, startScale, target[0]));
+            spread.setDuration(SPREAD_ENTER_MS);
+            spread.setInterpolator(RecentsMotion.SINE_IN_OUT_90);
+            card.setAlpha(0f);
+            card.setElevation(0f);
+            spread.start();
+            card.animate().alpha(target[1]).setDuration(SPREAD_ENTER_ALPHA_MS)
+                    .setInterpolator(RecentsMotion.SINE_IN_OUT_90).start();
+            final ObjectAnimator z = ObjectAnimator.ofFloat(card, "elevation", 0f, target[2]);
+            z.setStartDelay(SPREAD_Z_DELAY_MS);
+            z.setDuration(SPREAD_Z_MS);
+            z.start();
+        }
+        if (mCloseAll != null && mCloseAll.getVisibility() == View.VISIBLE) {
+            final float base = -CLOSE_ALL_EXTRA_LIFT_DP * mDensity;
+            final float h = CLOSE_ALL_HEIGHT_DP * mDensity;
+            mCloseAll.setTranslationY(base + 1.1f * h);
+            mCloseAll.animate().translationY(base).setDuration(CLOSE_ALL_SHOW_MS)
+                    .setInterpolator(RecentsMotion.SINE_IN_OUT_90).start();
+        }
+    }
+
+    /**
+     * The spread in reverse: back to the stack origin at the start scale over 333ms, fading out
+     * over 300ms; CLOSE ALL drops by 210% of its height over 370ms.
+     */
+    @Override
+    public boolean animateExit(RecyclerView recyclerView, Runnable onEnd) {
+        final GraceUxLayoutManager lm = mLayoutManager;
+        if (lm == null) {
+            return false;
+        }
+        final float startScale = lm.spreadStartScale(recyclerView.getWidth());
+        for (int i = 0, n = recyclerView.getChildCount(); i < n; i++) {
+            final View card = recyclerView.getChildAt(i);
+            card.animate()
+                    .translationY(lm.spreadTranslationY(card, startScale))
+                    .scaleX(startScale).scaleY(startScale)
+                    .setDuration(SPREAD_EXIT_MS)
+                    .setInterpolator(RecentsMotion.SINE_IN_OUT_90).start();
+            final ValueAnimator fade = ObjectAnimator.ofFloat(card, View.ALPHA, card.getAlpha(), 0f);
+            fade.setDuration(SPREAD_EXIT_ALPHA_MS);
+            fade.setInterpolator(RecentsMotion.SINE_IN_OUT_90);
+            fade.start();
+        }
+        if (mCloseAll != null) {
+            mCloseAll.animate()
+                    .translationY(-CLOSE_ALL_EXTRA_LIFT_DP * mDensity
+                            + 2.1f * CLOSE_ALL_HEIGHT_DP * mDensity)
+                    .setDuration(CLOSE_ALL_HIDE_MS)
+                    .setInterpolator(RecentsMotion.SINE_IN_OUT_90).start();
+        }
+        RecentsMotion.fadeScrim(recyclerView, 1f, 0f, SPREAD_EXIT_MS, RecentsMotion.SINE_IN_OUT_100);
+        RecentsMotion.runAfter(recyclerView, Math.max(SPREAD_EXIT_MS, CLOSE_ALL_HIDE_MS), onEnd);
+        return true;
+    }
+
+    // --- Swipe: AOSP's SwipeHelper values (Samsung left them alone).
+
+    @Override
+    public float getSwipeThreshold(RecyclerView.ViewHolder holder) {
+        final View card = holder.itemView;
+        final View parent = (View) card.getParent();
+        if (parent == null || card.getWidth() == 0) {
+            return RecentsStyle.super.getSwipeThreshold(holder);
+        }
+        final float size = SWIPE_SIZE_FACTOR * Math.max(parent.getWidth(), parent.getHeight());
+        return SWIPE_DISMISS_FRACTION * size / card.getWidth();
+    }
+
+    @Override
+    public float getSwipeEscapeVelocity(float defaultValue) {
+        return SWIPE_ESCAPE_DP_PER_S * mDensity;
     }
 
     // -------------------------------------------------------------------------------------------
 
     /**
-     * The Grace UX stack arrangement.
-     *
-     * <p>Structurally a sibling of {@link CascadeLayoutManager} — it owns {@code onLayoutChildren}
-     * and {@code scrollVerticallyBy}, reports {@code consumed} rather than {@code dy} so flings
-     * terminate and the platform edge effect takes over at the bounds, implements the three
-     * {@code computeVerticalScroll*} hooks because the scrollable amount is a property of the curve
-     * and the task count rather than of the child heights, and attaches children back-to-front. The
-     * arithmetic in between is Samsung's, not AOSP's.
-     *
-     * <h3>The model</h3>
-     *
-     * <p>One float, {@link #mScrollP}, in card-index units. A card at adapter position {@code i}
-     * (0 == most recent == front) sits at {@code relP = mScrollP - i}. At {@code mScrollP == 0} the
-     * newest card is at {@code relP == 0}, which is its resting place near the bottom of the stack,
-     * and the cards behind it are at -1, -2, -3… Raising {@code mScrollP} walks older cards forward
-     * through the stack and pushes newer ones down and off the bottom.
-     *
-     * <p>Both {@link #offsetFor} and {@link #scaleFor} are piecewise linear in {@code relP} with a
-     * knee at the same place, because that is what the device does.
+     * The Grace UX stack: {@code TaskStackLayoutAlgorithm} in its unfocused state with Samsung's
+     * "second view expanded" parameters. Structurally the same as {@link CascadeLayoutManager}: one
+     * float of scroll progress in task units, card positions and transforms as pure functions of
+     * {@code relP = taskP - scrollP}, children attached back to front so child index order is Z
+     * order.
      */
     private static final class GraceUxLayoutManager extends RecyclerView.LayoutManager {
 
-        // --- Geometry, in dp, measured from the reference device. Deliberately Java constants and
-        // not <dimen> resources: adding a single dimen to SystemUI shifts its dimen resource-ID
-        // table, and WindowManager-Shell's generated R constants do not get re-assigned to match,
-        // which crash-loops SystemUI at app-bind with "Resource ID ... is not valid" while the build
-        // still reports success. A bare constant cannot shift anything.
+        // recents_layout_expanded_view_*_with_navi_key and friends (integers.xml).
+        private static final float RANGE_MIN = -1.82f;
+        private static final float RANGE_MAX = 1.82f;
+        private static final float FIRST_X = 0.65f;
+        private static final float FIRST_Y = 0.85f;
+        private static final float MIN_SCROLL_P = -0.24f;
+        /** recents_layout_inset_for_close_all_button_margin_with_navi_key: a raw pixel count. */
+        private static final int CLOSE_ALL_INSET_PX = 57;
+        /** recents_layout_task_view_scale_full_inset and the 0.96 overall factor. */
+        private static final float SCALE_INSET = 0.93f;
+        private static final float SCALE_FACTOR = 0.96f;
+        /** Fade-out check point (phone portrait with a navigation key) and its window. */
+        private static final float FADE_CHECK_POINT = 0.25f;
+        private static final float FADE_WINDOW = 0.05f;
+        private static final float FADE_GAIN = 20f;
+        /** 7.x dim curve extremes; only used to drive the fade. */
+        private static final float MAX_DIM = 0.25f;
+        private static final float MED_DIM = 0.15f;
 
-        /** Card left inset: 55px on a 720px screen. AOSP 7.1.1 used 16dp; Grace's cards are much
-         *  narrower relative to the screen, and that is part of the look. */
-        private static final float SIDE_MARGIN_DP = 27.5f;
-        /** Stack top below the status bar, matching 7.1.1's {@code recents_layout_top_margin}. */
-        private static final float STACK_MARGIN_DP = 16f;
-
-        /** Where the front card's top rests, below the stack top: 305px screen y, less a 24dp status
-         *  bar and the 16dp margin, is 112.5dp. */
-        private static final float INITIAL_TOP_OFFSET_DP = 112.5f;
-        /** Reserved at the bottom of the stack. On the device the front card's bottom is 56dp above
-         *  the screen edge with the CLOSE ALL pill in the gap; the host's pill is bigger and sits
-         *  48..88dp up, so this is that plus the device's measured 12dp breathing room. */
-        private static final float BOTTOM_OFFSET_DP = 100f;
-
-        /** Gap between the tops of two adjacent cards in the fanned region: 78px. One header
-         *  (40.5dp) per card, less a hair, so each card behind shows its header and nothing else. */
-        private static final float FRONT_STEP_DP = 39f;
-        /** The offset at which the fan gives way to the bunched pile: 149px screen y, i.e. the third
-         *  card, is 34.5dp below the stack top. */
-        private static final float KNEE_OFFSET_DP = 34.5f;
-        /** Gap between tops inside the bunched pile: 20px. */
-        private static final float BACK_STEP_DP = 10f;
-
-        /** The stack height these dp were measured on: 640dp screen, less a 24dp status bar and the
-         *  16dp margin. Only used to shrink the whole vertical arrangement on a stack shorter than
-         *  the reference one (landscape); a taller stack keeps the measured absolutes, which is what
-         *  keeps a 20:9 phone showing the same five or six cards the 16:9 reference did. */
-        private static final float REFERENCE_STACK_DP = 600f;
-        private static final float MIN_VERTICAL_SQUEEZE = 0.3f;
-
-        /** Width lost per card in the fanned region, as a fraction of the front card's width:
-         *  610 -> 598 -> 586px is 0.0197 each time. */
-        private static final float FRONT_SCALE_STEP = 0.0197f;
-        /** And in the bunched pile: 586 -> 564 -> 544px is 0.0361 then 0.0328. */
-        private static final float BACK_SCALE_STEP = 0.0345f;
-
-        /** Units of {@link #mScrollP} a card takes to fall from its resting place clear off the
-         *  bottom of the stack. Not measurable from a still — the references are both at rest — so
-         *  it is chosen to match AOSP 7.1.1, whose curve drops the front card roughly a whole stack
-         *  height in its last unit of progress. It doubles as the scroll rate; see
-         *  {@link #mPxPerUnit}. */
-        private static final float EXIT_UNITS = 1.5f;
+        // Phone dimens, dp.
+        private static final float MARGIN_DP = 16f;
+        private static final float INITIAL_TOP_OFFSET_PORT_DP = 128f;
+        private static final float INITIAL_TOP_OFFSET_LAND_DP = 72f;
+        private static final float Z_MIN_DP = 3f;
+        private static final float Z_MAX_DP = 24f;
 
         /**
-         * Card height / card width, measured off {@code graceux_a310f_stack.png}: the front card
-         * (My Files) spans x 55..664 and y 305..1168 on that 720x1280 screen, so 610 x 864px —
-         * 84.7% of the screen width and 67.5% of its height, which in dp is <b>305 x 432</b>, i.e.
-         * 1:1.416.
-         *
-         * <p>Everything else in this class is an absolute dp, so without this the card height falls
-         * out of {@code stackHeight - topOffset - bottomOffset} and grows with the screen: on this
-         * 20:9 device that is 926 x 1657px, 1:1.79, a card half as long again as Samsung's. The
-         * ratio is restored by <em>shrinking the stack rect from the top</em> rather than by
-         * shortening the card in place — the surplus goes into {@link #mStackTop} — which keeps the
-         * front card's bottom edge where it was (and therefore the reserve for the host's CLOSE ALL
-         * pill intact), keeps the fan/pile knee at the same card, and keeps
-         * {@code cardHeight == stackHeight - topOffset - bottomOffset} exactly true.
+         * Card height / width as the algorithm produces it on the 360 x 640dp phone it shipped on:
+         * {@code 600 - 112 - 25 = 463} by {@code 328}. On a 20:9 screen the same arithmetic gives a
+         * much longer card, so the surplus is taken off the top of the stack rect instead (the
+         * whole arrangement slides down as a rigid body), as the cascade does.
          */
-        private static final float REFERENCE_CARD_ASPECT = 864f / 610f;
+        private static final float REFERENCE_CARD_ASPECT = 463f / 328f;
 
-        /** Shadow depth. Read off the darkening above each card's top edge on the reference: the
-         *  front card's shadow spans 25px and reaches ~0.74x, the next 15px and ~0.88x, the next
-         *  18px and ~0.95x — so it climbs steeply towards the front, hence the squared ramp in
-         *  {@link #applyTransform}. */
-        private static final float Z_MIN_DP = 1f;
-        private static final float Z_MAX_DP = 14f;
+        /** Snap fling: target = int(v / 3000) cards; duration clamp(|v| / 2000 * 300, 300, 1100). */
+        private static final float FLING_PX_PER_CARD = 3000f;
+        private static final long SNAP_MIN_MS = 300;
+        private static final long SNAP_MAX_MS = 1100;
+        /** A settle after a drag with no fling: the 200ms stack-scroll duration. */
+        private static final long SETTLE_MS = 200;
+        /**
+         * QuintOut80: a quint-out ease. The original is a two-segment spline through the same
+         * shape; this is the closed form.
+         */
+        private static final Interpolator QUINT_OUT = t -> {
+            final float u = 1f - t;
+            return 1f - u * u * u * u * u;
+        };
 
+        private final Context mContext;
         private final float mDensity;
-
         private RecyclerView mRecyclerView;
 
-        // --- Derived in updateGeometry(); all px except the *P progress values.
         private int mStackTop;
         private int mStackHeight;
         private int mCardLeft;
         private int mCardWidth;
         private int mCardHeight;
-        private float mTopOffset;
-        private float mFrontStep;
-        private float mKneeOffset;
-        private float mBackStep;
-        private float mExitStep;
+        private int mInitialTopOffset;
         private float mMinZ;
         private float mMaxZ;
 
-        /** Progress at the knee, and at the back of the pile where a card's top reaches the stack
-         *  top and it is fully covered by the one in front of it. Both come out independent of the
-         *  vertical squeeze (-2.0 and -5.45 with the measured constants) but are solved rather than
-         *  written down so the constants above stay the single source of truth. */
-        private float mKneeP;
-        private float mMinP;
-
-        /** Pixels of finger travel per unit of {@link #mScrollP}, i.e. per card. Equal to
-         *  {@link #mExitStep}, so the front card — the big one the finger is nearly always on —
-         *  moves exactly with the finger; see {@link #updateVerticalMetrics}. */
+        private CascadePathInterpolator mCurve;
+        private CascadePathInterpolator mDimCurve;
+        private CascadePathInterpolator mScaleCurve;
+        private int mCurveStackHeight = -1;
         private float mPxPerUnit;
 
         private float mScrollP;
         private float mMinScrollP;
         private float mMaxScrollP;
+        private float mInitialScrollP;
 
         private int mPendingScrollPosition = RecyclerView.NO_POSITION;
         private boolean mHasLaidOut;
+        private ValueAnimator mSnapAnimator;
+
+        /** The transform the stack wants for each attached card: {scale, alpha, elevation}. */
+        private final WeakHashMap<View, float[]> mTargets = new WeakHashMap<>();
 
         GraceUxLayoutManager(Context context) {
+            mContext = context;
             mDensity = context.getResources().getDisplayMetrics().density;
         }
 
@@ -291,8 +430,6 @@ public class GraceUxStyle implements RecentsStyle {
                     ViewGroup.LayoutParams.WRAP_CONTENT);
         }
 
-        /** False: the list is match_parent inside the recents window, so its size never depends on
-         *  its children and auto-measure would only buy an extra layout pass. */
         @Override
         public boolean isAutoMeasureEnabled() {
             return false;
@@ -312,6 +449,7 @@ public class GraceUxStyle implements RecentsStyle {
         @Override
         public void onDetachedFromWindow(RecyclerView view, RecyclerView.Recycler recycler) {
             super.onDetachedFromWindow(view, recycler);
+            cancelSnap();
             mRecyclerView = null;
         }
 
@@ -322,9 +460,7 @@ public class GraceUxStyle implements RecentsStyle {
             mHasLaidOut = false;
         }
 
-        // -----------------------------------------------------------------------------------
-        // Layout
-        // -----------------------------------------------------------------------------------
+        // --- Layout -----------------------------------------------------------------------
 
         @Override
         public void onLayoutChildren(RecyclerView.Recycler recycler, RecyclerView.State state) {
@@ -333,52 +469,39 @@ public class GraceUxStyle implements RecentsStyle {
                 removeAndRecycleAllViews(recycler);
                 return;
             }
-
             updateGeometry();
-            mMinScrollP = 0f;
-            mMaxScrollP = Math.max(0f, itemCount - 1f);
-
+            updateScrollBounds(itemCount);
             if (mPendingScrollPosition != RecyclerView.NO_POSITION) {
-                // Bringing position i to the front is exactly mScrollP == i. The host only ever asks
-                // for 0, on every entry and every resume, meaning "reset to how recents opens" —
-                // which on Grace UX is the newest card at its resting place with the rest fanned and
-                // bunched above it, i.e. scroll zero. No AOSP-style initial-offset special case.
-                mScrollP = mPendingScrollPosition;
+                mScrollP = mPendingScrollPosition <= 0 ? mInitialScrollP
+                        : clamp((itemCount - 1) - mPendingScrollPosition + MIN_SCROLL_P,
+                                mMinScrollP, mMaxScrollP);
                 mPendingScrollPosition = RecyclerView.NO_POSITION;
             } else if (!mHasLaidOut) {
-                mScrollP = mMinScrollP;
+                mScrollP = mInitialScrollP;
             }
-            // After a dismissal the item count drops by one and so does mMaxScrollP. Clamping is the
-            // whole correction: a user parked at the back of the stack is pulled forward by exactly
-            // the unit the removed card occupied, and a user at the front is not moved at all.
             mScrollP = clamp(mScrollP, mMinScrollP, mMaxScrollP);
             mHasLaidOut = true;
-
             detachAndScrapAttachedViews(recycler);
             fill(recycler, itemCount);
         }
 
         @Override
         public void scrollToPosition(int position) {
+            cancelSnap();
             mPendingScrollPosition = position;
             requestLayout();
         }
 
         private void fill(RecyclerView.Recycler recycler, int itemCount) {
-            // Drop anything that has left the visible range first, so the loop below has views in
-            // the scrap heap to reuse.
             for (int i = getChildCount() - 1; i >= 0; i--) {
                 final View child = getChildAt(i);
                 final int position = getPosition(child);
-                if (position < 0 || position >= itemCount || !isInVisibleRange(position)) {
+                if (position < 0 || position >= itemCount || !isInVisibleRange(position, itemCount)) {
                     removeAndRecycleViewAt(i, recycler);
                 }
             }
-
-            // Descending position == back of the stack first, so the front-most card ends up as the
-            // last child. See getSwipeDirs() for why that matters.
             for (int position = itemCount - 1; position >= 0; position--) {
-                if (!isInVisibleRange(position)) {
+                if (!isInVisibleRange(position, itemCount)) {
                     continue;
                 }
                 View child = findViewByPosition(position);
@@ -386,16 +509,13 @@ public class GraceUxStyle implements RecentsStyle {
                     child = recycler.getViewForPosition(position);
                     addViewInStackOrder(child, position);
                 }
-                measureCard(child);
-                applyTransform(child, position);
+                child.measure(
+                        View.MeasureSpec.makeMeasureSpec(mCardWidth, View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec(mCardHeight, View.MeasureSpec.EXACTLY));
+                applyTransform(child, position, itemCount);
             }
         }
 
-        /**
-         * Inserts {@code child} so children stay sorted by descending adapter position. A plain
-         * {@code addView} appends, which is only right while filling a whole layout pass
-         * back-to-front; an incremental fill during a scroll can bring a card in in the middle.
-         */
         private void addViewInStackOrder(View child, int position) {
             int index = getChildCount();
             for (int i = 0, n = getChildCount(); i < n; i++) {
@@ -407,103 +527,71 @@ public class GraceUxStyle implements RecentsStyle {
             addView(child, index);
         }
 
-        /**
-         * Laid out while the card is anywhere between one step past the back of the pile — so the
-         * card about to emerge is already attached and measured — and the point at which it has
-         * fallen clear off the bottom.
-         */
-        private boolean isInVisibleRange(int position) {
-            final float relP = mScrollP - position;
-            return relP >= mMinP - 1f && relP <= EXIT_UNITS;
+        private boolean isInVisibleRange(int position, int itemCount) {
+            final float taskP = (itemCount - 1) - position;
+            return taskP >= Math.floor(mScrollP + RANGE_MIN)
+                    && taskP <= Math.ceil(mScrollP + RANGE_MAX);
         }
 
-        /**
-         * Every card is measured to the same rect, exactly once per fill. Depth is a scale applied
-         * afterwards, not a narrower measurement — see the class doc for the evidence — which also
-         * means the thumbnail's measured width never changes, so the binder's MATRIX scale-to-width
-         * matrix stays valid as a card moves back through the stack.
-         */
-        private void measureCard(View child) {
-            child.measure(
-                    View.MeasureSpec.makeMeasureSpec(mCardWidth, View.MeasureSpec.EXACTLY),
-                    View.MeasureSpec.makeMeasureSpec(mCardHeight, View.MeasureSpec.EXACTLY));
-        }
-
-        private void applyTransform(View child, int position) {
-            // Cards past the back of the pile freeze there rather than continuing to climb and
-            // shrink: they are wholly covered by the wider card in front of them either way, and
-            // clamping keeps their scale from running away on a very long task list.
-            final float relP = Math.max(mScrollP - position, mMinP);
-
-            final int top = mStackTop + Math.round(offsetFor(relP));
+        /** {@code getStackTransform}, unfocused branch, with the Samsung additions. */
+        private void applyTransform(View child, int position, int itemCount) {
+            final float taskP = (itemCount - 1) - position;
+            final float normX = normalizedX(taskP - mScrollP);
+            final int top = mStackTop + (int) ((1f - mCurve.getInterpolation(normX)) * mStackHeight);
             if (child.getLeft() == mCardLeft && child.getWidth() == mCardWidth
                     && child.getHeight() == mCardHeight && !child.isLayoutRequested()) {
-                // Same card, same size, new place. Shifting the frame is what offsetChildrenVertical
-                // does for the linear layout managers; a full layoutDecorated() would run the card's
-                // whole subtree through onLayout on every scroll frame for nothing.
                 child.offsetTopAndBottom(top - child.getTop());
             } else {
                 layoutDecorated(child, mCardLeft, top, mCardLeft + mCardWidth, top + mCardHeight);
             }
 
-            // The taper. Pivoted on the top edge's midpoint: horizontally because every card on the
-            // reference is centred on the same axis (measured centres 360.0, 359.5, 360.0, 359.5,
-            // 359.1 on a 720px screen), vertically because the tops are the positions the curve
-            // above places and the bottoms are all hidden behind the card in front anyway.
-            child.setPivotX(mCardWidth * 0.5f);
-            child.setPivotY(0f);
-            final float scale = scaleFor(relP);
+            // Depth scale about the centre (View's default pivot, as TaskView used).
+            final float s = mScaleCurve.getInterpolation(normX);
+            final float scale = ((1f - s) * (1f - SCALE_INSET) + SCALE_INSET) * SCALE_FACTOR;
+
+            // Z from the bounded scroll, shifted by 0.3 and scaled by 3/4.
+            final float boundedNormX =
+                    normalizedX(taskP - clamp(mScrollP, mMinScrollP, mMaxScrollP));
+            final float z = (mMinZ + clamp01(0.3f + boundedNormX) * (mMaxZ - mMinZ)) * 0.75f;
+
+            // No dim; the dim curve drives a fade-out of cards far back instead.
+            final float dim = mDimCurve.getInterpolation(
+                    normalizedX(taskP - Math.min(mScrollP, mMaxScrollP)));
+            final float alpha = dim > FADE_CHECK_POINT
+                    ? clamp01((FADE_CHECK_POINT + FADE_WINDOW - dim) * FADE_GAIN) : 1f;
+
+            float[] target = mTargets.get(child);
+            if (target == null) {
+                target = new float[3];
+                mTargets.put(child, target);
+            }
+            target[0] = scale;
+            target[1] = alpha;
+            target[2] = z;
+            // During the spread animation a layout pass (a snapshot arriving) writes the targets
+            // once; the running property animators overwrite them again on the next frame.
             child.setScaleX(scale);
             child.setScaleY(scale);
-
-            // Depth reads entirely from the shadow — Grace UX does not dim (class doc). Squared
-            // because the measured shadows do not grow linearly: roughly 14dp, 7dp, 3dp of apparent
-            // elevation over the front three cards.
-            final float t = clamp01((relP - mMinP) / -mMinP);
-            child.setElevation(mMinZ + (mMaxZ - mMinZ) * t * t);
-
-            // translationX/Y are deliberately untouched: ItemTouchHelper owns translationX for the
-            // length of a swipe and the item animator owns both while the stack closes up after a
-            // dismissal. They are reset in onBindCard instead, which is the one moment neither does.
+            child.setAlpha(alpha);
+            child.setElevation(z);
+            child.setVisibility(alpha <= 0f ? View.INVISIBLE : View.VISIBLE);
         }
 
-        /**
-         * A card's top, in px below the stack top, as a function of its progress.
-         *
-         * <p>Three linear pieces, joined continuously:
-         *
-         * <ul>
-         *   <li>{@code relP < mKneeP} — the bunched pile at the top of the stack, one
-         *       {@link #BACK_STEP_DP} per card.
-         *   <li>{@code mKneeP <= relP < 0} — the fan, one {@link #FRONT_STEP_DP} (a header) per card.
-         *   <li>{@code relP >= 0} — past its resting place and falling off the bottom, which only
-         *       happens to cards the user has scrolled past.
-         * </ul>
-         */
-        private float offsetFor(float relP) {
-            if (relP >= 0f) {
-                return mTopOffset + relP * mExitStep;
-            }
-            if (relP >= mKneeP) {
-                return mTopOffset + relP * mFrontStep;
-            }
-            return mKneeOffset + (relP - mKneeP) * mBackStep;
+        float[] targetOf(View child) {
+            return mTargets.get(child);
         }
 
-        /** The width taper, as a fraction of the front card's width. Same three pieces, same knee. */
-        private float scaleFor(float relP) {
-            if (relP >= 0f) {
-                return 1f;
-            }
-            if (relP >= mKneeP) {
-                return 1f + relP * FRONT_SCALE_STEP;
-            }
-            return 1f + mKneeP * FRONT_SCALE_STEP + (relP - mKneeP) * BACK_SCALE_STEP;
+        /** The spread animation's collapsed scale, {@code 0.7 x displayW / taskW}. */
+        float spreadStartScale(int displayWidth) {
+            return mCardWidth > 0 ? SPREAD_START_WIDTH_FRACTION * displayWidth / mCardWidth : 1f;
         }
 
-        // -----------------------------------------------------------------------------------
-        // Scrolling
-        // -----------------------------------------------------------------------------------
+        /** Translation that puts {@code child}, scaled about its centre, at the stack origin. */
+        float spreadTranslationY(View child, float scale) {
+            return mStackTop - child.getTop() - (1f - scale) * child.getHeight() / 2f;
+        }
+
+        // --- Scrolling --------------------------------------------------------------------
 
         @Override
         public int scrollVerticallyBy(int dy, RecyclerView.Recycler recycler,
@@ -511,84 +599,106 @@ public class GraceUxStyle implements RecentsStyle {
             if (dy == 0 || getChildCount() == 0 || mPxPerUnit <= 0f) {
                 return 0;
             }
-            // Positive dy is the finger moving UP the screen, and the cards have to go with it.
-            // Raising mScrollP walks the stack forwards and DOWNWARDS (offsetFor is increasing in
-            // relP, and relP == mScrollP - position), so the finger drives mScrollP negatively.
-            // This used to be a plus, which inverted the whole gesture — the reported "scrolling is
-            // reversed". CascadeLayoutManager has a plus for the opposite reason: its relP is
-            // taskP - mScrollP, the other sign, so there raising mScrollP moves cards up.
-            //
-            // The resting state is mScrollP == mMinScrollP == 0, with the newest card at the bottom
-            // and nothing below it, so from rest only a downward drag does anything — it pulls the
-            // newest card down off the bottom and brings the older ones out of the pile, which is
-            // the direction the reference device recedes in.
-            final float unclamped = mScrollP - dy / mPxPerUnit;
+            final float unclamped = mScrollP + dy / mPxPerUnit;
             final float target = clamp(unclamped, mMinScrollP, mMaxScrollP);
             if (target == mScrollP) {
                 return 0;
             }
-
-            // Report what was actually consumed rather than dy, with the same sign convention dy
-            // came in on. RecyclerView treats the remainder as overscroll: it is what stops a fling
-            // dead at the bounds and what feeds the edge effect, which on S+ is the stretch that
-            // gives the stack its rubber-band feel.
             final int consumed = (target == unclamped)
-                    ? dy
-                    : Math.round((mScrollP - target) * mPxPerUnit);
+                    ? dy : Math.round((target - mScrollP) * mPxPerUnit);
             mScrollP = target;
-
             fill(recycler, state.getItemCount());
             return consumed;
         }
 
-        /** A screenful, in the pixel space the two below are expressed in. */
         @Override
         public int computeVerticalScrollExtent(RecyclerView.State state) {
             return mStackHeight;
         }
 
-        /**
-         * How far the list has been scrolled in the +dy direction. Inverted with respect to
-         * {@link #mScrollP} for the same reason {@link #scrollVerticallyBy} is: +dy walks the stack
-         * <em>back</em> towards the newest card, so the resting state (mScrollP == 0) is the
-         * fully-scrolled end. Only scrollbars — which the host disables — and accessibility scroll
-         * events read this, but reporting it against the wrong sign would make the a11y events lie.
-         */
         @Override
         public int computeVerticalScrollOffset(RecyclerView.State state) {
-            if (mPxPerUnit <= 0f) {
-                return 0;
-            }
-            return Math.round((mMaxScrollP - mScrollP) * mPxPerUnit);
+            return mPxPerUnit <= 0f ? 0 : Math.round((mScrollP - mMinScrollP) * mPxPerUnit);
+        }
+
+        @Override
+        public int computeVerticalScrollRange(RecyclerView.State state) {
+            return mPxPerUnit <= 0f ? 0
+                    : mStackHeight + Math.round((mMaxScrollP - mMinScrollP) * mPxPerUnit);
         }
 
         /**
-         * One extent plus the travel between the bounds. Note what is <em>not</em> in here: the
-         * height of the cards. The scrollable amount is a property of the task count and the step,
-         * and deriving it from decorated child heights — which is what RecyclerView would do for a
-         * layout manager that did not override this — gives a handful of screen-tall, heavily
-         * overlapped cards a total extent smaller than the viewport, at which point the list simply
-         * refuses to scroll.
+         * EnableSnapAction's fling: advance {@code int(v / 3000)} cards (at least one in the fling
+         * direction) and animate there in {@code clamp(|v| / 2000 x 300, 300, 1100)}ms with a
+         * quint-out ease.
          */
-        @Override
-        public int computeVerticalScrollRange(RecyclerView.State state) {
-            if (mPxPerUnit <= 0f) {
-                return 0;
+        boolean snapFling(RecyclerView rv, int velocityY) {
+            if (getChildCount() == 0 || velocityY == 0) {
+                return false;
             }
-            return mStackHeight + Math.round((mMaxScrollP - mMinScrollP) * mPxPerUnit);
+            final float rel = mScrollP - mMinScrollP;
+            final int cards = Math.max(1, (int) (Math.abs(velocityY) / FLING_PX_PER_CARD));
+            final float targetRel = velocityY > 0
+                    ? (float) Math.floor(rel + 1e-3f) + cards
+                    : (float) Math.ceil(rel - 1e-3f) - cards;
+            final long duration = (long) clamp(Math.abs(velocityY) / 2000f * 300f,
+                    SNAP_MIN_MS, SNAP_MAX_MS);
+            animateScrollTo(rv, targetRel + mMinScrollP, duration);
+            return true;
         }
 
-        // -----------------------------------------------------------------------------------
-        // Geometry
-        // -----------------------------------------------------------------------------------
+        /** A drag released without a fling settles on the nearest whole card. */
+        void snapToNearest(RecyclerView rv) {
+            if (getChildCount() == 0 || (mSnapAnimator != null && mSnapAnimator.isRunning())) {
+                return;
+            }
+            final float rel = mScrollP - mMinScrollP;
+            animateScrollTo(rv, Math.round(rel) + mMinScrollP, SETTLE_MS);
+        }
+
+        void cancelSnap() {
+            if (mSnapAnimator != null) {
+                mSnapAnimator.cancel();
+                mSnapAnimator = null;
+            }
+        }
+
+        private void animateScrollTo(RecyclerView rv, float targetP, long duration) {
+            cancelSnap();
+            final float to = clamp(targetP, mMinScrollP, mMaxScrollP);
+            final float from = mScrollP;
+            if (Math.abs(to - from) < 1e-4f) {
+                return;
+            }
+            final ValueAnimator anim = ValueAnimator.ofFloat(from, to);
+            anim.setDuration(duration);
+            anim.setInterpolator(QUINT_OUT);
+            anim.addUpdateListener(a -> {
+                final float p = (float) a.getAnimatedValue();
+                final int dy = Math.round((p - mScrollP) * mPxPerUnit);
+                if (dy != 0) {
+                    rv.scrollBy(0, dy);
+                }
+            });
+            anim.addListener(new AnimatorListenerAdapter() {
+                @Override
+                public void onAnimationEnd(Animator animation) {
+                    if (mSnapAnimator == animation) {
+                        mSnapAnimator = null;
+                        // Remove the pixel rounding left by scrollBy.
+                        mScrollP = clamp(to, mMinScrollP, mMaxScrollP);
+                        requestLayout();
+                    }
+                }
+            });
+            mSnapAnimator = anim;
+            anim.start();
+        }
+
+        // --- Geometry and curves ----------------------------------------------------------
 
         private void updateGeometry() {
-            // Measured against the window and its system bars vertically, because the host's own
-            // 24dp/104dp list padding is not part of this geometry (it is harmless: the host also
-            // sets clipToPadding=false). Horizontally the padding IS used, because the host's
-            // horizontal base is zero, so it is precisely the bar and cutout insets — which matters
-            // in landscape, where this device puts a display cutout on one side and the navigation
-            // bar on the other.
+            final int margin = Math.round(MARGIN_DP * mDensity);
             int statusBarInset = 0;
             int navBarInset = 0;
             if (mRecyclerView != null) {
@@ -599,84 +709,75 @@ public class GraceUxStyle implements RecentsStyle {
                     navBarInset = bars.bottom;
                 }
             }
+            final boolean landscape = mContext.getResources().getConfiguration().orientation
+                    == Configuration.ORIENTATION_LANDSCAPE;
 
-            final int stackMargin = Math.round(STACK_MARGIN_DP * mDensity);
-            mStackTop = statusBarInset + stackMargin;
+            mStackTop = statusBarInset + margin;
             mStackHeight = Math.max(1, getHeight() - mStackTop);
+            mInitialTopOffset = Math.round(
+                    (landscape ? INITIAL_TOP_OFFSET_LAND_DP : INITIAL_TOP_OFFSET_PORT_DP)
+                            * mDensity);
+            mCardLeft = getPaddingLeft() + margin;
+            mCardWidth = Math.max(1, getWidth() - getPaddingLeft() - getPaddingRight() - 2 * margin);
 
-            // Not squeezed: this reserves room for the host's CLOSE ALL pill, which is a fixed
-            // 40dp tall at a fixed 48dp from the window bottom whatever the orientation.
-            final float bottomOffset = Math.max(BOTTOM_OFFSET_DP * mDensity,
-                    navBarInset + stackMargin);
-
-            final int sideMargin = Math.round(SIDE_MARGIN_DP * mDensity);
-            mCardLeft = getPaddingLeft() + sideMargin;
-            mCardWidth = Math.max(1,
-                    getWidth() - getPaddingLeft() - getPaddingRight() - 2 * sideMargin);
-
-            // Two passes, because the vertical arrangement depends on the stack height and the
-            // stack height is about to be trimmed. On a screen taller than the reference one the
-            // card the measured offsets imply is far longer than Samsung's (see
-            // REFERENCE_CARD_ASPECT); the surplus is taken off the TOP of the stack rect, so the
-            // whole fan-and-pile slides down as a rigid body, the front card's bottom edge and the
-            // pill reserve below it stay put, and the knee stays at the same card. The second pass
-            // matters only on a screen narrow enough that the trimmed stack drops under
-            // REFERENCE_STACK_DP and the squeeze starts to bite.
-            updateVerticalMetrics(bottomOffset);
+            // EnableSecondViewExpanded's card height; the navigation bar comes off it in portrait.
+            final int reserve = mInitialTopOffset / 8 * 7 + CLOSE_ALL_INSET_PX
+                    + (landscape ? 0 : navBarInset);
+            final int natural = mStackHeight - reserve;
             final int maxCardHeight = Math.max(1, Math.round(mCardWidth * REFERENCE_CARD_ASPECT));
-            final int naturalCardHeight = Math.round(mStackHeight - mTopOffset - bottomOffset);
-            if (naturalCardHeight > maxCardHeight) {
-                final int surplus = naturalCardHeight - maxCardHeight;
+            if (natural > maxCardHeight) {
+                final int surplus = natural - maxCardHeight;
                 mStackTop += surplus;
                 mStackHeight = Math.max(1, mStackHeight - surplus);
-                updateVerticalMetrics(bottomOffset);
             }
-            mCardHeight = Math.max(1, Math.min(maxCardHeight,
-                    Math.round(mStackHeight - mTopOffset - bottomOffset)));
+            mCardHeight = Math.max(1, mStackHeight - reserve);
 
             mMinZ = Z_MIN_DP * mDensity;
             mMaxZ = Z_MAX_DP * mDensity;
+
+            if (mCurve == null || mCurveStackHeight != mStackHeight) {
+                buildCurves();
+                mCurveStackHeight = mStackHeight;
+            }
         }
 
-        /**
-         * The vertical arrangement — offsets, steps, the two knee progresses and the scroll rate —
-         * for the current {@link #mStackHeight}. Split out of {@link #updateGeometry()} because it
-         * has to run once against the untrimmed stack (to find out how long the card would come out)
-         * and again against the trimmed one.
-         */
-        private void updateVerticalMetrics(float bottomOffset) {
-            // On a stack at least as tall as the reference one the measured dp are used as they
-            // stand, so a 20:9 phone shows the same five or six cards a 16:9 one did rather than
-            // fanning out a dozen. A shorter stack (landscape) squeezes the whole vertical
-            // arrangement by one factor, which keeps the shape — the knee stays at the same card.
-            final float squeeze = clamp(mStackHeight / (REFERENCE_STACK_DP * mDensity),
-                    MIN_VERTICAL_SQUEEZE, 1f);
-            mTopOffset = squeeze * INITIAL_TOP_OFFSET_DP * mDensity;
-            mFrontStep = squeeze * FRONT_STEP_DP * mDensity;
-            mKneeOffset = squeeze * KNEE_OFFSET_DP * mDensity;
-            mBackStep = squeeze * BACK_STEP_DP * mDensity;
+        private void buildCurves() {
+            final Path curve = new Path();
+            curve.moveTo(0f, 1f);
+            curve.cubicTo(0f, 1f, FIRST_X / 2f, (1f + FIRST_Y) / 2f + 0.001f, FIRST_X, FIRST_Y);
+            curve.lineTo(1f, 0f);
+            mCurve = new CascadePathInterpolator(curve);
+            mPxPerUnit = mStackHeight / mCurve.getArcLength();
 
-            // Solved rather than written down, so the measured constants stay the only inputs. With
-            // them these come out at -2.0 (the third card is the first bunched one) and -5.45 (the
-            // pile is about three and a half cards deep before a card's top reaches the stack top),
-            // independently of the squeeze.
-            mKneeP = -(mTopOffset - mKneeOffset) / mFrontStep;
-            mMinP = mKneeP - mKneeOffset / mBackStep;
+            final Path scale = new Path();
+            scale.moveTo(0f, 1f);
+            scale.lineTo(0.4f, 0.6f);
+            scale.lineTo(1f, 0f);
+            mScaleCurve = new CascadePathInterpolator(scale);
 
-            // A card falls from its resting place to clear off the bottom of the stack over
-            // EXIT_UNITS of progress.
-            mExitStep = Math.max(1f, (mStackHeight - mTopOffset) / EXIT_UNITS);
+            final float focusX = mCurve.getX((mStackHeight - mInitialTopOffset)
+                    / (float) mStackHeight);
+            final float cp2X = focusX + (1f - focusX) / 2f;
+            final Path dim = new Path();
+            dim.moveTo(0f, MAX_DIM);
+            dim.cubicTo(focusX * 0.5f, MAX_DIM, focusX * 0.75f, MAX_DIM * 0.75f, focusX, 0f);
+            dim.cubicTo(cp2X, 0f, cp2X, MED_DIM, 1f, MED_DIM);
+            mDimCurve = new CascadePathInterpolator(dim);
+        }
 
-            // The scroll rate, and the one number here that was never measurable from a still. It
-            // used to be mFrontStep — 39dp of finger travel per card — which is direct manipulation
-            // of the wrong card: the fanned headers are 39dp apart, but the card the finger is
-            // actually on is the big front one, and it moves at mExitStep. At mFrontStep the front
-            // card ran away from the finger about twelve times too fast, which is the "far too
-            // sensitive" report. Using mExitStep makes the front card track the finger exactly 1:1
-            // and lands at ~378dp per card on this device, which is also where AOSP 7.1.1's
-            // stackHeight/arcLength rate lands (~400dp) for the same stack — a useful sanity check
-            // given the two stacks are cousins.
-            mPxPerUnit = mExitStep;
+        /** Snap bounds: {@code [min, int(max(min, n - 1)) + min]}, opening one card back. */
+        private void updateScrollBounds(int itemCount) {
+            mMinScrollP = MIN_SCROLL_P;
+            mMaxScrollP = ((int) Math.max(mMinScrollP, itemCount - 1)) + mMinScrollP;
+            mInitialScrollP = Math.max(mMinScrollP,
+                    Math.min(mMaxScrollP, (itemCount - 2) + mMinScrollP));
+        }
+
+        private static float normalizedX(float relP) {
+            if (relP < 0f) {
+                return 0.5f + 0.5f * relP / -RANGE_MIN;
+            }
+            return 0.5f + 0.5f * relP / RANGE_MAX;
         }
 
         private static float clamp(float value, float min, float max) {

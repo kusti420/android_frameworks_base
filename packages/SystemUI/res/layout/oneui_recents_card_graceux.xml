@@ -1,31 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Copyright (C) 2026 The Android Open Source Project. Licensed under the Apache License 2.0. -->
 <!--
-  Samsung Grace UX (Android 7.0) recents card.
+  Samsung Grace UX (Android 7.0) recents card, as TaskViewHeader lays it out with Samsung's
+  EnableLowerAppbarHeight / EnableMoreRound (values for a sw360dp phone):
+    header          44dp (recents_lower_task_view_header_height)
+    icon cell       41dp square, 10dp padding (a 21dp icon), 4dp from the card's start edge
+    title           17sp condensed, #fafafa on dark task colours, starting right after the icon cell
+    dismiss cell    44dp square, 11.5dp padding, 5dp from the card's end edge
+    corners         6dp (recents_task_view_more_rounded_corners_radius)
+  Values re-implemented from the resource numbers; no Samsung asset is used.
 
-  Every dimension below was measured off a photographed SM-A310F running stock A310FXXS5CTJ2, a
-  720x1280 screen at density 320 (2.0 px/dp, i.e. 360x640dp), and converted through dp. Nothing is
-  taken from a Samsung binary or asset.
+  Size and horizontal placement are deliberately NOT declared here: GraceUxStyle's layout manager
+  measures every card to one derived rect and scales it about its centre for depth.
 
-    header height   81px -> 40.5dp   (AOSP 7.1.1's was 56dp — this is the most visible divergence
-                                      after the width taper, and it is what lets the step between
-                                      cards be one header tall)
-    icon            37px -> 18.5dp, its left edge 27px -> 13.5dp from the card edge
-    icon -> title   23px -> 11.5dp
-    title           ascender 26px and cap-to-descender 31px, both landing on ~17sp
-    dismiss glyph   30px -> 15dp, its centre 50.5px -> 25.25dp in from the card's right edge
-
-  Size and horizontal placement are deliberately NOT declared here. GraceUxStyle's layout manager
-  measures every card to one derived rect and then scales it about (centreX, top) for depth, so
-  anything set here would be overwritten. The scale is why the card is measured at full width
-  rather than re-measured per depth: on the real device the icon, the title inset and the ✕ inset
-  all shrink in step with the card (the ✕ centre sits 50.5px in on the front card and 48.5px in on
-  the card two back, a ratio of 0.960 against a card-width ratio of 0.961), which is a transform,
-  not a re-layout.
-
-  There is no dim overlay, unlike the AOSP cascade. Sampling the same app's header at two different
-  depths in the two reference shots gives exactly (81,176,211) both times: Grace UX does not fade
-  cards with depth at all, it separates them purely with elevation shadows.
+  There is no dim overlay: Grace UX does not dim cards, it fades out the ones far back.
 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -40,25 +28,21 @@
         android:layout_height="match_parent"
         android:orientation="vertical">
 
-        <!-- 40dp, against AOSP 7.1.1's 56dp. RecentsCardBinder fills this with a flat
-             GradientDrawable in the task's primary colour; the card's outline clip is what rounds
-             its top corners. No end padding: the ✕ below carries its own 48dp touch box. -->
         <LinearLayout
             android:id="@id/oneui_recents_card_header"
             android:layout_width="match_parent"
-            android:layout_height="40dp"
+            android:layout_height="44dp"
             android:orientation="horizontal"
             android:gravity="center_vertical"
-            android:paddingStart="14dp">
-
+            android:paddingStart="4dp"
+            android:paddingEnd="5dp">
             <ImageView
                 android:id="@id/oneui_recents_card_icon"
-                android:layout_width="20dp"
-                android:layout_height="20dp"
-                android:layout_marginEnd="12dp"
+                android:layout_width="41dp"
+                android:layout_height="41dp"
+                android:padding="10dp"
                 android:scaleType="fitCenter"
                 android:contentDescription="@null" />
-
             <TextView
                 android:id="@id/oneui_recents_card_title"
                 android:layout_width="0dp"
@@ -66,32 +50,23 @@
                 android:layout_weight="1"
                 android:ellipsize="end"
                 android:maxLines="1"
-                android:textColor="#FFFFFFFF"
+                android:fontFamily="sans-serif-condensed"
+                android:textColor="#FFFAFAFA"
                 android:textSize="17sp" />
-
-            <!-- 48dp wide with a 1dp end margin puts the glyph's centre 25dp in from the card's
-                 right edge, which is the measured 25.25dp, while still giving the ✕ a full-width
-                 touch target. Height is match_parent rather than a 48dp minimum because the header
-                 is only 40dp tall and a taller child would stretch it. -->
             <TextView
                 android:id="@id/oneui_recents_card_dismiss"
-                android:layout_width="48dp"
-                android:layout_height="match_parent"
-                android:layout_marginEnd="1dp"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
                 android:gravity="center"
                 android:text="✕"
-                android:textColor="#FFFFFFFF"
-                android:textSize="20sp"
+                android:textColor="#FFFAFAFA"
+                android:textSize="16sp"
                 android:clickable="true"
                 android:focusable="true" />
-
         </LinearLayout>
-
-        <!-- MATRIX asks RecentsCardBinder for the 7.x treatment: the snapshot scaled to the card
-             width and pinned to the top, so a card tucked behind another still shows the top of its
-             last frame. Safe here precisely because the depth taper is a view transform — the
-             measured width the binder scales against never changes, so the matrix never goes stale
-             as a card moves back through the stack. -->
+        <!-- MATRIX: the snapshot scaled to the card width and pinned to the top, as TaskViewThumbnail
+             did. Safe because the depth taper is a view transform, so the measured width never
+             changes as a card moves through the stack. -->
         <ImageView
             android:id="@id/oneui_recents_card_thumbnail"
             android:layout_width="match_parent"
