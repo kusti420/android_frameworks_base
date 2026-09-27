@@ -14,5 +14,6 @@
     font.mono = "ibm-plex-sans";
     font.text = "ibm-plex-sans";
     iconBadges = true;
+    iconStyle = "colour";
   };
 }

@@ -245,6 +245,7 @@ public class IchthysConfigTest {
         assertEquals("koi", s.get("theme.preset").defaultValue);
         assertEquals("hairline", s.get("theme.surface").defaultValue);
         assertEquals(Boolean.TRUE, s.get("theme.iconBadges").defaultValue);
+        assertEquals("mono", s.get("theme.iconStyle").defaultValue);
         expectEvalError(s, "{ theme.surface = \"glass\"; }", "hairline");
     }
 }

@@ -15,5 +15,6 @@
     font.mono = "jetbrains-mono";
     font.text = "instrument-sans";
     iconBadges = true;
+    iconStyle = "mono";
   };
 }

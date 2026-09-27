@@ -100,8 +100,13 @@ final class IchthysOptions {
                         + "surfaces (Abyss).",
                 setting(SECURE, "ichthys_theme_surface")));
         s.add(Option.bool("theme.iconBadges", Boolean.TRUE,
-                "Show Settings category icons as outlined, color-coded badges.",
+                "Draw Settings category icons on badge tiles (false: plain icons).",
                 setting(SECURE, "ichthys_settings_icon_badges")));
+        s.add(Option.enumeration("theme.iconStyle", new String[] {"mono", "colour"},
+                new String[] {"mono", "colour"}, "mono",
+                "Badge tile style: mono (off-white glyph on a quiet tile, accent only for accent "
+                        + "items) or colour (outlined badges in per-category colours).",
+                setting(SECURE, "ichthys_settings_icon_style")));
     }
 
     // ---------------------------------------------------------------------------------------------
