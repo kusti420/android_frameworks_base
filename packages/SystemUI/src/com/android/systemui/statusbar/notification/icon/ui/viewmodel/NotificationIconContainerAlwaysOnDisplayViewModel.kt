@@ -24,6 +24,7 @@ import com.android.systemui.keyguard.shared.model.KeyguardState
 import com.android.systemui.res.R
 import com.android.systemui.shade.ShadeDisplayAware
 import com.android.systemui.shade.domain.interactor.ShadeInteractor
+import com.android.systemui.shared.settings.data.repository.SystemSettingsRepository
 import com.android.systemui.statusbar.notification.icon.domain.interactor.AlwaysOnDisplayNotificationIconsInteractor
 import javax.inject.Inject
 import kotlin.coroutines.CoroutineContext
@@ -46,8 +47,23 @@ constructor(
     keyguardTransitionInteractor: KeyguardTransitionInteractor,
     @ShadeDisplayAware resources: Resources,
     shadeInteractor: ShadeInteractor,
+    systemSettings: SystemSettingsRepository,
 ) {
-    private val maxIcons = resources.getInteger(R.integer.max_notif_icons_on_aod)
+    private val defaultMaxIcons = resources.getInteger(R.integer.max_notif_icons_on_aod)
+
+    /**
+     * IchthysOS: Settings.System "ichthys_aod_notif_icons": -1 (unset) keeps the device default,
+     * 0 hides notification icons on the always-on display, 1-12 caps them.
+     */
+    private val maxIcons: Flow<Int> =
+        systemSettings
+            .intSetting(AOD_ICON_LIMIT_KEY, -1)
+            .map { if (it < 0) defaultMaxIcons else it.coerceAtMost(12) }
+            .distinctUntilChanged()
+
+    private companion object {
+        const val AOD_ICON_LIMIT_KEY = "ichthys_aod_notif_icons"
+    }
 
     /** Are changes to the icon container animated? */
     val areContainerChangesAnimated: Flow<Boolean> =
@@ -90,11 +106,12 @@ constructor(
 
     /** [NotificationIconsViewData] indicating which icons to display in the view. */
     val icons: Flow<NotificationIconsViewData> =
-        iconsInteractor.aodNotifs
-            .map { entries ->
+        combine(iconsInteractor.aodNotifs, maxIcons) { entries, limit ->
                 NotificationIconsViewData(
-                    visibleIcons = entries.mapNotNull { it.toIconInfo(it.aodIcon) },
-                    iconLimit = maxIcons,
+                    visibleIcons =
+                        if (limit == 0) emptyList()
+                        else entries.mapNotNull { it.toIconInfo(it.aodIcon) },
+                    iconLimit = limit,
                 )
             }
             .flowOn(bgContext)

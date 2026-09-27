@@ -22,6 +22,7 @@ import com.android.systemui.keyguard.domain.interactor.keyguardTransitionInterac
 import com.android.systemui.kosmos.Kosmos
 import com.android.systemui.kosmos.testDispatcher
 import com.android.systemui.shade.domain.interactor.shadeInteractor
+import com.android.systemui.shared.settings.data.repository.systemSettingsRepository
 import com.android.systemui.statusbar.notification.icon.domain.interactor.alwaysOnDisplayNotificationIconsInteractor
 
 val Kosmos.notificationIconContainerAlwaysOnDisplayViewModel by
@@ -33,5 +34,6 @@ val Kosmos.notificationIconContainerAlwaysOnDisplayViewModel by
             keyguardTransitionInteractor = keyguardTransitionInteractor,
             resources = mainResources,
             shadeInteractor = shadeInteractor,
+            systemSettings = systemSettingsRepository,
         )
     }

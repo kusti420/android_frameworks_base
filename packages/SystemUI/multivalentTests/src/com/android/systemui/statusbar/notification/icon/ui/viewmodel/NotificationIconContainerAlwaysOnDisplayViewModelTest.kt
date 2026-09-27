@@ -41,6 +41,7 @@ import com.android.systemui.power.data.repository.fakePowerRepository
 import com.android.systemui.power.shared.model.WakeSleepReason
 import com.android.systemui.power.shared.model.WakefulnessState
 import com.android.systemui.shade.domain.interactor.shadeInteractor
+import com.android.systemui.shared.settings.data.repository.systemSettingsRepository
 import com.android.systemui.statusbar.notification.icon.domain.interactor.alwaysOnDisplayNotificationIconsInteractor
 import com.android.systemui.statusbar.phone.dozeParameters
 import com.android.systemui.testKosmos
@@ -71,6 +72,7 @@ class NotificationIconContainerAlwaysOnDisplayViewModelTest(flags: FlagsParamete
             kosmos.keyguardTransitionInteractor,
             kosmos.mainResources,
             kosmos.shadeInteractor,
+            kosmos.systemSettingsRepository,
         )
     }
     val testScope = kosmos.testScope

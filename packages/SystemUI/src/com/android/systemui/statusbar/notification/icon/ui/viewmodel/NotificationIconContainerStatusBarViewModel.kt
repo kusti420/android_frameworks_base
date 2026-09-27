@@ -24,6 +24,7 @@ import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor
 import com.android.systemui.plugins.DarkIconDispatcher
 import com.android.systemui.res.R
 import com.android.systemui.shade.domain.interactor.ShadeInteractor
+import com.android.systemui.shared.settings.data.repository.SystemSettingsRepository
 import com.android.systemui.statusbar.notification.icon.domain.interactor.StatusBarNotificationIconsInteractor
 import com.android.systemui.statusbar.phone.domain.interactor.DarkIconInteractor
 import com.android.systemui.util.kotlin.FlowDumperImpl
@@ -47,9 +48,20 @@ constructor(
     keyguardInteractor: KeyguardInteractor,
     @Main resources: Resources,
     shadeInteractor: ShadeInteractor,
+    systemSettings: SystemSettingsRepository,
 ) : FlowDumperImpl(dumpManager) {
 
-    private val maxIcons = resources.getInteger(R.integer.max_notif_static_icons)
+    private val defaultMaxIcons = resources.getInteger(R.integer.max_notif_static_icons)
+
+    /**
+     * IchthysOS: Settings.System "ichthys_statusbar_notif_icons" caps the notification icons shown
+     * in the status bar (1-12). Unset keeps the device default.
+     */
+    private val maxIcons: Flow<Int> =
+        systemSettings
+            .intSetting(ICON_LIMIT_KEY, defaultMaxIcons)
+            .map { if (it <= 0) defaultMaxIcons else it.coerceAtMost(12) }
+            .distinctUntilChanged()
 
     /** Are changes to the icon container animated? */
     val animationsEnabled: Flow<Boolean> =
@@ -74,17 +86,20 @@ constructor(
 
     /** [NotificationIconsViewData] indicating which icons to display in the view. */
     val icons: Flow<NotificationIconsViewData> =
-        iconsInteractor.statusBarNotifs
-            .map { entries ->
+        combine(iconsInteractor.statusBarNotifs, maxIcons) { entries, limit ->
                 NotificationIconsViewData(
                     visibleIcons = entries.mapNotNull { it.toIconInfo(it.statusBarIcon) },
-                    iconLimit = maxIcons,
+                    iconLimit = limit,
                 )
             }
             .flowOn(bgContext)
             .conflate()
             .distinctUntilChanged()
             .dumpWhileCollecting("icons")
+
+    private companion object {
+        const val ICON_LIMIT_KEY = "ichthys_statusbar_notif_icons"
+    }
 
     private class IconColorsImpl(override val tint: Int, private val areas: Collection<Rect>) :
         NotificationIconColors {
