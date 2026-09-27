@@ -45,6 +45,16 @@ final class PitchBlackTheme {
      * Previously it checked only its own switch, so the border bled through onto Monet, where it
      * looks out of place against Monet's tonal notification surfaces.
      */
+    /**
+     * IchthysOS "Shoal": theme.surface = hairline (Settings.Secure ichthys_theme_surface) draws a
+     * 1 dp outline around each notification card instead of relying on a tonal fill. Unset keeps
+     * the stock look.
+     */
+    static boolean hairlineEnabled(Context context) {
+        return "hairline".equals(Settings.Secure.getString(context.getContentResolver(),
+                "ichthys_theme_surface"));
+    }
+
     static boolean borderEnabled(Context context) {
         return isEnabled(context) && Settings.System.getInt(context.getContentResolver(),
                 "notification_accent_border", 1) == 1;

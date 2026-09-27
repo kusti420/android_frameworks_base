@@ -80,7 +80,8 @@ public class NotificationBackgroundView extends View implements Dumpable,
     }
 
     private void drawPitchBlackBorder(Canvas canvas) {
-        if (!PitchBlackTheme.borderEnabled(getContext())) {
+        final boolean accentBorder = PitchBlackTheme.borderEnabled(getContext());
+        if (!accentBorder && !PitchBlackTheme.hairlineEnabled(getContext())) {
             return;
         }
         // Stroke EXACTLY the drawn background drawable's bounds (the rounded, inset notification
@@ -97,7 +98,17 @@ public class NotificationBackgroundView extends View implements Dumpable,
         if (b.width() <= 0 || b.height() <= 0) {
             return;
         }
-        mPitchBlackBorderPaint.setColor(PitchBlackTheme.accentColor(getContext()));
+        if (accentBorder) {
+            mPitchBlackBorderPaint.setStrokeWidth(4f);
+            mPitchBlackBorderPaint.setColor(PitchBlackTheme.accentColor(getContext()));
+        } else {
+            // IchthysOS "Shoal" hairline: 1 dp, a faint light line on dark and dark line on light.
+            final boolean night = (getResources().getConfiguration().uiMode
+                    & android.content.res.Configuration.UI_MODE_NIGHT_MASK)
+                    == android.content.res.Configuration.UI_MODE_NIGHT_YES;
+            mPitchBlackBorderPaint.setStrokeWidth(getResources().getDisplayMetrics().density);
+            mPitchBlackBorderPaint.setColor(night ? 0x26FFFFFF : 0x1F000000);
+        }
         float sw = mPitchBlackBorderPaint.getStrokeWidth() / 2f;
         mPitchBlackBorderRect.set(b.left + sw, b.top + sw, b.right - sw, b.bottom - sw);
         mPitchBlackBorderPath.reset();

@@ -346,6 +346,15 @@ public class FooterView extends StackScrollerDecorView {
 
         mClearAllButton.setBackground(clearAllBg);
         mClearAllButton.setTextColor(onSurface);
+        // IchthysOS "Shoal": with a Shoal surface style set (Settings.Secure
+        // ichthys_theme_surface), "Clear all" is the accent pill with ink text, as in the design.
+        if (android.provider.Settings.Secure.getString(mContext.getContentResolver(),
+                "ichthys_theme_surface") != null) {
+            clearAllBg.setColorFilter(new PorterDuffColorFilter(
+                    mContext.getColor(android.R.color.system_accent1_400), SRC_ATOP));
+            clearAllBg.setAlpha(0xFF);
+            mClearAllButton.setTextColor(0xFF07090B);
+        }
 
         mSettingsButton.setBackground(settingsBg);
         mSettingsButton.setCompoundDrawableTintList(ColorStateList.valueOf(onSurface));
