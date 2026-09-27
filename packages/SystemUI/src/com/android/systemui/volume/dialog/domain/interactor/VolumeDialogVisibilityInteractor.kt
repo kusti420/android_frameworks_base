@@ -78,8 +78,11 @@ constructor(
 
     /** @see computeTimeout */
     private val defaultTimeout = 3.seconds
-    /** IchthysOS: longer timeout so the expanded One UI panel doesn't vanish mid-adjustment. */
-    private val expandedTimeout = 8.seconds
+    /**
+     * IchthysOS: One UI's expanded panel timeout (VolumePanelState: 5 s; any touch on the panel
+     * reschedules it, and accessibility's recommended timeout still applies on top).
+     */
+    private val expandedTimeout = 5.seconds
 
     private val showVolumeSliderInQsShade = expandedAudioTileDetailsFeatureInteractor.isEnabled()
 

@@ -16,6 +16,12 @@
 
 package com.android.systemui.volume.dialog.sliders.ui
 
+import android.animation.Animator
+import android.animation.AnimatorSet
+import android.animation.ObjectAnimator
+import android.animation.PropertyValuesHolder
+import android.content.res.Configuration
+import android.graphics.Outline
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
@@ -25,6 +31,9 @@ import android.view.LayoutInflater
 import androidx.constraintlayout.widget.ConstraintLayout
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
+import android.view.animation.LinearInterpolator
+import android.view.animation.PathInterpolator
 import androidx.annotation.LayoutRes
 import androidx.compose.ui.util.fastForEachIndexed
 import com.android.app.tracing.coroutines.launchInTraced
@@ -94,10 +103,29 @@ constructor(
             // container and bottom/top sections that reference this view in their constraints.
             background.visibility = View.INVISIBLE
             (mainSliderContainer.layoutParams as? ConstraintLayout.LayoutParams)?.let {
-                // Taller/thinner One UI capsule per on-device comparison: 205dp cap over the 36dp
-                // capsule width (OneUiVolumeSpecs.capsuleWidth) => ~5.7:1 (real One UI ≈ 4.8:1).
-                it.matchConstraintMaxHeight = (205f * density).toInt()
+                // One UI 6 pill: 36 x 210 dp, 18 dp (its shadow padding) from the screen edge, top
+                // at 34% of the free height (VERTICAL_PADDING_TOP_RATIO). The dialog view binder
+                // keeps these margins at 0 in One UI mode.
+                it.matchConstraintMaxHeight = (OneUiVolumeSpecs.trackHeight.value * density).toInt()
+                it.width = (OneUiVolumeSpecs.trackWidth.value * density).toInt()
+                it.verticalBias = ONEUI_VERTICAL_BIAS
+                it.topMargin = 0
+                it.bottomMargin = 0
+                it.marginEnd = (ONEUI_EDGE_MARGIN_DP * density).toInt()
                 mainSliderContainer.layoutParams = it
+            }
+            mainSliderContainer.applyOneUiPill(
+                windowRootViewBlurInteractor.isBlurCurrentlySupported.value
+            )
+            launchTraced("VDSVB#oneUiBlur") {
+                windowRootViewBlurInteractor.isBlurCurrentlySupported.collect { supported ->
+                    mainSliderContainer.applyOneUiPill(supported)
+                }
+            }
+            launchTraced("VDSVB#oneUiExpand") {
+                OneUiExpandState.expanded.collect { expanded ->
+                    if (expanded) floatingSlidersContainer.animateOneUiExpand()
+                }
             }
         }
 
@@ -127,9 +155,26 @@ constructor(
                 floatingSliderViewBinders.fastForEachIndexed { index, sliderComponent ->
                     val sliderContainer = floatingSlidersContainer.getChildAt(index)
                     if (oneUiStyle) {
-                        // IchthysOS: One UI capsules draw their own grey track background;
-                        // the wrapping FrameLayout should be fully transparent.
+                        // IchthysOS: expanded One UI rows draw their own track (no blur, no
+                        // elevation); the wrapping FrameLayout is transparent and the rows are
+                        // 36 dp pills spaced like One UI's evenly weighted row container.
                         sliderContainer.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                        val pad = (ONEUI_EXPANDED_ROW_GAP_DP / 2f * sliderContainer.resources
+                            .displayMetrics.density).toInt()
+                        // Keep the vertical padding: the floating container's negative margins
+                        // rely on it to line the rows up with the 210 dp main pill.
+                        sliderContainer.setPadding(
+                            pad,
+                            sliderContainer.paddingTop,
+                            pad,
+                            sliderContainer.paddingBottom,
+                        )
+                        (sliderContainer as? ViewGroup)?.getChildAt(0)?.let { pill ->
+                            pill.layoutParams = pill.layoutParams.apply {
+                                width = (OneUiVolumeSpecs.trackWidth.value *
+                                    pill.resources.displayMetrics.density).toInt()
+                            }
+                        }
                     } else if (viewModel.showBlur) {
                         sliderContainer.updateBackground()
                     }
@@ -147,6 +192,76 @@ constructor(
                 }
             }
         }
+    }
+
+    /**
+     * IchthysOS: the collapsed One UI pill host: cross-window blur clipped to the pill, the black
+     * α30 foreground on top (or the opaque no-blur tint when blur is unavailable), 12 dp elevation.
+     */
+    private fun View.applyOneUiPill(blurSupported: Boolean) {
+        val density = resources.displayMetrics.density
+        val radius = OneUiVolumeSpecs.trackWidth.value * density / 2f
+        val night =
+            (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+                Configuration.UI_MODE_NIGHT_YES
+        val tint =
+            GradientDrawable().apply {
+                cornerRadius = radius
+                setColor(
+                    when {
+                        blurSupported -> ONEUI_BLUR_FOREGROUND
+                        night -> ONEUI_TRACK_NO_BLUR_DARK
+                        else -> ONEUI_TRACK_NO_BLUR_LIGHT
+                    }
+                )
+            }
+        val blur =
+            viewRootImpl?.createBackgroundBlurDrawable()?.apply {
+                setCornerRadius(radius)
+                setBlurRadius(if (blurSupported) (ONEUI_BLUR_RADIUS_DP * density).toInt() else 0)
+            }
+        background = if (blur != null) LayerDrawable(arrayOf<Drawable>(blur, tint)) else tint
+        elevation = OneUiVolumeSpecs.elevation.value * density
+        outlineProvider =
+            object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) {
+                    outline.setRoundRect(0, 0, view.width, view.height, radius)
+                }
+            }
+        clipToOutline = true
+    }
+
+    /**
+     * IchthysOS: One UI's expanded-panel entrance: after 250 ms, alpha 0 -> 1 over 200 ms (linear)
+     * and scale 0.95 -> 1 over 400 ms with PathInterpolator(0.22, 0.25, 0, 1).
+     */
+    private fun View.animateOneUiExpand() {
+        (getTag(R.id.volume_dialog_floating_sliders_container) as? Animator)?.cancel()
+        alpha = 0f
+        scaleX = 0.95f
+        scaleY = 0.95f
+        val fade =
+            ObjectAnimator.ofFloat(this, View.ALPHA, 0f, 1f).apply {
+                duration = 200
+                interpolator = LinearInterpolator()
+            }
+        val scale =
+            ObjectAnimator.ofPropertyValuesHolder(
+                    this,
+                    PropertyValuesHolder.ofFloat(View.SCALE_X, 0.95f, 1f),
+                    PropertyValuesHolder.ofFloat(View.SCALE_Y, 0.95f, 1f),
+                )
+                .apply {
+                    duration = 400
+                    interpolator = PathInterpolator(0.22f, 0.25f, 0f, 1f)
+                }
+        val set =
+            AnimatorSet().apply {
+                startDelay = 250
+                playTogether(fade, scale)
+            }
+        setTag(R.id.volume_dialog_floating_sliders_container, set)
+        set.start()
     }
 
     private fun View.updateBackground() {
@@ -200,6 +315,16 @@ constructor(
 // Custom Options: horizontal nudge (dp) that centres the One UI ringer button over the 36dp One UI
 // slider capsule. See the comment at its use site for the derivation.
 private const val ONEUI_RINGER_CENTERING_NUDGE_DP = 4f
+
+// IchthysOS: One UI 6 pill placement and background (ichthys-refs SPEC_VOLUME_ONEUI.md §2.2-2.4).
+private const val ONEUI_VERTICAL_BIAS = 0.34f
+private const val ONEUI_EDGE_MARGIN_DP = 18f
+private const val ONEUI_EXPANDED_ROW_GAP_DP = 26f
+/** Samsung's blur radius "256" on a captured bitmap; ~36 dp of cross-window blur reads the same. */
+private const val ONEUI_BLUR_RADIUS_DP = 36f
+private const val ONEUI_BLUR_FOREGROUND = 0x1E000000
+private const val ONEUI_TRACK_NO_BLUR_LIGHT = 0xCCBFBFBF.toInt()
+private const val ONEUI_TRACK_NO_BLUR_DARK = 0xCC3D3D3D.toInt()
 
 private fun ViewGroup.ensureChildCount(@LayoutRes viewLayoutId: Int, count: Int) {
     val childCountDelta = childCount - count

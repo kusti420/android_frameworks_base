@@ -16,13 +16,17 @@
 
 package com.android.systemui.volume.dialog.ui.binder
 
+import android.animation.ValueAnimator
 import android.app.Dialog
 import android.content.Context
+import android.os.UserHandle
+import android.provider.Settings
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.accessibility.AccessibilityEvent
+import android.view.animation.PathInterpolator
 import androidx.compose.ui.util.lerp
 import androidx.core.view.updatePadding
 import androidx.dynamicanimation.animation.DynamicAnimation
@@ -62,6 +66,11 @@ private const val SPRING_DAMPING_RATIO = 0.9f
 private const val FRACTION_HIDE = 0f
 private const val FRACTION_SHOW = 1f
 private const val ANIMATION_MINIMUM_VISIBLE_CHANGE = 0.01f
+
+// Custom Options: One UI 6 volume pill motion (ichthys-refs SPEC_VOLUME_ONEUI.md §2.6).
+private const val ONEUI_SHOW_STIFFNESS = 150f
+private const val ONEUI_SHOW_DAMPING_RATIO = 0.7f
+private const val ONEUI_HIDE_DURATION_MS = 350L
 
 /** Binds the root view of the Volume Dialog. */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -119,7 +128,16 @@ constructor(
             )
             true
         }
-        animateVisibility(root, dialog, viewModel.dialogVisibilityModel)
+        // Custom Options: "volume_panel_style" (Settings.System, default 1 = One UI).
+        val oneUiStyle =
+            isVolumeDialogVertical &&
+                Settings.System.getIntForUser(
+                    root.context.contentResolver,
+                    "volume_panel_style",
+                    1,
+                    UserHandle.USER_CURRENT,
+                ) == 1
+        animateVisibility(root, dialog, viewModel.dialogVisibilityModel, oneUiStyle)
 
         viewModel.dialogTitle
             .filter { it.isNotEmpty() }
@@ -158,10 +176,14 @@ constructor(
                             right = insetsValues.right,
                             bottom = insetsValues.bottom,
                         )
-                        mainSliderContainer?.updateMargin(
-                            top = getSliderVerticalMargin() - view.paddingTop,
-                            bottom = getSliderVerticalMargin() - view.paddingBottom,
-                        )
+                        if (!oneUiStyle) {
+                            mainSliderContainer?.updateMargin(
+                                top = getSliderVerticalMargin() - view.paddingTop,
+                                bottom = getSliderVerticalMargin() - view.paddingBottom,
+                            )
+                        }
+                        // One UI keeps the pill at 0 margins and a 0.34 vertical bias (set by
+                        // VolumeDialogSlidersViewBinder), matching VERTICAL_PADDING_TOP_RATIO.
                     } else {
                         // Custom Options: the horizontal dialog is a fixed-width, window-centred
                         // pill. Only clear the status bar / cutout at the top; the old slider
@@ -183,15 +205,19 @@ constructor(
         view: View,
         dialog: Dialog,
         visibilityModel: Flow<VolumeDialogVisibilityModel>,
+        oneUiStyle: Boolean,
     ) {
         view.applyAnimationProgress(FRACTION_HIDE)
         val animationValueHolder = FloatValueHolder(FRACTION_HIDE)
         val animation: SpringAnimation =
             SpringAnimation(animationValueHolder)
                 .setSpring(
+                    // One UI slides the pill in with a softer, slightly bouncy spring.
                     SpringForce()
-                        .setStiffness(SPRING_STIFFNESS)
-                        .setDampingRatio(SPRING_DAMPING_RATIO)
+                        .setStiffness(if (oneUiStyle) ONEUI_SHOW_STIFFNESS else SPRING_STIFFNESS)
+                        .setDampingRatio(
+                            if (oneUiStyle) ONEUI_SHOW_DAMPING_RATIO else SPRING_DAMPING_RATIO
+                        )
                 )
                 .setMinimumVisibleChange(ANIMATION_MINIMUM_VISIBLE_CHANGE)
                 .addUpdateListener { _, value, _ -> view.applyAnimationProgress(value) }
@@ -214,7 +240,21 @@ constructor(
                         junkListener?.let(animation::removeUpdateListener)
                         junkListener =
                             jankListenerFactory.dismiss(view).also(animation::addUpdateListener)
-                        animation.suspendAnimate(FRACTION_HIDE)
+                        if (oneUiStyle) {
+                            // One UI hides with a 350 ms accelerating slide to the edge.
+                            animation.cancel()
+                            ValueAnimator.ofFloat(animationValueHolder.value, FRACTION_HIDE)
+                                .apply {
+                                    duration = ONEUI_HIDE_DURATION_MS
+                                    interpolator = PathInterpolator(0.7f, 0f, 0.83f, 0.83f)
+                                }
+                                .suspendAnimate<Float> { value ->
+                                    animationValueHolder.value = value
+                                    view.applyAnimationProgress(value)
+                                }
+                        } else {
+                            animation.suspendAnimate(FRACTION_HIDE)
+                        }
                         dialog.dismiss()
                     }
 

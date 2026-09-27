@@ -44,7 +44,9 @@ import com.android.systemui.common.ui.compose.Icon
 import com.android.systemui.haptics.slider.SliderHapticFeedbackFilter
 import com.android.systemui.haptics.slider.compose.ui.SliderHapticsViewModel
 import com.android.systemui.res.R
+import com.android.systemui.volume.Events
 import com.android.systemui.volume.dialog.domain.interactor.ExpandedAudioTileDetailsFeatureInteractor
+import com.android.systemui.volume.dialog.domain.interactor.VolumeDialogVisibilityInteractor
 import com.android.systemui.volume.dialog.sliders.dagger.VolumeDialogSliderScope
 import com.android.systemui.volume.dialog.sliders.domain.OneUiExpandState
 import com.android.systemui.volume.dialog.sliders.ui.compose.SliderTrack
@@ -59,6 +61,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
+import lineageos.providers.LineageSettings
 
 @VolumeDialogSliderScope
 class VolumeDialogSliderViewBinder
@@ -68,6 +71,7 @@ constructor(
     private val overscrollViewModel: VolumeDialogOverscrollViewModel,
     private val hapticsViewModelFactory: SliderHapticsViewModel.Factory,
     private val expandedAudioTileDetailsFeatureInteractor: ExpandedAudioTileDetailsFeatureInteractor,
+    private val visibilityInteractor: VolumeDialogVisibilityInteractor,
 ) {
     fun bind(view: View) {
         // Use horizontal volume dialog if the audio tile details view is enabled
@@ -86,6 +90,9 @@ constructor(
                     overscrollViewModel = overscrollViewModel,
                     hapticsViewModelFactory = hapticsViewModelFactory,
                     isVolumeDialogVertical = isVolumeDialogVertical,
+                    onOneUiSwipeDismiss = {
+                        visibilityInteractor.dismissDialog(Events.DISMISS_REASON_TOUCH_OUTSIDE)
+                    },
                 )
             }
         }
@@ -99,6 +106,7 @@ private fun VolumeDialogSlider(
     overscrollViewModel: VolumeDialogOverscrollViewModel,
     hapticsViewModelFactory: SliderHapticsViewModel.Factory,
     isVolumeDialogVertical: Boolean,
+    onOneUiSwipeDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     dimensions: VolumeSliderDimensions =
         if (isVolumeDialogVertical) {
@@ -129,7 +137,7 @@ private fun VolumeDialogSlider(
     val interactionSource = remember { MutableInteractionSource() }
 
     val context = LocalContext.current
-    // Custom Options: "volume_panel_style" (Settings.System, default 0). 0 = default AOSP look,
+    // Custom Options: "volume_panel_style" (Settings.System, default 1). 0 = default AOSP look,
     // 1 = "One UI" style slider. Read once at composition; the setting is applied on a restart.
     // Only the vertical volume dialog carries the One UI look (One UI ships a vertical panel).
     val oneUiStyle =
@@ -175,7 +183,16 @@ private fun VolumeDialogSlider(
     if (oneUiStyle) {
         // Custom Options: One UI (1) renders an original, fully custom capsule slider instead of
         // the AOSP Material slider. Default (0) falls through to the unchanged Slider() below.
-        val context = LocalContext.current
+        val expanded by OneUiExpandState.expanded.collectAsStateWithLifecycle()
+        val panelOnLeft =
+            remember(context) {
+                LineageSettings.Secure.getIntForUser(
+                    context.contentResolver,
+                    LineageSettings.Secure.VOLUME_PANEL_ON_LEFT,
+                    0,
+                    UserHandle.USER_CURRENT,
+                ) != 0
+            }
         OneUiVolumeSlider(
             state = sliderStateModel,
             iconSize = iconSize,
@@ -192,10 +209,13 @@ private fun VolumeDialogSlider(
             onDragStarted = { viewModel.onSliderDragStarted() },
             onDragFinished = { viewModel.onSliderDragFinished() },
             onExpandClicked = {
-                // IchthysOS: tapping the "⋯" dots toggles the One UI expansion — shows
-                // ALL audio streams as side-by-side capsules (like real One UI).
+                // IchthysOS: the "more" button (or a swipe toward the screen centre) toggles the
+                // One UI expansion — shows ALL audio streams as side-by-side capsules.
                 OneUiExpandState.toggle()
             },
+            onSwipeDismiss = onOneUiSwipeDismiss,
+            expanded = expanded,
+            panelOnLeft = panelOnLeft,
             modifier =
                 modifier.pointerInput(Unit) {
                     coroutineScope {
@@ -342,10 +362,10 @@ data class VolumeSliderDimensions(
         // (the shipped resource dump exposes only names, not dp values).
         val OneUi =
             VolumeSliderDimensions(
-                iconSize = 22.dp,
+                iconSize = 28.dp,
                 thumbHeight = 0.dp,
                 thumbWidth = 0.dp,
-                trackSize = 40.dp,
+                trackSize = 36.dp,
             )
     }
 }
