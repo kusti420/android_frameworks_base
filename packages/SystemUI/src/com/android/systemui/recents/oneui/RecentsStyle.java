@@ -18,6 +18,7 @@ package com.android.systemui.recents.oneui;
 
 import android.content.Context;
 import android.view.View;
+import android.widget.TextView;
 
 import androidx.recyclerview.widget.ItemTouchHelper;
 import androidx.recyclerview.widget.RecyclerView;
@@ -95,5 +96,79 @@ public interface RecentsStyle {
     /** Whether tapping the scrim behind the cards should close recents. */
     default boolean dismissOnScrimTap() {
         return true;
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Chrome, backdrop and motion. Every method below has a neutral default, so a style only
+    // overrides what its original actually did differently; the host stays style-agnostic.
+    // ---------------------------------------------------------------------------------------
+
+    /**
+     * Whether the wallpaper behind recents is blurred. One UI blurs it; the 7.x recents
+     * (AOSP 7.1.1, Samsung Grace UX) predate cross-window blur and only laid a flat scrim over the
+     * wallpaper.
+     */
+    default boolean usesBackdropBlur() {
+        return true;
+    }
+
+    /**
+     * The flat scrim colour over the backdrop, or {@code null} for the host default (a light veil
+     * over the blur, a heavier one without it).
+     */
+    default Integer getScrimColor(boolean blurEnabled) {
+        return null;
+    }
+
+    /**
+     * Whether recents sits over the home wallpaper rather than over the app it was opened from.
+     * True for the 7.x styles: their RecentsActivity used {@code windowShowWallpaper}, so the
+     * scrimmed wallpaper, not the previous app, was the backdrop.
+     */
+    default boolean showsWallpaper() {
+        return false;
+    }
+
+    /**
+     * Restyles the host's "Close all" button for this style: size, shape, colours, type and
+     * placement. Called once, before the first layout. A style that also moves or hides it with
+     * scroll keeps the reference.
+     */
+    default void styleClearAll(TextView clearAll) {}
+
+    /**
+     * Plays the style's own entrance on freshly laid-out cards. Called once per showing, after the
+     * first layout pass that has cards and before that frame is drawn, so starting values set here
+     * are never seen. The host itself opens without a window animation.
+     */
+    default void animateEnter(RecyclerView recyclerView) {}
+
+    /**
+     * Plays the style's exit and calls {@code onEnd} when it has finished, or returns false to let
+     * the host close immediately. Used for back and for a tap on the scrim.
+     */
+    default boolean animateExit(RecyclerView recyclerView, Runnable onEnd) {
+        return false;
+    }
+
+    /**
+     * Swipe distance that dismisses, as {@link ItemTouchHelper.Callback#getSwipeThreshold}: a
+     * fraction of the card's width, and allowed to exceed 1. Only used with {@link #getSwipeDirs}.
+     */
+    default float getSwipeThreshold(RecyclerView.ViewHolder holder) {
+        return 0.5f;
+    }
+
+    /**
+     * Fling speed, in px/s, past which a swipe dismisses regardless of distance, given the
+     * {@link ItemTouchHelper} default. Only used with {@link #getSwipeDirs}.
+     */
+    default float getSwipeEscapeVelocity(float defaultValue) {
+        return defaultValue;
+    }
+
+    /** Duration of the snap back after a swipe that did not dismiss, given the default. */
+    default long getSwipeCancelDuration(long defaultDuration) {
+        return defaultDuration;
     }
 }

@@ -33,9 +33,12 @@ import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowManager;
+import android.widget.TextView;
+import android.window.OnBackInvokedDispatcher;
 
 import androidx.recyclerview.widget.ItemTouchHelper;
 import androidx.recyclerview.widget.RecyclerView;
@@ -129,6 +132,9 @@ public class OneUiRecentsActivity extends Activity {
      */
     private long mStoppedAtElapsedRealtime;
 
+    /** Set while an exit animation runs, so a second back or tap does not start another. */
+    private boolean mClosing;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -160,6 +166,11 @@ public class OneUiRecentsActivity extends Activity {
 
         mStyle = RecentsStyles.forType(readRecentsType());
         mSource = new RecentsTaskSource(this);
+        if (mStyle.showsWallpaper()) {
+            // The 7.x RecentsActivity themes set windowShowWallpaper: the scrimmed home wallpaper,
+            // not the app recents was opened over, is the backdrop.
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER);
+        }
 
         setContentView(R.layout.oneui_recents_activity);
         mRecyclerView = findViewById(R.id.oneui_recents_list);
@@ -199,6 +210,26 @@ public class OneUiRecentsActivity extends Activity {
                 @Override
                 public void onSwiped(RecyclerView.ViewHolder vh, int direction) {
                     dismissTask(vh.getBindingAdapterPosition());
+                }
+
+                @Override
+                public float getSwipeThreshold(RecyclerView.ViewHolder vh) {
+                    return mStyle.getSwipeThreshold(vh);
+                }
+
+                @Override
+                public float getSwipeEscapeVelocity(float defaultValue) {
+                    return mStyle.getSwipeEscapeVelocity(defaultValue);
+                }
+
+                @Override
+                public long getAnimationDuration(RecyclerView rv, int animationType,
+                        float animateDx, float animateDy) {
+                    final long duration =
+                            super.getAnimationDuration(rv, animationType, animateDx, animateDy);
+                    return animationType == ItemTouchHelper.ANIMATION_TYPE_SWIPE_CANCEL
+                            ? mStyle.getSwipeCancelDuration(duration)
+                            : duration;
                 }
             }).attachToRecyclerView(mRecyclerView);
         }
@@ -246,10 +277,16 @@ public class OneUiRecentsActivity extends Activity {
         mRecyclerView.requestApplyInsets();
 
         if (mStyle.dismissOnScrimTap()) {
-            findViewById(R.id.oneui_recents_root).setOnClickListener(v -> finish());
+            findViewById(R.id.oneui_recents_root).setOnClickListener(v -> closeRecents());
         }
+        // Back plays the style's exit too, as it did on the originals.
+        getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                OnBackInvokedDispatcher.PRIORITY_DEFAULT, this::closeRecents);
 
         final View clearAll = findViewById(R.id.oneui_recents_clear_all);
+        if (clearAll instanceof TextView) {
+            mStyle.styleClearAll((TextView) clearAll);
+        }
         if (clearAll != null) {
             clearAll.setOnClickListener(v -> {
                 mSource.dismissAll();
@@ -317,9 +354,51 @@ public class OneUiRecentsActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        // Coming back on screen (first show, or re-fronted after being stopped) gets the style's
+        // entrance; a resume while still showing (the second half of a double tap, a refresh)
+        // does not.
+        final boolean wasHidden = mStoppedAtElapsedRealtime >= mShownAtElapsedRealtime;
         mShownAtElapsedRealtime = SystemClock.elapsedRealtime();
+        mClosing = false;
         // Always refresh when shown, including when this singleInstance task is re-fronted.
         loadTasks();
+        if (wasHidden) {
+            scheduleEnterAnimation();
+        }
+    }
+
+    /** Runs {@link RecentsStyle#animateEnter} on the first frame that has cards laid out. */
+    private void scheduleEnterAnimation() {
+        final ViewTreeObserver vto = mRecyclerView.getViewTreeObserver();
+        vto.addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
+            @Override
+            public boolean onPreDraw() {
+                if (mRecyclerView.getChildCount() == 0 && !mSource.isEmpty()) {
+                    return true; // not laid out yet; wait for the frame that has cards
+                }
+                mRecyclerView.getViewTreeObserver().removeOnPreDrawListener(this);
+                if (mRecyclerView.getChildCount() > 0) {
+                    mStyle.animateEnter(mRecyclerView);
+                }
+                return true;
+            }
+        });
+    }
+
+    /** Back or a scrim tap: the style's exit if it has one, then finish without a window animation. */
+    private void closeRecents() {
+        if (mClosing || isFinishing()) {
+            return;
+        }
+        mClosing = true;
+        final Runnable finish = () -> {
+            finish();
+            overridePendingTransition(0, 0);
+        };
+        if (mRecyclerView.getVisibility() != View.VISIBLE
+                || !mStyle.animateExit(mRecyclerView, finish)) {
+            finish();
+        }
     }
 
     /**
@@ -420,6 +499,7 @@ public class OneUiRecentsActivity extends Activity {
     private void applyBackdrop(boolean blurEnabled) {
         final Window window = getWindow();
         final WindowManager.LayoutParams attrs = window.getAttributes();
+        blurEnabled = blurEnabled && mStyle.usesBackdropBlur();
         if (blurEnabled) {
             attrs.flags |= WindowManager.LayoutParams.FLAG_BLUR_BEHIND;
             attrs.setBlurBehindRadius(mBlurRadiusPx);
@@ -429,7 +509,9 @@ public class OneUiRecentsActivity extends Activity {
         }
         window.setAttributes(attrs);
         if (mRootView != null) {
-            mRootView.setBackgroundColor(blurEnabled ? SCRIM_WITH_BLUR : SCRIM_NO_BLUR);
+            final Integer styleScrim = mStyle.getScrimColor(blurEnabled);
+            mRootView.setBackgroundColor(styleScrim != null ? styleScrim
+                    : (blurEnabled ? SCRIM_WITH_BLUR : SCRIM_NO_BLUR));
         }
     }
 
