@@ -21,9 +21,15 @@ import android.animation.ObjectAnimator;
 import android.annotation.ColorInt;
 import android.content.Context;
 import android.content.res.Resources;
+import android.database.ContentObserver;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.drawable.Drawable;
+import android.net.Uri;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.UserHandle;
+import android.provider.Settings;
 import android.util.AttributeSet;
 import android.util.FloatProperty;
 import android.view.ContextThemeWrapper;
@@ -47,6 +53,24 @@ public class NavigationHandle extends View implements ButtonInterface {
     private final float mShrinkWidthForAnimation;
     private boolean mRequiresInvalidate;
     private boolean mShrink;
+
+    // IchthysOS: user styling of the gesture pill (Settings.System, observed live).
+    private static final String KEY_HANDLE_HIDE = "ichthys_nav_handle_hide";
+    private static final String KEY_HANDLE_WIDTH = "ichthys_nav_handle_width";
+    private static final String KEY_HANDLE_THICKNESS = "ichthys_nav_handle_thickness";
+    private static final String KEY_HANDLE_OPACITY = "ichthys_nav_handle_opacity";
+    private boolean mStyleHidden;
+    private float mStyleWidthScale = 1f;
+    private float mStyleThicknessScale = 1f;
+    private float mStyleOpacity = 1f;
+    private final ContentObserver mStyleObserver =
+            new ContentObserver(new Handler(Looper.getMainLooper())) {
+                @Override
+                public void onChange(boolean selfChange, Uri uri) {
+                    readStyle();
+                    invalidate();
+                }
+            };
 
     private ObjectAnimator mPulseAnimator = null;
     private float mPulseAnimationProgress;
@@ -91,6 +115,35 @@ public class NavigationHandle extends View implements ButtonInterface {
     }
 
     @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        for (String key : new String[] {KEY_HANDLE_HIDE, KEY_HANDLE_WIDTH, KEY_HANDLE_THICKNESS,
+                KEY_HANDLE_OPACITY}) {
+            getContext().getContentResolver().registerContentObserver(
+                    Settings.System.getUriFor(key), false, mStyleObserver, UserHandle.USER_ALL);
+        }
+        readStyle();
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        getContext().getContentResolver().unregisterContentObserver(mStyleObserver);
+        super.onDetachedFromWindow();
+    }
+
+    private void readStyle() {
+        final android.content.ContentResolver cr = getContext().getContentResolver();
+        mStyleHidden = Settings.System.getIntForUser(cr, KEY_HANDLE_HIDE, 0,
+                UserHandle.USER_CURRENT) != 0;
+        mStyleWidthScale = Math.max(30, Math.min(150, Settings.System.getIntForUser(cr,
+                KEY_HANDLE_WIDTH, 100, UserHandle.USER_CURRENT))) / 100f;
+        mStyleThicknessScale = Math.max(50, Math.min(250, Settings.System.getIntForUser(cr,
+                KEY_HANDLE_THICKNESS, 100, UserHandle.USER_CURRENT))) / 100f;
+        mStyleOpacity = Math.max(10, Math.min(100, Settings.System.getIntForUser(cr,
+                KEY_HANDLE_OPACITY, 100, UserHandle.USER_CURRENT))) / 100f;
+    }
+
+    @Override
     public void setAlpha(float alpha) {
         super.setAlpha(alpha);
         if (alpha > 0f && mRequiresInvalidate) {
@@ -115,12 +168,22 @@ public class NavigationHandle extends View implements ButtonInterface {
             additionalWidth = mAdditionalWidthForAnimation * mPulseAnimationProgress;
         }
 
-        float height = mRadius * 2 + additionalHeight;
-        float width = getWidth() + additionalWidth;
-        float x = -additionalWidth;
+        // IchthysOS: hidden pill (the gesture area still works), and width/thickness/opacity scales
+        // applied around the pill's centre.
+        if (mStyleHidden) {
+            return;
+        }
+        float height = mRadius * 2 * mStyleThicknessScale + additionalHeight;
+        float fullWidth = getWidth() + 2 * additionalWidth;
+        float styledWidth = fullWidth * mStyleWidthScale;
+        float x = -additionalWidth + (fullWidth - styledWidth) / 2f;
+        float width = x + styledWidth;
         float y = navHeight - mBottom - height + (additionalHeight / 2);
         float adjustedRadius = height / 2;
+        final int baseAlpha = mPaint.getAlpha();
+        mPaint.setAlpha(Math.round(baseAlpha * mStyleOpacity));
         canvas.drawRoundRect(x, y, width, y + height, adjustedRadius, adjustedRadius, mPaint);
+        mPaint.setAlpha(baseAlpha);
     }
 
     @Override
