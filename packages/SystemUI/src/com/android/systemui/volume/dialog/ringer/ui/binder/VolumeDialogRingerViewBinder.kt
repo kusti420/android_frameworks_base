@@ -680,7 +680,7 @@ private fun Context.isOneUiVolumeStyle(): Boolean {
         Settings.System.getIntForUser(
             contentResolver,
             "volume_panel_style",
-            0,
+            1,
             UserHandle.USER_CURRENT,
         )
     return style == 1

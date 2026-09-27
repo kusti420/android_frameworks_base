@@ -42,7 +42,7 @@ data class RingerButtonUiModel(
             Settings.System.getIntForUser(
                 contentResolver,
                 "volume_panel_style",
-                0,
+                1,
                 UserHandle.USER_CURRENT,
             ) == 1
 

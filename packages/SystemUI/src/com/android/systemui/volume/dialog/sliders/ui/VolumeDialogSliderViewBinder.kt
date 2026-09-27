@@ -138,7 +138,7 @@ private fun VolumeDialogSlider(
                 Settings.System.getIntForUser(
                     context.contentResolver,
                     "volume_panel_style",
-                    0,
+                    1,
                     UserHandle.USER_CURRENT,
                 ) == 1
         }
