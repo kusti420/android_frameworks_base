@@ -11463,6 +11463,8 @@ public final class ViewRootImpl implements ViewParent,
 
         @Override
         public void onInputEvent(InputEvent event) {
+            // IchthysOS: paste proof for the clipboard lockdown (tracker#31).
+            IchthysPasteInput.record(event);
             processRawInputEvent(event);
         }
 

@@ -162,4 +162,10 @@ public class FakeClipboardService extends IClipboard.Stub {
     public void setClipboardAccessNotificationsEnabledForUser(boolean enable, int userId) {
         throw new UnsupportedOperationException();
     }
+
+    @Override
+    public void notePasteInput(android.view.InputEvent event, String callingPackage, int userId,
+            int deviceId) {
+        // Fake clipboard has no read restrictions.
+    }
 }

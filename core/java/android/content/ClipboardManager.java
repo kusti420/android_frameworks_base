@@ -28,6 +28,8 @@ import android.os.Handler;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.ServiceManager.ServiceNotFoundException;
+import android.view.IchthysPasteInput;
+import android.view.InputEvent;
 
 import java.util.ArrayList;
 import java.util.Objects;
@@ -91,6 +93,9 @@ public class ClipboardManager extends android.text.ClipboardManager {
     private final Context mContext;
     private final Handler mHandler;
     private final IClipboard mService;
+
+    /** How old the user input backing a clipboard read may be (matches ClipboardService). */
+    private static final long PASTE_INPUT_MAX_AGE_MS = 2000;
 
     private final ArrayList<OnPrimaryClipChangedListener> mPrimaryClipChangedListeners
              = new ArrayList<OnPrimaryClipChangedListener>();
@@ -250,6 +255,7 @@ public class ClipboardManager extends android.text.ClipboardManager {
      */
     public @Nullable ClipData getPrimaryClip() {
         try {
+            notePasteInput();
             return mService.getPrimaryClip(
                     mContext.getOpPackageName(),
                     mContext.getAttributionTag(),
@@ -257,6 +263,25 @@ public class ClipboardManager extends android.text.ClipboardManager {
                     mContext.getDeviceId());
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * IchthysOS clipboard lockdown (kusti420/ichthysos-tracker#31): when the user has just
+     * tapped or pressed a key in this process (e.g. the Paste item of the text selection
+     * toolbar), hand that input event to ClipboardService. The service verifies its
+     * InputDispatcher signature and freshness and only then lets this app read the clip.
+     */
+    private void notePasteInput() throws RemoteException {
+        final InputEvent proof = IchthysPasteInput.getRecent(PASTE_INPUT_MAX_AGE_MS);
+        if (proof == null) {
+            return;
+        }
+        try {
+            mService.notePasteInput(proof, mContext.getOpPackageName(), mContext.getUserId(),
+                    mContext.getDeviceId());
+        } finally {
+            proof.recycle();
         }
     }
 

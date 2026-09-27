@@ -69,6 +69,7 @@ import android.content.pm.PackageManagerInternal;
 import android.content.pm.UserInfo;
 import android.graphics.drawable.Drawable;
 import android.hardware.display.DisplayManager;
+import android.hardware.input.InputManager;
 import android.net.Uri;
 import android.os.Binder;
 import android.os.Build;
@@ -101,6 +102,12 @@ import android.util.SparseArrayMap;
 import android.util.SparseBooleanArray;
 import android.util.SparseLongArray;
 import android.view.Display;
+import android.view.InputEvent;
+import android.view.KeyEvent;
+import android.view.MotionEvent;
+import android.view.VerifiedInputEvent;
+import android.view.VerifiedKeyEvent;
+import android.view.VerifiedMotionEvent;
 import android.view.autofill.AutofillManagerInternal;
 import android.view.textclassifier.TextClassificationContext;
 import android.view.textclassifier.TextClassificationManager;
@@ -205,6 +212,23 @@ public class ClipboardService extends SystemService {
     private int mMaxClassificationLength = DEFAULT_MAX_CLASSIFICATION_LENGTH;
 
     private final Object mLock = new Object();
+
+    // IchthysOS clipboard lockdown (kusti420/ichthysos-tracker#31). Apps may copy freely, but
+    // only the default IME, system UI, the app that owns the clip, allowlisted apps and apps
+    // that just received a verified user tap/keypress (e.g. on Paste) can read clip contents.
+    /** Settings.Global: 1 (default) = lockdown on, 0 = stock Android rules. */
+    private static final String ICHTHYS_LOCKDOWN = "ichthys_clipboard_lockdown";
+    /** Settings.Secure (per user): comma-separated packages exempt from the lockdown (Guard). */
+    private static final String ICHTHYS_ALLOWED_PKGS = "ichthys_clipboard_allowed_pkgs";
+    /** Settings.Global: auto-clear minutes while locked down; 0 = platform default (1 h). */
+    private static final String ICHTHYS_CLEAR_MINUTES = "ichthys_clipboard_clear_minutes";
+    private static final int ICHTHYS_DEFAULT_CLEAR_MINUTES = 5;
+    /** Max age of the user input backing a read, and how long the resulting grant lasts. */
+    private static final long ICHTHYS_PASTE_INPUT_MAX_AGE_MS = 2000;
+    private static final long ICHTHYS_PASTE_GRANT_MS = 2000;
+    /** uid -> SystemClock.uptimeMillis() until which it may read after a verified input. */
+    @GuardedBy("mLock")
+    private final SparseLongArray mIchthysPasteGrantUntil = new SparseLongArray();
 
     /**
      * Instantiates the clipboard.
@@ -645,9 +669,16 @@ public class ClipboardService extends SystemService {
         }
 
         private long getTimeoutForAutoClear() {
-            return DeviceConfig.getLong(DeviceConfig.NAMESPACE_CLIPBOARD,
+            final long platform = DeviceConfig.getLong(DeviceConfig.NAMESPACE_CLIPBOARD,
                     PROPERTY_AUTO_CLEAR_TIMEOUT,
                     DEFAULT_CLIPBOARD_TIMEOUT_MILLIS);
+            // IchthysOS: under the lockdown clips don't linger for an hour.
+            if (!ichthysLockdownEnabled()) {
+                return platform;
+            }
+            final int minutes = Settings.Global.getInt(getContext().getContentResolver(),
+                    ICHTHYS_CLEAR_MINUTES, ICHTHYS_DEFAULT_CLEAR_MINUTES);
+            return minutes > 0 ? Math.min(platform, TimeUnit.MINUTES.toMillis(minutes)) : platform;
         }
 
         @Override
@@ -673,6 +704,52 @@ public class ClipboardService extends SystemService {
         }
 
         @Override
+        public void notePasteInput(
+                InputEvent event, String callingPackage, @UserIdInt int userId, int deviceId) {
+            if (event == null) {
+                return;
+            }
+            final int intendingUid = getIntendingUid(callingPackage, userId);
+            mAppOps.checkPackage(intendingUid, callingPackage);
+            final int intendingDeviceId = getIntendingDeviceId(deviceId, intendingUid);
+            // Only the focused app can turn its own input into a paste grant.
+            if (!isDefaultDeviceAndUidFocused(intendingDeviceId, intendingUid)
+                    && !isVirtualDeviceAndUidFocused(intendingDeviceId, intendingUid)) {
+                return;
+            }
+            final VerifiedInputEvent verified;
+            final long ident = Binder.clearCallingIdentity();
+            try {
+                final InputManager im = getContext().getSystemService(InputManager.class);
+                verified = im == null ? null : im.verifyInputEvent(event);
+            } finally {
+                Binder.restoreCallingIdentity(ident);
+            }
+            if (verified == null) {
+                Slog.w(TAG, "notePasteInput: unverifiable input event from " + callingPackage);
+                return;
+            }
+            final long ageNanos = SystemClock.uptimeNanos() - verified.getEventTimeNanos();
+            if (ageNanos < 0 || ageNanos
+                    > TimeUnit.MILLISECONDS.toNanos(ICHTHYS_PASTE_INPUT_MAX_AGE_MS)) {
+                return;
+            }
+            if (verified instanceof VerifiedMotionEvent
+                    && ((VerifiedMotionEvent) verified).getActionMasked()
+                            != MotionEvent.ACTION_UP) {
+                return;
+            }
+            if (verified instanceof VerifiedKeyEvent
+                    && ((VerifiedKeyEvent) verified).getAction() != KeyEvent.ACTION_DOWN) {
+                return;
+            }
+            synchronized (mLock) {
+                mIchthysPasteGrantUntil.put(intendingUid,
+                        SystemClock.uptimeMillis() + ICHTHYS_PASTE_GRANT_MS);
+            }
+        }
+
+        @Override
         public ClipData getPrimaryClip(
                 String pkg, String attributionTag, @UserIdInt int userId, int deviceId) {
             final int intendingUid = getIntendingUid(pkg, userId);
@@ -688,7 +765,15 @@ public class ClipboardService extends SystemService {
                     || isDeviceLocked(intendingUserId, deviceId)) {
                 return null;
             }
+            final boolean needsPasteProof =
+                    ichthysNeedsPasteProof(pkg, intendingUid, intendingUserId);
             synchronized (mLock) {
+                if (needsPasteProof && !ichthysMayReadLocked(
+                        intendingUid, getClipboardLocked(intendingUserId, intendingDeviceId))) {
+                    Slog.i(TAG, "Clipboard lockdown: " + pkg
+                            + " read the clipboard without a user paste action; returned empty");
+                    return null;
+                }
                 try {
                     addActiveOwnerLocked(intendingUid, intendingDeviceId, pkg);
                 } catch (SecurityException e) {
@@ -731,10 +816,20 @@ public class ClipboardService extends SystemService {
                     || isDeviceLocked(intendingUserId, deviceId)) {
                 return null;
             }
+            final boolean needsPasteProof =
+                    ichthysNeedsPasteProof(callingPackage, intendingUid, intendingUserId);
             synchronized (mLock) {
                 Clipboard clipboard = getClipboardLocked(intendingUserId, intendingDeviceId);
-                return (clipboard != null && clipboard.primaryClip != null)
-                        ? clipboard.primaryClip.getDescription() : null;
+                if (clipboard == null || clipboard.primaryClip == null) {
+                    return null;
+                }
+                final ClipDescription description = clipboard.primaryClip.getDescription();
+                if (needsPasteProof && !ichthysMayReadLocked(intendingUid, clipboard)) {
+                    // IchthysOS: enough to decide whether to offer Paste (MIME types), but not
+                    // the label/extras the copying app attached.
+                    return new ClipDescription("", description.filterMimeTypes("*/*"));
+                }
+                return description;
             }
         }
 
@@ -1461,6 +1556,69 @@ public class ClipboardService extends SystemService {
         int topFocusedDisplayId = mWm.getTopFocusedDisplayId();
         int focusedDeviceId = mVdm.getDeviceIdForDisplayId(topFocusedDisplayId);
         return (focusedDeviceId == intendingDeviceId) && mWm.isUidFocused(uid);
+    }
+
+    private boolean ichthysLockdownEnabled() {
+        final long ident = Binder.clearCallingIdentity();
+        try {
+            return Settings.Global.getInt(getContext().getContentResolver(),
+                    ICHTHYS_LOCKDOWN, 1) != 0;
+        } finally {
+            Binder.restoreCallingIdentity(ident);
+        }
+    }
+
+    /**
+     * Whether a read of the clip contents by {@code callingPackage} must be backed by a paste
+     * grant (or be the clip's own app). False for the stock rules and for exempt callers.
+     */
+    private boolean ichthysNeedsPasteProof(String callingPackage, int uid,
+            @UserIdInt int userId) {
+        if (!ichthysLockdownEnabled()) {
+            return false;
+        }
+        // System uids (system_server, shell for testing, ...).
+        if (UserHandle.getAppId(uid) < Process.FIRST_APPLICATION_UID) {
+            return false;
+        }
+        final long ident = Binder.clearCallingIdentity();
+        try {
+            // SystemUI (clipboard overlay / editor) and other trusted system windows.
+            if (mPm.checkPermission(Manifest.permission.INTERNAL_SYSTEM_WINDOW, callingPackage)
+                    == PackageManager.PERMISSION_GRANTED
+                    || mPm.checkPermission(
+                            android.Manifest.permission.READ_CLIPBOARD_IN_BACKGROUND,
+                            callingPackage) == PackageManager.PERMISSION_GRANTED) {
+                return false;
+            }
+            // The keyboard is how the user pastes (it reads and commits the text).
+            if (isDefaultIme(userId, callingPackage)) {
+                return false;
+            }
+            final String allowed = Settings.Secure.getStringForUser(
+                    getContext().getContentResolver(), ICHTHYS_ALLOWED_PKGS, userId);
+            if (!TextUtils.isEmpty(allowed)) {
+                for (String pkg : allowed.split(",")) {
+                    if (pkg.trim().equals(callingPackage)) {
+                        return false;
+                    }
+                }
+            }
+        } finally {
+            Binder.restoreCallingIdentity(ident);
+        }
+        return true;
+    }
+
+    /** An app may read its own clip, or while a verified paste grant is live. */
+    @GuardedBy("mLock")
+    private boolean ichthysMayReadLocked(int uid, @Nullable Clipboard clipboard) {
+        if (clipboard != null && clipboard.primaryClip != null
+                && UserHandle.isSameApp(getPccAwareUid(uid),
+                        getPccAwareUid(clipboard.primaryClipUid))) {
+            return true;
+        }
+        return SystemClock.uptimeMillis() <= mIchthysPasteGrantUntil.get(uid, 0);
     }
 
     private boolean isDefaultIme(int userId, String packageName) {

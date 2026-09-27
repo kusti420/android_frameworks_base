@@ -19,6 +19,7 @@ package android.content;
 import android.content.ClipData;
 import android.content.ClipDescription;
 import android.content.IOnPrimaryClipChangedListener;
+import android.view.InputEvent;
 
 /**
  * Programming interface to the clipboard, which allows copying and pasting
@@ -54,4 +55,10 @@ interface IClipboard {
     boolean areClipboardAccessNotificationsEnabledForUser(int userId);
 
     void setClipboardAccessNotificationsEnabledForUser(boolean enable, int userId);
+
+    /**
+     * IchthysOS: proof that the caller's next clipboard read follows a genuine user action
+     * (a verified pointer-up or key-down its windows just received).
+     */
+    void notePasteInput(in InputEvent event, String callingPackage, int userId, int deviceId);
 }
