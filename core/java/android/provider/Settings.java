@@ -14837,11 +14837,12 @@ public final class Settings {
         // ===== End Custom Options keys =====
 
         /**
-         * IchthysOS: global contacts lockdown (0/1, default 0). When 1, the CONTACTS permission
-         * group is withheld from every app except the current dialer and SMS role holders and the
-         * packages that own the contacts database — requests are refused without a dialog and
-         * existing grants are swept away. Global rather than Secure because it is one switch for
-         * the whole device rather than a per-profile preference.
+         * IchthysOS: global contacts lockdown (0/1; unset counts as 1). When on, the CONTACTS
+         * permission group is withheld from every app except the current dialer and SMS role
+         * holders, the contacts app, the packages that own the contacts database, and anything
+         * the user listed in Secure {@code ichthys_contacts_allowed_pkgs} — requests are refused
+         * without a dialog and existing grants are swept away. Global rather than Secure because
+         * it is one switch for the whole device rather than a per-profile preference.
          *
          * <p>PermissionController and crDroidSettings repeat this string literally; they build
          * against the SDK and cannot see a hidden constant.

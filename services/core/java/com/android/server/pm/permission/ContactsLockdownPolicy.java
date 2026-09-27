@@ -44,9 +44,15 @@ import java.util.Set;
  * own "Allow" button and the per-app permission screen in Settings — is refused while the lockdown
  * is on. Nothing outside system_server can reach around it.
  *
- * <p>The allowlist is resolved from <em>roles</em> rather than hardcoded package names so it
- * follows whatever the user picked as their phone and messaging apps, plus the packages that own
- * the contacts database itself. Keep it in sync with
+ * <p><b>On unless switched off.</b> An unset {@link Settings.Global#CONTACTS_LOCKDOWN} means locked
+ * down: the owner's rule is that no app besides the phone, contacts and messaging apps ever sees
+ * contacts, so a fresh install starts locked rather than waiting for a toggle.
+ *
+ * <p>The allowlist is resolved from <em>roles</em> for the phone and messaging apps, so it follows
+ * whatever the user picked, plus the contacts app (which holds no role) and the packages that own
+ * the contacts database itself. Packages listed in the per-user {@link Settings.Secure} key
+ * {@link #ALLOWED_PACKAGES_SETTING} are allowed too: that is the hook Ichthys Guard uses for
+ * explicit per-app exceptions, and it is empty by default. Keep it in sync with
  * {@code com.android.permissioncontroller.permission.utils.ContactsLockdown}, which cannot share
  * code with this class because it ships in the permission APEX.
  *
@@ -75,20 +81,29 @@ public final class ContactsLockdownPolicy {
                             // all still gets the single contact the user deliberately chose.
                             "com.android.contactspicker",
                             "com.android.server.telecom",
-                            // Calendar. Not a data owner — an explicit user exemption for attendee
-                            // lookup and calendar account listing.
-                            "org.lineageos.etar"));
+                            // The contacts app. It holds no role, so it has to be named.
+                            "org.fossify.contacts"));
+
+    /**
+     * Per-user {@link Settings.Secure} key: comma-separated packages the user explicitly allowed
+     * contacts access despite the lockdown. Written by Ichthys Guard; empty by default. Keep in sync
+     * with {@code ContactsLockdown.ALLOWED_PACKAGES_SETTING} in PermissionController.
+     */
+    public static final String ALLOWED_PACKAGES_SETTING = "ichthys_contacts_allowed_pkgs";
 
     private ContactsLockdownPolicy() {}
 
-    /** Whether the lockdown is switched on. Global, so one switch covers every user. */
+    /**
+     * Whether the lockdown is switched on. Global, so one switch covers every user. Unset counts as
+     * on.
+     */
     public static boolean isEnabled(Context context) {
         if (context == null) {
             return false;
         }
         try {
             return Settings.Global.getInt(
-                            context.getContentResolver(), Settings.Global.CONTACTS_LOCKDOWN, 0)
+                            context.getContentResolver(), Settings.Global.CONTACTS_LOCKDOWN, 1)
                     == 1;
         } catch (RuntimeException e) {
             Slog.w(LOG_TAG, "Failed to read " + Settings.Global.CONTACTS_LOCKDOWN, e);
@@ -129,7 +144,8 @@ public final class ContactsLockdownPolicy {
         if (appId < Process.FIRST_APPLICATION_UID) {
             return false;
         }
-        if (ALWAYS_ALLOWED_PACKAGES.contains(packageName)) {
+        if (ALWAYS_ALLOWED_PACKAGES.contains(packageName)
+                || isUserAllowed(context, packageName, userId)) {
             return false;
         }
 
@@ -165,6 +181,30 @@ public final class ContactsLockdownPolicy {
             return false;
         }
         return true;
+    }
+
+    /**
+     * Whether the user explicitly exempted {@code packageName} for {@code userId}, see
+     * {@link #ALLOWED_PACKAGES_SETTING}.
+     */
+    private static boolean isUserAllowed(Context context, String packageName, int userId) {
+        final String allowed;
+        try {
+            allowed = Settings.Secure.getStringForUser(
+                    context.getContentResolver(), ALLOWED_PACKAGES_SETTING, userId);
+        } catch (RuntimeException e) {
+            Slog.w(LOG_TAG, "Failed to read " + ALLOWED_PACKAGES_SETTING, e);
+            return false;
+        }
+        if (TextUtils.isEmpty(allowed)) {
+            return false;
+        }
+        for (String pkg : allowed.split(",")) {
+            if (packageName.equals(pkg.trim())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
