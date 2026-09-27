@@ -42,6 +42,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon as M3Icon
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -66,8 +67,10 @@ import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.android.internal.R as internalR
 import com.android.settingslib.R as SettingsR
 import com.android.systemui.common.ui.compose.Icon
@@ -326,6 +329,15 @@ fun OneUiVolumeSlider(
             if (!expanded) {
                 OneUiMoreGlyph(color = colors.glyph)
             }
+            // IchthysOS: the current volume step, under the "more" glyph (owner request; stock
+            // One UI 6 shows none).
+            OneUiStepNumber(
+                step = state.value.roundToInt(),
+                color = colors.glyph,
+                topInset =
+                    if (expanded) OneUiVolumeSpecs.glyphInset
+                    else OneUiVolumeSpecs.glyphInset + OneUiVolumeSpecs.glyphSize,
+            )
             OneUiBottomIcon(state = state, iconSize = iconSize, contentColor = colors.glyph)
         }
     }
@@ -353,6 +365,18 @@ private fun BoxScope.OneUiMoreGlyph(color: Color) {
             }
         }
     }
+}
+
+/** IchthysOS: the numeric volume step, centred near the top of the pill. */
+@Composable
+private fun BoxScope.OneUiStepNumber(step: Int, color: Color, topInset: Dp) {
+    Text(
+        text = step.toString(),
+        color = color,
+        fontSize = 13.sp,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.align(Alignment.TopCenter).padding(top = topInset),
+    )
 }
 
 /** The stream icon inside the bottom of the pill: a 28 dp glyph 4 dp above the pill bottom. */
