@@ -74,7 +74,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : View(context, attrs
 
     protected var primary: Int = Color.WHITE
     protected var accent: Int = context.getColor(android.R.color.system_accent1_100)
-    protected var dozing = false
+    protected var dozingNow = false
     protected var showDate = true
     protected var dotShape = IchthysClockFace.DOT_ROUND
     protected var showUnlit = true
@@ -110,8 +110,8 @@ constructor(context: Context, attrs: AttributeSet? = null) : View(context, attrs
     }
 
     override fun setDozing(dozing: Boolean) {
-        if (this.dozing == dozing) return
-        this.dozing = dozing
+        if (this.dozingNow == dozing) return
+        this.dozingNow = dozing
         invalidate()
     }
 
@@ -281,7 +281,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
                     val cy = top + row * rowPitch
                     if (DotFont.lit(d, row, col)) {
                         drawDot(canvas, cx, cy, r, ink)
-                    } else if (showUnlit && !dozing) {
+                    } else if (showUnlit && !dozingNow) {
                         drawDot(canvas, cx, cy, r * 0.8f, withAlpha(primary, 0.10f))
                     }
                 }
@@ -319,7 +319,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
                     val cy = y0 + row * pitch
                     if (DotFont.lit(d, row, col)) {
                         drawDot(canvas, cx, cy, r, if (li == 0) primary else accent)
-                    } else if (showUnlit && !dozing) {
+                    } else if (showUnlit && !dozingNow) {
                         drawDot(canvas, cx, cy, r * 0.55f, withAlpha(primary, 0.12f))
                     }
                 }
@@ -355,7 +355,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
                 val ink = if (c < 2) accent else primary
                 if (on) {
                     drawDot(canvas, cx, cy, r, ink)
-                } else if (!dozing) {
+                } else if (!dozingNow) {
                     paint.style = Paint.Style.STROKE
                     paint.strokeWidth = dp(1.5f)
                     paint.color = withAlpha(primary, if (showUnlit) 0.35f else 0f)
@@ -389,7 +389,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         paint.style = Paint.Style.STROKE
         paint.strokeCap = Paint.Cap.ROUND
         paint.strokeWidth = stroke
-        paint.color = withAlpha(primary, if (dozing) 0.12f else 0.18f)
+        paint.color = withAlpha(primary, if (dozingNow) 0.12f else 0.18f)
         canvas.drawOval(oval, paint)
         paint.color = accent
         canvas.drawArc(oval, -90f, 360f * minute() / 60f, false, paint)
@@ -424,7 +424,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         canvas.drawLine(cx - rad, cy, cx + rad, cy, paint)
         canvas.drawLine(cx, cy - rad, cx, cy + rad, paint)
         val sweep = 360f * minute() / 60f
-        if (!dozing && sweep > 0f) {
+        if (!dozingNow && sweep > 0f) {
             // Sweep fading in towards the current minute.
             val grad =
                 SweepGradient(cx, cy, intArrayOf(Color.TRANSPARENT, withAlpha(accent, 0.55f)),
@@ -447,7 +447,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         val hourAngle = Math.toRadians((360.0 * ((hour24() % 12) + minute() / 60.0) / 12.0) - 90.0)
         val bx = cx + (rad * 0.6f * cos(hourAngle)).toFloat()
         val by = cy + (rad * 0.6f * sin(hourAngle)).toFloat()
-        if (!dozing) drawDot(canvas, bx, by, dp(12f), withAlpha(primary, 0.18f))
+        if (!dozingNow) drawDot(canvas, bx, by, dp(12f), withAlpha(primary, 0.18f))
         drawDot(canvas, bx, by, dp(6f), primary)
         drawCentered(canvas, hhmm(), cx, cy + rad - sp(6f), sp(18f), primary)
     }
@@ -475,7 +475,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         for ((radius, frac, ink) in
             listOf(Triple(outer, hourFrac, accent), Triple(inner, minFrac, primary))) {
             oval.set(cx - radius, cy - radius, cx + radius, cy + radius)
-            if (!dozing) {
+            if (!dozingNow) {
                 paint.color = withAlpha(primary, 0.12f)
                 canvas.drawOval(oval, paint)
             }
@@ -592,7 +592,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         textPaint.textAlign = Paint.Align.CENTER
         for (r in 0 until 10) for (c in 0 until 11) {
             val on = lit[r][c]
-            if (!on && (dozing || !showUnlit)) continue
+            if (!on && (dozingNow || !showUnlit)) continue
             val inHour = r == hourWord.row && c >= hourWord.col && c < hourWord.col + hourWord.len
             textPaint.color =
                 if (!on) withAlpha(primary, 0.16f) else if (inHour) accent else primary
@@ -603,7 +603,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         val extra = minute() % 5
         for (i in 0 until 4) {
             val on = i < extra
-            if (!on && dozing) continue
+            if (!on && dozingNow) continue
             drawDot(canvas, width / 2f + (i - 1.5f) * dp(14f), height - dp(6f), dp(3f),
                 if (on) accent else withAlpha(primary, 0.2f))
         }
