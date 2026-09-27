@@ -3746,6 +3746,16 @@ public final class SystemServer implements Dumpable {
         }
         t.traceEnd();
 
+        // IchthysOS: Backstage, user-chosen apps kept "in the foreground" on a private hidden
+        // display (kusti420/ichthysos-tracker#38). Idle until the user sends an app there.
+        t.traceBegin("StartIchthysBackstageService");
+        try {
+            new com.android.server.IchthysBackstageService(mSystemContext).onBootPhaseReady();
+        } catch (Throwable e) {
+            reportWtf("starting IchthysBackstageService", e);
+        }
+        t.traceEnd();
+
         t.traceBegin("StartSystemUI");
         try {
             startSystemUi(context, windowManagerF);
