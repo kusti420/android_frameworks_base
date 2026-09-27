@@ -64,7 +64,7 @@ import java.util.Map;
 public final class NetworkDecoyController {
     private static final String TAG = "NetworkDecoy";
 
-    /** Global setting, default on. 0 disables every advertisement below. */
+    /** Global setting, default off. 1 enables the advertisements below. */
     private static final String KEY_ENABLED = "network_decoy_enabled";
 
     /** Re-arm delay after mDNS registration fails (the advertiser is usually just not up yet). */
@@ -171,7 +171,9 @@ public final class NetworkDecoyController {
     }
 
     private boolean isEnabled() {
-        return Settings.Global.getInt(mContext.getContentResolver(), KEY_ENABLED, 1) != 0;
+        // Off unless the user turns it on: fake mDNS services make the phone easier to spot and
+        // fingerprint on shared networks. (kusti420/ichthysos-tracker#16)
+        return Settings.Global.getInt(mContext.getContentResolver(), KEY_ENABLED, 0) != 0;
     }
 
     /** Idempotent: publishes every decoy that is not already live. */

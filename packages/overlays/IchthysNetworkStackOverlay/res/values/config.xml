@@ -26,10 +26,11 @@
         <item>https://grapheneos.online/generate_204</item>
     </string-array>
 
-    <!-- Send the hostname (DHCP option 12) so the lease shows up named in a router's client
-         list. LineageOS' NetworkStackOverlay already sets this; repeated here so the ROM does
-         not depend on vendor/lineage being in the tree. -->
-    <bool name="config_dhcp_client_hostname">true</bool>
+    <!-- IchthysOS: do NOT send a hostname (DHCP option 12). A stable, unique name sent on every
+         network links the phone across networks and defeats per-network MAC randomization.
+         The preferred-props list below is kept so the name can be turned back on here.
+         (kusti420/ichthysos-tracker#16) -->
+    <bool name="config_dhcp_client_hostname">false</bool>
 
     <!-- Take the hostname from a property instead of Settings.Global.DEVICE_NAME, so only the
          LAN sees the joke and Bluetooth / Wi-Fi Direct / Settings > About keep the real device
