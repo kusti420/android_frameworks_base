@@ -109,6 +109,7 @@ import android.os.ParcelableException;
 import android.os.PatternMatcher;
 import android.os.Process;
 import android.os.Trace;
+import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.os.storage.StorageManager;
@@ -164,6 +165,7 @@ import com.android.server.utils.WatchedSparseIntArray;
 import com.android.server.wm.ActivityTaskManagerInternal;
 
 import libcore.util.EmptyArray;
+import libcore.util.HexEncoding;
 
 import java.io.BufferedOutputStream;
 import java.io.FileDescriptor;
@@ -620,6 +622,14 @@ public class ComputerEngine implements Computer {
             // We also have to ensure all components match the original intent
             args.intent = originalIntent;
             SaferIntentUtils.enforceIntentFilterMatching(args, list);
+        }
+
+        if (intent.isImplicitImageCaptureIntent()
+                && !isPersistentPreferredActivitySetByDpm(intent, userId, resolvedType, flags)) {
+            final String trustedCamera = getIchthysTrustedCamera(userId);
+            if (trustedCamera != null) {
+                list = filterIchthysCameraCandidates(list, trustedCamera);
+            }
         }
 
         return skipPostResolution ? list : applyPostResolutionFilter(
@@ -2373,7 +2383,49 @@ public class ComputerEngine implements Computer {
     public final boolean isImplicitImageCaptureIntentAndNotSetByDpc(Intent intent,
             int userId, String resolvedType, @PackageManager.ResolveInfoFlagsBits long flags) {
         return intent.isImplicitImageCaptureIntent() && !isPersistentPreferredActivitySetByDpm(
-                intent, userId, resolvedType, flags);
+                intent, userId, resolvedType, flags)
+                // IchthysOS: with the trusted camera installed, the system-only restriction is
+                // applied as a post-filter in queryIntentActivitiesInternal instead.
+                && getIchthysTrustedCamera(userId) == null;
+    }
+
+    /**
+     * IchthysOS: the one non-system camera app that may answer implicit IMAGE_CAPTURE /
+     * VIDEO_CAPTURE intents next to system cameras. Configured as "package:certSha256" in
+     * {@code ro.ichthys.trusted_camera} (LMC 8.8 is installed as a user app at first boot because
+     * its compressed native libs can't ship in /product). The certificate is pinned so another app
+     * can't claim the package name.
+     *
+     * @return the package name if it's installed for {@code userId} with the pinned certificate
+     */
+    @Nullable
+    private String getIchthysTrustedCamera(int userId) {
+        final String spec = SystemProperties.get("ro.ichthys.trusted_camera", "");
+        final int sep = spec.indexOf(':');
+        if (sep <= 0) return null;
+        final String pkg = spec.substring(0, sep);
+        final PackageStateInternal ps = getPackageStateInternal(pkg);
+        if (ps == null || !ps.getUserStateOrDefault(userId).isInstalled()) return null;
+        try {
+            final byte[] cert = HexEncoding.decode(spec.substring(sep + 1));
+            return ps.getSigningDetails().hasSha256Certificate(cert) ? pkg : null;
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    /** IchthysOS: system cameras plus the trusted camera, like MATCH_SYSTEM_ONLY otherwise. */
+    private List<ResolveInfo> filterIchthysCameraCandidates(List<ResolveInfo> list,
+            String trustedCamera) {
+        final List<ResolveInfo> out = new ArrayList<>(list.size());
+        for (ResolveInfo ri : list) {
+            final ActivityInfo ai = ri.activityInfo;
+            if (ai == null) continue;
+            if (ai.applicationInfo.isSystemApp() || trustedCamera.equals(ai.packageName)) {
+                out.add(ri);
+            }
+        }
+        return out;
     }
 
     public final boolean isInstantApp(String packageName, int userId) {
