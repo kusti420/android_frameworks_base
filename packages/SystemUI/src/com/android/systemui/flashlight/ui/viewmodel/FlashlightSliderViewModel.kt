@@ -60,6 +60,11 @@ constructor(
         setFlashlightLevel(value, false)
     }
 
+    /** IchthysOS: dialog switch. Turning on uses the last level the user picked. */
+    fun setFlashlightEnabled(enabled: Boolean) {
+        flashlightInteractor.setEnabled(enabled)
+    }
+
     fun setFlashlightLevelTemporary(value: Int) {
         setFlashlightLevel(value, true)
     }

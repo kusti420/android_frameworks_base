@@ -27,7 +27,6 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import com.android.compose.PlatformButton
-import com.android.compose.PlatformOutlinedButton
 import com.android.compose.dialog.AlertDialogContent
 import com.android.internal.jank.InteractionJankMonitor
 import com.android.systemui.animation.DialogCuj
@@ -121,17 +120,6 @@ constructor(
                     Text(stringResource(R.string.quick_settings_done))
                 }
             },
-            neutralButton = {
-                PlatformOutlinedButton(
-                    modifier = Modifier.testTag(FLASHLIGHT_OFF_TAG),
-                    onClick = {
-                        flashlightSliderViewModel.setFlashlightLevel(0)
-                        dialog.dismiss()
-                    },
-                ) {
-                    Text(stringResource(R.string.flashlight_dialog_turn_off))
-                }
-            },
             contentTopPadding = 12.dp,
             contentBottomPadding = 8.dp,
         )
@@ -174,6 +162,5 @@ constructor(
         private const val INTERACTION_JANK_TAG = "flashlight"
         private const val FLASHLIGHT_TITLE_TAG = "flashlight_title"
         private const val FLASHLIGHT_DONE_TAG = "flashlight_done"
-        private const val FLASHLIGHT_OFF_TAG = "flashlight_off"
     }
 }

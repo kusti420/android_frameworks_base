@@ -47,14 +47,12 @@ import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -120,12 +118,9 @@ constructor(
 
     private var _deviceSupportsFlashlight = false
 
+    // IchthysOS: the level the torch turns on at, per user. Backed by Settings.Secure
+    // [TORCH_LEVEL_SETTING] so it survives reboots.
     private val defaultEnabledLevelForUser = ConcurrentHashMap<Int, Int>()
-
-    // IchthysOS: Samsung devices toggle flash through a vendor HAL triggered by
-    // Settings.Secure.FLASHLIGHT_ENABLED. Camera2 TorchCallback doesn't fire when
-    // the flash is toggled this way, so we need a manual state injection path.
-    private val _samsungFallbackState = MutableSharedFlow<FlashlightModel>(extraBufferCapacity = 1)
 
     override fun start() {
         if (FlashlightStrength.isUnexpectedlyInLegacyMode()) {
@@ -216,7 +211,10 @@ constructor(
                 val default: Int? = cc.get(CameraCharacteristics.FLASH_INFO_STRENGTH_DEFAULT_LEVEL)
                 val max: Int? = cc.get(CameraCharacteristics.FLASH_INFO_STRENGTH_MAXIMUM_LEVEL)
                 if (default != null) {
-                    defaultEnabledLevelForUser[currentUserId] = default
+                    // IchthysOS: start from the user's last level if it's still in range
+                    val saved = secureSettings.getInt(TORCH_LEVEL_SETTING, -1)
+                    defaultEnabledLevelForUser[currentUserId] =
+                        if (max != null && saved in BASE_TORCH_LEVEL..max) saved else default
                 }
                 flashlightInfo.emit(FlashlightInfo.Supported.LoadedSuccessfully(id, default, max))
             }
@@ -229,8 +227,7 @@ constructor(
      *
      * TODO(B/412982015) try to reconnect on new subscriptions
      */
-    // IchthysOS: merge Camera2 TorchCallback flow with Samsung fallback flow
-    private val _state: Flow<FlashlightModel> = merge(conflatedCallbackFlow {
+    private val _state: Flow<FlashlightModel> = conflatedCallbackFlow {
         val callbackFromSystem =
             object : TorchCallback() {
                 override fun onTorchModeUnavailable(camId: String) {
@@ -306,7 +303,7 @@ constructor(
 
         cameraManager.registerTorchCallback(bgDispatcher.asExecutor(), callbackFromSystem)
         awaitClose { cameraManager.unregisterTorchCallback(callbackFromSystem) }
-    }, _samsungFallbackState) // IchthysOS: merged with Samsung fallback
+    }
 
     /**
      * When flashlight is temporarily unavailable, we wait for it to to become available and then we
@@ -386,32 +383,20 @@ constructor(
             try {
                 if (enabled != currentState.enabled) {
                     if (currentFlashlightInfo.hasAdjustableLevels && enabled) {
-                        // IchthysOS: always turn on at max brightness
+                        // IchthysOS: turn on at the user's remembered level
                         cameraManager.turnOnTorchWithStrengthLevel(
                             currentFlashlightInfo.cameraId,
-                            currentFlashlightInfo.maxLevel!!,
+                            defaultEnabledLevelForUser.getOrPut(currentUserId) {
+                                initialDefaultLevel
+                            },
                         )
                     } else {
                         cameraManager.setTorchMode(currentFlashlightInfo.cameraId, enabled)
                     }
-                    // IchthysOS: Samsung fallback — write Settings to trigger FlashControlSVC
-                    // which toggles flash via Samsung's vendor HAL. Also emit manual state
-                    // since Camera2 TorchCallback may not fire on Samsung devices.
-                    secureSettings.setInt(Settings.Secure.FLASHLIGHT_ENABLED, if (enabled) 1 else 0)
-                    _samsungFallbackState.tryEmit(
-                        FlashlightModel.Available.Binary(enabled)
-                    )
                 }
             } catch (e: CameraAccessException) {
                 e.printStackTrace()
                 logger.w("Error trying to setEnabled to $enabled: ${e.message}")
-                // IchthysOS: even if Camera2 fails, try the Samsung Settings path
-                try {
-                    secureSettings.setInt(Settings.Secure.FLASHLIGHT_ENABLED, if (enabled) 1 else 0)
-                    _samsungFallbackState.tryEmit(
-                        FlashlightModel.Available.Binary(enabled)
-                    )
-                } catch (ignored: Exception) {}
             }
         }
     }
@@ -444,6 +429,7 @@ constructor(
                 }
                 if (persist) {
                     defaultEnabledLevelForUser[currentUserId] = level
+                    secureSettings.setInt(TORCH_LEVEL_SETTING, level)
                 }
             } catch (e: CameraAccessException) {
                 e.printStackTrace()
@@ -476,6 +462,7 @@ constructor(
 
     private companion object {
         private const val BASE_TORCH_LEVEL = 1
+        private const val TORCH_LEVEL_SETTING = "ichthys_torch_level"
         private val RECONNECT_COOLDOWN = 30.seconds
         private val RECONNECT_TIMEOUT = 2.seconds
     }
