@@ -26,6 +26,7 @@ import android.util.DisplayMetrics;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageView;
+import android.widget.TextView;
 
 import androidx.recyclerview.widget.ItemTouchHelper;
 import androidx.recyclerview.widget.LinearLayoutManager;
@@ -355,5 +356,23 @@ public class ListStyle implements RecentsStyle {
                 RecyclerView.State state) {
             outRect.bottom = mGapPx;
         }
+    }
+
+    // --- One UI Home chrome and motion (OneUiChrome, SPEC_RECENTS.md Part 2).
+
+    @Override
+    public void styleClearAll(TextView clearAll) {
+        OneUiChrome.styleClearAll(clearAll);
+    }
+
+    @Override
+    public void animateEnter(RecyclerView recyclerView) {
+        OneUiChrome.enterVertical(recyclerView);
+    }
+
+    /** One UI dismisses on a fling of 2000 px/s or more. */
+    @Override
+    public float getSwipeEscapeVelocity(float defaultValue) {
+        return OneUiChrome.SWIPE_ESCAPE_PX_PER_S;
     }
 }

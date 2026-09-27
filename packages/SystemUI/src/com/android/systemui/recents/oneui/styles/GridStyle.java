@@ -24,6 +24,7 @@ import android.util.DisplayMetrics;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageView;
+import android.widget.TextView;
 
 import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.ItemTouchHelper;
@@ -388,5 +389,23 @@ public class GridStyle implements RecentsStyle {
             final int position = parent.getChildAdapterPosition(view);
             return position == RecyclerView.NO_POSITION ? 0 : position % spanCount;
         }
+    }
+
+    // --- One UI Home chrome and motion (OneUiChrome, SPEC_RECENTS.md Part 2).
+
+    @Override
+    public void styleClearAll(TextView clearAll) {
+        OneUiChrome.styleClearAll(clearAll);
+    }
+
+    @Override
+    public void animateEnter(RecyclerView recyclerView) {
+        OneUiChrome.enterGrid(recyclerView);
+    }
+
+    /** One UI dismisses on a fling of 2000 px/s or more. */
+    @Override
+    public float getSwipeEscapeVelocity(float defaultValue) {
+        return OneUiChrome.SWIPE_ESCAPE_PX_PER_S;
     }
 }

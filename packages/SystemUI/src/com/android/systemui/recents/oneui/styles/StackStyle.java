@@ -22,6 +22,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
+import android.widget.TextView;
 
 import androidx.recyclerview.widget.ItemTouchHelper;
 import androidx.recyclerview.widget.LinearLayoutManager;
@@ -101,6 +102,9 @@ public class StackStyle implements RecentsStyle {
 
     /** Swipe distance that dismisses, as a fraction of the item view — which is a full list tall. */
     private static final float SWIPE_THRESHOLD = 0.12f;
+
+    /** Height of the card face in oneui_recents_card_stack.xml, for One UI's half-card threshold. */
+    private static final float FACE_HEIGHT_DP = 580f;
 
     private int mStepPx;
     private int mCardWidthPx;
@@ -420,9 +424,25 @@ public class StackStyle implements RecentsStyle {
          * as the card — the item view has to be, so the fan can be centred vertically. The default
          * 0.5 would mean dragging half the screen; this is roughly a third of the card.
          */
+        /**
+         * One UI: dismiss once the card has travelled half its own height. The item view is the
+         * whole list tall, so the face height is converted into that frame. {@link
+         * #SWIPE_THRESHOLD} remains the floor for a very short window.
+         */
         @Override
         public float getSwipeThreshold(RecyclerView.ViewHolder viewHolder) {
-            return SWIPE_THRESHOLD;
+            final View item = viewHolder.itemView;
+            final float faceHeight = FACE_HEIGHT_DP * item.getResources().getDisplayMetrics().density;
+            if (item.getHeight() <= 0) {
+                return SWIPE_THRESHOLD;
+            }
+            return Math.max(SWIPE_THRESHOLD, 0.5f * faceHeight / item.getHeight());
+        }
+
+        /** ...or on a fling of 2000 px/s. */
+        @Override
+        public float getSwipeEscapeVelocity(float defaultValue) {
+            return OneUiChrome.SWIPE_ESCAPE_PX_PER_S;
         }
 
         @Override
@@ -543,5 +563,17 @@ public class StackStyle implements RecentsStyle {
             }
             return front == null ? null : rv.getChildViewHolder(front);
         }
+    }
+
+    // --- One UI Home chrome and motion (OneUiChrome, SPEC_RECENTS.md Part 2).
+
+    @Override
+    public void styleClearAll(TextView clearAll) {
+        OneUiChrome.styleClearAll(clearAll);
+    }
+
+    @Override
+    public void animateEnter(RecyclerView recyclerView) {
+        OneUiChrome.enterStack(recyclerView);
     }
 }

@@ -18,6 +18,7 @@ package com.android.systemui.recents.oneui.styles;
 
 import android.content.Context;
 import android.view.View;
+import android.widget.TextView;
 
 import androidx.recyclerview.widget.ItemTouchHelper;
 import androidx.recyclerview.widget.LinearLayoutManager;
@@ -102,5 +103,23 @@ public class SlimListStyle implements RecentsStyle {
         // vertical drags that start on a row — which is all of them — and the list would barely
         // scroll.
         return ItemTouchHelper.LEFT | ItemTouchHelper.RIGHT;
+    }
+
+    // --- One UI Home chrome and motion (OneUiChrome, SPEC_RECENTS.md Part 2).
+
+    @Override
+    public void styleClearAll(TextView clearAll) {
+        OneUiChrome.styleClearAll(clearAll);
+    }
+
+    @Override
+    public void animateEnter(RecyclerView recyclerView) {
+        OneUiChrome.enterVertical(recyclerView);
+    }
+
+    /** One UI dismisses on a fling of 2000 px/s or more. */
+    @Override
+    public float getSwipeEscapeVelocity(float defaultValue) {
+        return OneUiChrome.SWIPE_ESCAPE_PX_PER_S;
     }
 }
