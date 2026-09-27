@@ -21,14 +21,17 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.IIntentReceiver;
 import android.content.IIntentSender;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.IntentSender;
+import android.content.pm.ActivityInfo;
 import android.content.pm.PackageInstaller;
 import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -37,6 +40,7 @@ import android.os.IBinder;
 import android.os.ParcelFileDescriptor;
 import android.os.UserHandle;
 import android.os.UserManager;
+import android.provider.MediaStore;
 import android.util.AtomicFile;
 import android.util.Slog;
 import android.util.Xml;
@@ -53,6 +57,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -79,6 +84,15 @@ public final class IchthysPreinstallController {
     private static final File STATE_FILE = new File("/data/system/ichthys_preinstall.xml");
 
     private static final String OBTAINIUM = "dev.imranr.obtainium";
+    // Made the default camera when first installed (the GCam port the owner picked, #46).
+    private static final String DEFAULT_CAMERA = "com.camera.lmc88r2";
+    private static final String[] CAMERA_ACTIONS = {
+        MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA,
+        MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA_SECURE,
+        MediaStore.INTENT_ACTION_VIDEO_CAMERA,
+        MediaStore.ACTION_IMAGE_CAPTURE,
+        MediaStore.ACTION_VIDEO_CAPTURE,
+    };
     private static final String CHANNEL_ID = "ichthys_preinstall";
     private static final int NOTIFICATION_ID = 0x1c7;
     private static final long COMMIT_TIMEOUT_SECONDS = 180;
@@ -175,6 +189,9 @@ public final class IchthysPreinstallController {
             }
             final boolean ok = install(userContext, pm, pkg, apks);
             userState.put(pkg, ok ? STATE_INSTALLED : STATE_FAILED);
+            if (ok && DEFAULT_CAMERA.equals(pkg)) {
+                makeDefaultCamera(pm);
+            }
             changed = true;
         }
 
@@ -279,6 +296,42 @@ public final class IchthysPreinstallController {
                 .build();
         nm.notify(NOTIFICATION_ID, n);
         return true;
+    }
+
+    /**
+     * Prefers {@link #DEFAULT_CAMERA} for every camera intent it handles, so the camera shortcut
+     * and "take photo" requests skip the chooser. Only done at install time; the user can change
+     * it later like any default.
+     */
+    @SuppressWarnings("deprecation") // addPreferredActivity: what ResolverActivity's "Always" uses
+    private static void makeDefaultCamera(PackageManager pm) {
+        for (String action : CAMERA_ACTIONS) {
+            final Intent intent = new Intent(action);
+            final List<ResolveInfo> handlers =
+                    pm.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY);
+            ComponentName preferred = null;
+            final ComponentName[] set = new ComponentName[handlers.size()];
+            int bestMatch = 0;
+            for (int i = 0; i < handlers.size(); i++) {
+                final ActivityInfo ai = handlers.get(i).activityInfo;
+                set[i] = new ComponentName(ai.packageName, ai.name);
+                bestMatch = Math.max(bestMatch, handlers.get(i).match);
+                if (DEFAULT_CAMERA.equals(ai.packageName) && preferred == null) {
+                    preferred = set[i];
+                }
+            }
+            if (preferred == null || set.length < 2) {
+                continue; // not handled by the camera, or nothing to choose between
+            }
+            final IntentFilter filter = new IntentFilter(action);
+            filter.addCategory(Intent.CATEGORY_DEFAULT);
+            try {
+                pm.addPreferredActivity(filter, bestMatch, set, preferred);
+                Slog.i(TAG, "default for " + action + ": " + preferred.flattenToShortString());
+            } catch (RuntimeException e) {
+                Slog.w(TAG, "could not set default camera for " + action, e);
+            }
+        }
     }
 
     private static boolean isInstalled(PackageManager pm, String pkg) {
