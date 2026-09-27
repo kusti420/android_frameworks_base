@@ -20,16 +20,29 @@ import static com.android.server.sensors.SensorManagerInternal.ProximityActiveLi
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.content.BroadcastReceiver;
+import android.content.ContentResolver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.pm.UserInfo;
+import android.database.ContentObserver;
+import android.os.Handler;
+import android.os.UserHandle;
+import android.os.UserManager;
+import android.provider.Settings;
+import android.text.TextUtils;
 import android.util.ArrayMap;
 
 import com.android.internal.annotations.GuardedBy;
+import com.android.internal.os.BackgroundThread;
 import com.android.internal.util.ConcurrentUtils;
 import com.android.server.LocalServices;
 import com.android.server.SystemServerInitThreadPool;
 import com.android.server.SystemService;
 import com.android.server.utils.TimingsTraceAndSlog;
 
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
@@ -38,6 +51,13 @@ import java.util.concurrent.Future;
 
 public class SensorService extends SystemService {
     private static final String START_NATIVE_SENSOR_SERVICE = "StartNativeSensorService";
+    // IchthysOS: sensor fingerprinting protection (kusti420/ichthysos-tracker#30). Third-party
+    // apps get a generic sensor list without uncalibrated sensors, 50 Hz motion sensors and
+    // quantized values (native SensorService). Global kill switch, default on, and a per-user
+    // comma-separated package exemption list (for Ichthys Guard).
+    private static final String FINGERPRINT_PROTECTION_SETTING =
+            "ichthys_sensor_fingerprint_protection";
+    private static final String FINGERPRINT_EXEMPT_SETTING = "ichthys_sensor_exempt_pkgs";
     private final Object mLock = new Object();
     @GuardedBy("mLock")
     private final ArrayMap<ProximityActiveListener, ProximityListenerProxy> mProximityListeners =
@@ -65,6 +85,8 @@ public class SensorService extends SystemService {
             long timestampNanos, float[] values);
     private static native boolean sendRuntimeSensorAdditionalInfoNative(long ptr, int handle,
             int type, int serial, long timestampNanos, float[] values);
+    private static native void setFingerprintProtectionNative(long ptr, boolean enabled,
+            String[] exemptions);
 
 
     public SensorService(Context ctx) {
@@ -94,6 +116,70 @@ public class SensorService extends SystemService {
                     START_NATIVE_SENSOR_SERVICE);
             synchronized (mLock) {
                 mSensorServiceStart = null;
+            }
+        } else if (phase == SystemService.PHASE_SYSTEM_SERVICES_READY) {
+            startFingerprintProtectionSync();
+        }
+    }
+
+    /** IchthysOS: keeps the native fingerprinting-protection state in sync with Settings. */
+    private void startFingerprintProtectionSync() {
+        final Handler handler = BackgroundThread.getHandler();
+        final ContentResolver resolver = getContext().getContentResolver();
+        final ContentObserver observer = new ContentObserver(handler) {
+            @Override
+            public void onChange(boolean selfChange) {
+                pushFingerprintProtection();
+            }
+        };
+        resolver.registerContentObserver(
+                Settings.Global.getUriFor(FINGERPRINT_PROTECTION_SETTING), false, observer,
+                UserHandle.USER_ALL);
+        resolver.registerContentObserver(
+                Settings.Secure.getUriFor(FINGERPRINT_EXEMPT_SETTING), false, observer,
+                UserHandle.USER_ALL);
+        // Package and user changes: re-push so native drops its uid -> package cache.
+        final BroadcastReceiver receiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                pushFingerprintProtection();
+            }
+        };
+        final IntentFilter packageFilter = new IntentFilter();
+        packageFilter.addAction(Intent.ACTION_PACKAGE_ADDED);
+        packageFilter.addAction(Intent.ACTION_PACKAGE_REMOVED);
+        packageFilter.addDataScheme("package");
+        getContext().registerReceiverAsUser(receiver, UserHandle.ALL, packageFilter, null,
+                handler);
+        final IntentFilter userFilter = new IntentFilter();
+        userFilter.addAction(Intent.ACTION_USER_ADDED);
+        userFilter.addAction(Intent.ACTION_USER_REMOVED);
+        getContext().registerReceiverAsUser(receiver, UserHandle.ALL, userFilter, null, handler);
+        handler.post(this::pushFingerprintProtection);
+    }
+
+    private void pushFingerprintProtection() {
+        final ContentResolver resolver = getContext().getContentResolver();
+        final boolean enabled =
+                Settings.Global.getInt(resolver, FINGERPRINT_PROTECTION_SETTING, 1) != 0;
+        final ArrayList<String> exemptions = new ArrayList<>();
+        final UserManager userManager = getContext().getSystemService(UserManager.class);
+        for (UserInfo user : userManager.getAliveUsers()) {
+            final String value = Settings.Secure.getStringForUser(resolver,
+                    FINGERPRINT_EXEMPT_SETTING, user.id);
+            if (TextUtils.isEmpty(value)) {
+                continue;
+            }
+            for (String pkg : value.split(",")) {
+                pkg = pkg.trim();
+                if (!pkg.isEmpty()) {
+                    exemptions.add(user.id + ":" + pkg);
+                }
+            }
+        }
+        synchronized (mLock) {
+            if (mPtr != 0) {
+                setFingerprintProtectionNative(mPtr, enabled, exemptions.toArray(new String[0]));
             }
         }
     }

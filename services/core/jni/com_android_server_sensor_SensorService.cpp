@@ -24,12 +24,17 @@
 #include <cutils/properties.h>
 #include <jni.h>
 #include <nativehelper/JNIPlatformHelp.h>
+#include <nativehelper/ScopedLocalRef.h>
 #include <sensorservice/SensorService.h>
+#include <stdlib.h>
 #include <string.h>
 #include <utils/Log.h>
 #include <utils/misc.h>
 
 #include <mutex>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "android_util_Binder.h"
 
@@ -62,6 +67,7 @@ public:
                                     jfloatArray values);
     jboolean sendRuntimeSensorAdditionalInfo(JNIEnv* env, jint handle, jint type, jint serial,
                                              jlong timestamp, jfloatArray values);
+    void setFingerprintProtection(JNIEnv* env, jboolean enabled, jobjectArray exemptions);
 
 private:
     sp<SensorService> mService;
@@ -337,6 +343,38 @@ int NativeSensorService::RuntimeSensorCallbackDelegate::onDirectChannelConfigure
                                  static_cast<jint>(rateLevel));
 }
 
+// IchthysOS: sensor fingerprinting protection settings (kusti420/ichthysos-tracker#30).
+// exemptions: "<userId>:<packageName>" entries.
+void NativeSensorService::setFingerprintProtection(JNIEnv* env, jboolean enabled,
+                                                   jobjectArray exemptions) {
+    if (mService == nullptr) {
+        ALOGD("Dropping setFingerprintProtection, sensor service not available.");
+        return;
+    }
+    std::vector<std::pair<userid_t, std::string>> entries;
+    const jsize count = exemptions != nullptr ? env->GetArrayLength(exemptions) : 0;
+    for (jsize i = 0; i < count; i++) {
+        ScopedLocalRef<jstring> entry(env,
+                static_cast<jstring>(env->GetObjectArrayElement(exemptions, i)));
+        if (entry.get() == nullptr) {
+            continue;
+        }
+        const char* chars = env->GetStringUTFChars(entry.get(), nullptr);
+        if (chars == nullptr) {
+            continue;
+        }
+        const std::string value(chars);
+        env->ReleaseStringUTFChars(entry.get(), chars);
+        const size_t colon = value.find(':');
+        if (colon == std::string::npos || colon == 0 || colon + 1 == value.size()) {
+            continue;
+        }
+        entries.emplace_back(static_cast<userid_t>(atoi(value.substr(0, colon).c_str())),
+                             value.substr(colon + 1));
+    }
+    mService->setFingerprintProtection(enabled == JNI_TRUE, entries);
+}
+
 static jlong startSensorServiceNative(JNIEnv* env, jclass, jobject listener) {
     NativeSensorService* service = new NativeSensorService(env, listener);
     return reinterpret_cast<jlong>(service);
@@ -379,6 +417,12 @@ static jboolean sendRuntimeSensorAdditionalInfoNative(JNIEnv* env, jclass, jlong
     return service->sendRuntimeSensorAdditionalInfo(env, handle, type, serial, timestamp, values);
 }
 
+static void setFingerprintProtectionNative(JNIEnv* env, jclass, jlong ptr, jboolean enabled,
+                                           jobjectArray exemptions) {
+    auto* service = reinterpret_cast<NativeSensorService*>(ptr);
+    service->setFingerprintProtection(env, enabled, exemptions);
+}
+
 static const JNINativeMethod methods[] = {
         {"startSensorServiceNative", "(L" PROXIMITY_ACTIVE_CLASS ";)J",
          reinterpret_cast<void*>(startSensorServiceNative)},
@@ -395,6 +439,8 @@ static const JNINativeMethod methods[] = {
          reinterpret_cast<void*>(sendRuntimeSensorEventNative)},
         {"sendRuntimeSensorAdditionalInfoNative", "(JIIIJ[F)Z",
          reinterpret_cast<void*>(sendRuntimeSensorAdditionalInfoNative)},
+        {"setFingerprintProtectionNative", "(JZ[Ljava/lang/String;)V",
+         reinterpret_cast<void*>(setFingerprintProtectionNative)},
 };
 
 int register_android_server_sensor_SensorService(JavaVM* vm, JNIEnv* env) {
