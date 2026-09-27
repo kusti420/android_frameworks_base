@@ -499,6 +499,12 @@ public class KeyguardStatusBarViewController extends ViewController<KeyguardStat
                 false,
                 mVolumeSettingObserver,
                 UserHandle.USER_ALL);
+        mSecureSettings.registerContentObserverForUserAsync(
+                KEY_HIDE_ON_KEYGUARD,
+                false,
+                mHideOnKeyguardObserver,
+                UserHandle.USER_ALL);
+        mHideOnKeyguardObserver.onChange(false);
         updateUserSwitcher();
         onThemeChanged();
         if (!Flags.glanceableHubV2()) {
@@ -552,6 +558,7 @@ public class KeyguardStatusBarViewController extends ViewController<KeyguardStat
         mKeyguardUpdateMonitor.removeCallback(mKeyguardUpdateMonitorCallback);
         mDisableStateTracker.stopTracking(mCommandQueue);
         mSecureSettings.unregisterContentObserverAsync(mVolumeSettingObserver);
+        mSecureSettings.unregisterContentObserverAsync(mHideOnKeyguardObserver);
         if (mTintedIconManager != null) {
             mStatusBarIconController.removeIconGroup(mTintedIconManager);
         }
@@ -703,7 +710,7 @@ public class KeyguardStatusBarViewController extends ViewController<KeyguardStat
             return;
         }
 
-        if (mDisableStateTracker.isDisabled()) {
+        if (mDisableStateTracker.isDisabled() || mHideOnKeyguard) {
             visibility = View.INVISIBLE;
         }
         mView.setAlpha(alpha);
@@ -823,6 +830,18 @@ public class KeyguardStatusBarViewController extends ViewController<KeyguardStat
     private boolean isMigrationEnabled() {
         return SceneContainerFlag.isEnabled();
     }
+
+    /** IchthysOS: Settings.Secure key hiding the status bar on the lock screen. */
+    private static final String KEY_HIDE_ON_KEYGUARD = "ichthys_lockscreen_hide_statusbar";
+    private volatile boolean mHideOnKeyguard;
+
+    private final ContentObserver mHideOnKeyguardObserver = new ContentObserver(null) {
+        @Override
+        public void onChange(boolean selfChange) {
+            mHideOnKeyguard = mSecureSettings.getInt(KEY_HIDE_ON_KEYGUARD, 0) != 0;
+            mView.post(KeyguardStatusBarViewController.this::updateViewState);
+        }
+    };
 
     private final ContentObserver mVolumeSettingObserver = new ContentObserver(null) {
         @Override
