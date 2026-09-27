@@ -22,6 +22,8 @@ import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
+import android.os.UserHandle;
+import android.provider.Settings;
 import android.util.Log;
 import android.view.accessibility.AccessibilityManager;
 
@@ -94,8 +96,14 @@ public class TimeoutHandler extends Handler {
 
         AccessibilityManager accessibilityManager = (AccessibilityManager)
                 mContext.getSystemService(Context.ACCESSIBILITY_SERVICE);
+        // IchthysOS: Settings.System "ichthys_screenshot_preview_timeout" (seconds, 2-60) overrides
+        // how long the screenshot preview stays; 0/unset keeps the default.
+        final int userSeconds = Settings.System.getIntForUser(mContext.getContentResolver(),
+                "ichthys_screenshot_preview_timeout", 0, UserHandle.USER_CURRENT);
+        final int baseTimeout = userSeconds > 0
+                ? Math.max(2, Math.min(60, userSeconds)) * 1000 : mDefaultTimeout;
         long timeoutMs = accessibilityManager.getRecommendedTimeoutMillis(
-                mDefaultTimeout,
+                baseTimeout,
                 AccessibilityManager.FLAG_CONTENT_CONTROLS);
 
         sendMessageDelayed(obtainMessage(MESSAGE_CORNER_TIMEOUT), timeoutMs);
