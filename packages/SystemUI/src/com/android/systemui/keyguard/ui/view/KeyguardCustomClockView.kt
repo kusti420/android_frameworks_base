@@ -48,6 +48,7 @@ import android.widget.TextView
 import com.airbnb.lottie.LottieAnimationView
 import com.airbnb.lottie.LottieDrawable
 import com.android.systemui.Dependency
+import com.android.settingslib.ichthys.clock.IchthysClockFace
 import com.android.systemui.plugins.statusbar.StatusBarStateController
 import java.util.Calendar
 
@@ -115,6 +116,7 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
                 if (isDozing == dozing) return
                 isDozing = dozing
                 applyAodAnimation()
+                currentClock?.let { forEachFace(it) { face -> face.setDozing(dozing) } }
             }
         }
 
@@ -175,6 +177,7 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
         val clock = inflated ?: legacyBuildClock(style)
         Log.i(TAG, "rebuild: style=$style inflated=${inflated != null}")
         applyTheme(clock)
+        applyFaceOptions(clock)
         applyContainerAttributes(clock)
 
         val lp: LayoutParams
@@ -218,6 +221,26 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
         pausedForAod = shouldPause
         forEachLottieView(clock) { view ->
             if (shouldPause) view.pauseAnimation() else view.resumeAnimation()
+        }
+    }
+
+    /**
+     * IchthysOS: options and doze state for the drawn faces ([IchthysClockFace], SettingsLib).
+     */
+    private fun applyFaceOptions(clock: View) {
+        val showDate = secureInt(KEY_SHOW_DATE, 1) != 0
+        val dotShape = secureInt(KEY_DOT_SHAPE, IchthysClockFace.DOT_ROUND)
+        val showUnlit = secureInt(KEY_UNLIT_DOTS, 1) != 0
+        forEachFace(clock) { face ->
+            face.setClockOptions(showDate, dotShape, showUnlit)
+            face.setDozing(isDozing)
+        }
+    }
+
+    private fun forEachFace(view: View, action: (IchthysClockFace) -> Unit) {
+        if (view is IchthysClockFace) action(view)
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) forEachFace(view.getChildAt(i), action)
         }
     }
 
@@ -266,6 +289,13 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
     }
 
     private fun themeRecursive(view: View, mode: String, customColor: Int, accent: Int) {
+        if (view is IchthysClockFace) {
+            when (mode) {
+                MODE_ACCENT -> view.setClockColors(accent, white())
+                MODE_CUSTOM -> view.setClockColors(customColor, accent)
+                else -> view.setClockColors(white(), accent)
+            }
+        }
         if (view is TextView) {
             val roles = (view.tag as? String)?.split("|") ?: emptyList()
             val isAccent = roles.any { it.startsWith("accent") }
@@ -1198,6 +1228,19 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
                 "keyguard_clock_samurai", // 65 Samurai
                 "keyguard_clock_gateway", // 66 Gateway
                 "keyguard_clock_tall", // 67 Tall clock
+                // IchthysOS "Shoal" faces (68-75 drawn by SettingsLib IchthysClockFace views).
+                "keyguard_clock_ichthys_shoal", // 68 Shoal Lattice
+                "keyguard_clock_ichthys_dotmatrix", // 69 Dot Matrix
+                "keyguard_clock_ichthys_binary", // 70 Binary
+                "keyguard_clock_ichthys_ring", // 71 Analog Ring
+                "keyguard_clock_ichthys_radar", // 72 Radar
+                "keyguard_clock_ichthys_sonar", // 73 Sonar
+                "keyguard_clock_ichthys_dayprogress", // 74 Day Progress
+                "keyguard_clock_ichthys_wordgrid", // 75 Word Grid
+                "keyguard_clock_ichthys_stacked", // 76 Stacked Bold
+                "keyguard_clock_ichthys_split", // 77 Vertical Split
+                "keyguard_clock_ichthys_typo", // 78 Typographic
+                "keyguard_clock_ichthys_oneui", // 79 One UI Stacked
             )
 
         /** Picker index -> `@raw` Lottie animation the face's LottieAnimationView plays. */
@@ -1241,6 +1284,10 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
         private const val KEY_OPACITY = "lock_screen_custom_clock_opacity"
         private const val KEY_MARGIN_TOP = "lock_screen_custom_clock_margin_top"
         private const val KEY_AOD_ANIM = "lock_screen_custom_clock_aod_anim"
+        // IchthysOS options for the drawn faces.
+        private const val KEY_SHOW_DATE = "ichthys_clock_show_date"
+        private const val KEY_DOT_SHAPE = "ichthys_clock_dot_shape"
+        private const val KEY_UNLIT_DOTS = "ichthys_clock_unlit_dots"
 
         private const val MODE_DEFAULT = "default"
         private const val MODE_ACCENT = "accent"
@@ -1255,6 +1302,9 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
                 KEY_OPACITY,
                 KEY_MARGIN_TOP,
                 KEY_AOD_ANIM,
+                KEY_SHOW_DATE,
+                KEY_DOT_SHAPE,
+                KEY_UNLIT_DOTS,
             )
     }
 }
