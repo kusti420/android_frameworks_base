@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- IchthysOS: lock screen shortcut that opens the default calculator. -->
+    <string name="ichthys_keyguard_calculator">Calculator</string>
+</resources>
