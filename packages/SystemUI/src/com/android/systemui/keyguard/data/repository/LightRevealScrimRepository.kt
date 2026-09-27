@@ -37,6 +37,8 @@ import com.android.systemui.shade.ShadeDisplayAware
 import com.android.systemui.statusbar.CircleReveal
 import com.android.systemui.statusbar.LiftReveal
 import com.android.systemui.statusbar.LightRevealEffect
+import com.android.systemui.statusbar.LinearLightRevealEffect
+import com.android.systemui.statusbar.LinearSideLightRevealEffect
 import com.android.systemui.statusbar.PowerButtonReveal
 import javax.inject.Inject
 import kotlin.math.max
@@ -95,6 +97,8 @@ constructor(
     @Background backgroundScope: CoroutineScope,
 ) : LightRevealScrimRepository {
     companion object {
+        /** IchthysOS: screen on/off reveal style (see [styledRevealEffect]). */
+        const val REVEAL_STYLE_KEY = "ichthys_screen_reveal_style"
         val TAG = LightRevealScrimRepository::class.simpleName!!
         val DEFAULT_MAX_ALPHA = 1f
     }
@@ -195,7 +199,48 @@ constructor(
         scrimLogger.d(TAG, "startRevealAmountAnimator, reveal", reveal)
     }
 
-    override val revealEffect: Flow<LightRevealEffect> =
+    /**
+     * IchthysOS: Settings.System [REVEAL_STYLE_KEY] overrides the screen on/off reveal. 0 keeps the
+     * stock per-trigger effect (power button, tap, fingerprint), 1 lift, 2 vertical wipe, 3
+     * horizontal wipe, 4 circle from the screen centre, 5 closing from both sides.
+     */
+    private val revealStyle: Flow<Int> =
+        callbackFlow {
+                val cr = context.contentResolver
+                fun send() {
+                    trySend(
+                        android.provider.Settings.System.getIntForUser(
+                            cr, REVEAL_STYLE_KEY, 0, android.os.UserHandle.USER_CURRENT))
+                }
+                val observer =
+                    object : android.database.ContentObserver(null) {
+                        override fun onChange(selfChange: Boolean) = send()
+                    }
+                cr.registerContentObserver(
+                    android.provider.Settings.System.getUriFor(REVEAL_STYLE_KEY), false, observer,
+                    android.os.UserHandle.USER_ALL)
+                send()
+                awaitClose { cr.unregisterContentObserver(observer) }
+            }
+            .distinctUntilChanged()
+
+    private fun styledRevealEffect(style: Int): LightRevealEffect? {
+        val dm = context.resources.displayMetrics
+        return when (style) {
+            1 -> LiftReveal
+            2 -> LinearLightRevealEffect(isVertical = true)
+            3 -> LinearLightRevealEffect(isVertical = false)
+            4 -> {
+                val cx = dm.widthPixels / 2
+                val cy = dm.heightPixels / 2
+                CircleReveal(cx, cy, 0, max(cx, cy) * 2)
+            }
+            5 -> LinearSideLightRevealEffect(isVertical = false)
+            else -> null
+        }
+    }
+
+    private val stockRevealEffect: Flow<LightRevealEffect> =
         keyguardRepository.biometricUnlockState
             .flatMapLatest { biometricUnlockState ->
                 // Use the biometric reveal for any flavor of wake and unlocking.
@@ -211,6 +256,13 @@ constructor(
                     }
                     else -> nonBiometricRevealEffect
                 }
+            }
+            .distinctUntilChanged()
+
+    override val revealEffect: Flow<LightRevealEffect> =
+        revealStyle
+            .flatMapLatest { style ->
+                styledRevealEffect(style)?.let { flowOf(it) } ?: stockRevealEffect
             }
             .distinctUntilChanged()
 
