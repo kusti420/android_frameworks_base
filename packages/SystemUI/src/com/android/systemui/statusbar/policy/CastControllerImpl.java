@@ -26,6 +26,7 @@ import android.media.projection.MediaProjectionInfo;
 import android.media.projection.MediaProjectionManager;
 import android.media.projection.StopReason;
 import android.os.Handler;
+import android.provider.Settings;
 import android.util.ArrayMap;
 
 import androidx.annotation.NonNull;
@@ -126,10 +127,19 @@ public class CastControllerImpl implements CastController {
         }
     }
 
+    private boolean isCastEnabled() {
+        return Settings.Global.getInt(
+                mContext.getContentResolver(), Settings.Global.CAST_ENABLED, 0) != 0;
+    }
+
     private void handleDiscoveryChangeLocked() {
         if (mCallbackRegistered) {
             mMediaRouter.removeCallback(mMediaCallback);
             mCallbackRegistered = false;
+        }
+        // IchthysOS: suppress all cast discovery when the kill-switch is off.
+        if (!isCastEnabled()) {
+            return;
         }
         if (mDiscovering) {
             mMediaRouter.addCallback(ROUTE_TYPE_REMOTE_DISPLAY, mMediaCallback,

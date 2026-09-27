@@ -1166,6 +1166,8 @@
     <string name="quick_settings_cast_no_network">No Wi\u2011Fi or Ethernet connection</string>
     <!-- QuickSettings: Cast details, text on the disconnect button, click to disconnect a device [CHAR LIMIT=NONE] -->
     <string name="quick_settings_cast_disconnect">Disconnect</string>
+    <!-- IchthysOS: QuickSettings Cast tile subtitle when casting is disabled [CHAR LIMIT=NONE] -->
+    <string name="quick_settings_cast_off">Disabled</string>
     <!-- QuickSettings: Audio details, text on the input device indicating what the current input device is [CHAR LIMIT=NONE] -->
     <string name="quick_settings_audio_current_input">Current mic is</string>
     <!-- QuickSettings: Audio details, text on top of the output device, indicating this is the output section [CHAR LIMIT=NONE] -->

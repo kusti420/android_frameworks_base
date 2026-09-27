@@ -27,9 +27,11 @@ import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.content.pm.ServiceInfo;
+import android.database.ContentObserver;
 import android.media.MediaRoute2ProviderService;
 import android.os.Handler;
 import android.os.UserHandle;
+import android.provider.Settings;
 import android.text.TextUtils;
 import android.util.Log;
 import android.util.Slog;
@@ -59,6 +61,18 @@ final class MediaRoute2ProviderWatcher {
     private final ArrayList<MediaRoute2ProviderServiceProxy> mProxies = new ArrayList<>();
     private final Runnable mScanPackagesRunnable = this::scanPackages;
     private boolean mRunning;
+
+    private final ContentObserver mCastSettingObserver = new ContentObserver(null) {
+        @Override
+        public void onChange(boolean selfChange) {
+            postScanPackagesIfNeeded();
+        }
+    };
+
+    private boolean isCastEnabled() {
+        return Settings.Global.getInt(
+                mContext.getContentResolver(), Settings.Global.CAST_ENABLED, 0) != 0;
+    }
 
     MediaRoute2ProviderWatcher(Context context,
             Callback callback, Handler handler, int userId) {
@@ -94,6 +108,11 @@ final class MediaRoute2ProviderWatcher {
             mContext.registerReceiverAsUser(mScanPackagesReceiver,
                     new UserHandle(mUserId), filter, null, mHandler);
 
+            // IchthysOS: watch the cast kill-switch so we re-scan when it flips.
+            mContext.getContentResolver().registerContentObserver(
+                    Settings.Global.getUriFor(Settings.Global.CAST_ENABLED),
+                    false, mCastSettingObserver);
+
             // Scan packages.
             // Also has the side-effect of restarting providers if needed.
             postScanPackagesIfNeeded();
@@ -105,6 +124,7 @@ final class MediaRoute2ProviderWatcher {
             mRunning = false;
 
             mContext.unregisterReceiver(mScanPackagesReceiver);
+            mContext.getContentResolver().unregisterContentObserver(mCastSettingObserver);
             mHandler.removeCallbacks(mScanPackagesRunnable);
 
             // Stop all providers.
@@ -116,6 +136,19 @@ final class MediaRoute2ProviderWatcher {
 
     private void scanPackages() {
         if (!mRunning) {
+            return;
+        }
+
+        // IchthysOS: suppress all route-2 providers when cast is disabled.
+        if (!isCastEnabled()) {
+            if (mProxies.size() > 0) {
+                for (int i = mProxies.size() - 1; i >= 0; i--) {
+                    MediaRoute2ProviderServiceProxy proxy = mProxies.get(i);
+                    mCallback.onRemoveProviderService(proxy);
+                    mProxies.remove(proxy);
+                    proxy.stop();
+                }
+            }
             return;
         }
 

@@ -212,6 +212,21 @@ public class AndroidKeyStoreSpi extends KeyStoreSpi {
 
         caList[0] = leaf;
 
+        // IchthysOS: TrickyStore-compatible attestation chain forgery. If a keybox is configured
+        // and this caller is targeted, replace the chain with one signed by the keybox.
+        try {
+            final android.content.Context ctx =
+                    android.app.ActivityThread.currentApplication();
+            if (ctx != null) {
+                final Certificate[] forged =
+                        com.android.internal.util.ichthys.KeyboxAttestation
+                                .maybeForgeChain(ctx, caList);
+                if (forged != null) return forged;
+            }
+        } catch (Exception e) {
+            android.util.Log.e(TAG, "TrickyStore attestation forgery failed, returning original", e);
+        }
+
         return caList;
     }
 

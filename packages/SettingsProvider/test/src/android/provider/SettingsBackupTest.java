@@ -142,6 +142,7 @@ public class SettingsBackupTest {
                     Settings.Global.CAR_DOCK_SOUND,
                     Settings.Global.CARRIER_APP_WHITELIST,
                     Settings.Global.CARRIER_APP_NAMES,
+                    Settings.Global.CAST_ENABLED,
                     Settings.Global.CAR_UNDOCK_SOUND,
                     Settings.Global.CDMA_CELL_BROADCAST_SMS,
                     Settings.Global.CDMA_ROAMING_MODE,

@@ -89,6 +89,17 @@ interface BatteryRepository {
     val isShowBatteryPercentNextToIcon: Flow<Boolean>
 
     /**
+     * crDroid `qs_show_battery_percent`: a QS-header-scoped override of the status bar percent
+     * setting, with the same 0 = hidden / 1 = inside / 2 = next-to-icon values.
+     * [BatteryRepositoryImpl.QS_PERCENT_MODE_DEFAULT] keeps the stock QS behaviour, where the
+     * percent is always shown and only its position follows the status bar.
+     */
+    val isQsShowBatteryPercentSettingEnabled: Flow<Boolean>
+
+    /** @see isShowBatteryPercentNextToIcon — QS-header-scoped variant. */
+    val isQsShowBatteryPercentNextToIcon: Flow<Boolean>
+
+    /**
      * crDroid [Settings.System.status_bar_battery_text_charging]: when true, the battery percentage
      * text is force-shown while the device is charging, even if the percent-text setting is off.
      * Defaults to true (matching the crDroidSettings toggle default).
@@ -363,6 +374,55 @@ constructor(
             .flowOn(bgDispatcher)
             .stateIn(scope, SharingStarted.Lazily, false)
 
+    /**
+     * crDroid `qs_show_battery_percent`. Same 0/1/2 values as the status bar key, plus
+     * [QS_PERCENT_MODE_DEFAULT] for "leave the QS header alone".
+     */
+    private val qsShowBatteryPercentMode: Flow<Int> =
+        settingsRepository.intSetting(
+            name = SETTING_QS_SHOW_BATTERY_PERCENT,
+            defaultValue = QS_PERCENT_MODE_DEFAULT,
+        )
+
+    override val isQsShowBatteryPercentSettingEnabled: StateFlow<Boolean> =
+        qsShowBatteryPercentMode
+            .map { mode ->
+                when (mode) {
+                    // Hidden
+                    0 -> false
+                    // Inside the icon
+                    1 -> true
+                    // Next to the icon: drawn as separate text, so the inside glyphs are
+                    // suppressed here exactly as they are for the status bar.
+                    PERCENT_MODE_NEXT_TO -> false
+                    // Default: the QS header always shows the percent.
+                    else -> true
+                }
+            }
+            .distinctUntilChanged()
+            .logDiffsForTable(
+                tableLogBuffer = tableLog,
+                columnName = COL_QS_SHOW_PERCENT_SETTING,
+                initialValue = true,
+            )
+            .flowOn(bgDispatcher)
+            .stateIn(scope, SharingStarted.Lazily, true)
+
+    override val isQsShowBatteryPercentNextToIcon: StateFlow<Boolean> =
+        combine(qsShowBatteryPercentMode, isShowBatteryPercentNextToIcon) { mode, statusBarNextTo ->
+                // In default mode the QS header follows wherever the status bar puts the percent.
+                if (mode == QS_PERCENT_MODE_DEFAULT) statusBarNextTo
+                else mode == PERCENT_MODE_NEXT_TO
+            }
+            .distinctUntilChanged()
+            .logDiffsForTable(
+                tableLogBuffer = tableLog,
+                columnName = COL_QS_SHOW_PERCENT_NEXT_TO,
+                initialValue = false,
+            )
+            .flowOn(bgDispatcher)
+            .stateIn(scope, SharingStarted.Lazily, false)
+
     override val isBatteryTextChargingEnabled: StateFlow<Boolean> =
         settingsRepository
             .boolSetting(name = SETTING_BATTERY_TEXT_CHARGING, defaultValue = true)
@@ -431,6 +491,18 @@ constructor(
          */
         private const val SETTING_BATTERY_TEXT_CHARGING = "status_bar_battery_text_charging"
 
+        /**
+         * crDroid [Settings.System] key: QS-header-scoped battery percent mode. Raw key, as there
+         * is no android.provider.Settings constant for it.
+         */
+        private const val SETTING_QS_SHOW_BATTERY_PERCENT = "qs_show_battery_percent"
+
+        /**
+         * [SETTING_QS_SHOW_BATTERY_PERCENT] value meaning "do not override the QS header": the
+         * percent stays always-visible and only its position follows the status bar setting.
+         */
+        const val QS_PERCENT_MODE_DEFAULT = -1
+
         /** crDroid [LineageSettings.System.STATUS_BAR_BATTERY_STYLE] values. */
         const val BATTERY_STYLE_PORTRAIT = 0
         const val BATTERY_STYLE_CIRCLE = 1
@@ -446,6 +518,8 @@ constructor(
         private const val COL_UNKNOWN = "unknown"
         private const val COL_SHOW_PERCENT_SETTING = "showPercentSetting"
         private const val COL_SHOW_PERCENT_NEXT_TO = "showPercentNextToIcon"
+        private const val COL_QS_SHOW_PERCENT_SETTING = "qsShowPercentSetting"
+        private const val COL_QS_SHOW_PERCENT_NEXT_TO = "qsShowPercentNextToIcon"
         private const val COL_BATTERY_STYLE = "batteryStyle"
         private const val COL_BATTERY_TEXT_CHARGING = "batteryTextCharging"
         private const val COL_TIME_REMAINING_EST = "timeRemainingEstimate"

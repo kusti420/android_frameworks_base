@@ -122,6 +122,7 @@ import com.android.systemui.brightness.domain.model.GammaBrightness
 import com.android.systemui.brightness.ui.compose.AnimationSpecs.IconAppearSpec
 import com.android.systemui.brightness.ui.compose.AnimationSpecs.IconDisappearSpec
 import com.android.systemui.brightness.ui.compose.InternalDimensions.IconPadding
+import com.android.systemui.brightness.QsSliderShape
 import com.android.systemui.brightness.ui.compose.InternalDimensions.SliderTrackRoundedCorner
 import com.android.systemui.brightness.ui.compose.InternalDimensions.ThumbTrackGapSize
 import com.android.systemui.brightness.ui.viewmodel.BrightnessSliderViewModel
@@ -185,6 +186,10 @@ fun BrightnessSlider(
             )
         }
     val colors = SystemUISliderColors.Defaults
+    // IchthysOS: crDroid's brightness-slider shape + haptic switches.
+    val crDroidSlider = rememberCrDroidSliderState(LocalContext.current)
+    val trackCornerSize =
+        QsSliderShape.cornerDp(crDroidSlider.shape, dimensions.trackHeight.value).dp
 
     // The value state is recreated every time gammaValue changes, so we recreate this derivedState
     // We have to use value as that's the value that changes when the user is dragging (gammaValue
@@ -271,7 +276,7 @@ fun BrightnessSlider(
         onValueChange = {
             if (enabled) {
                 if (!overriddenByAppState) {
-                    hapticsViewModel.onValueChange(it)
+                    if (crDroidSlider.haptics) hapticsViewModel.onValueChange(it)
                     var v = it.toInt()
                     // IchthysOS: the floor is a HARD minimum. Don't let the main thumb drag below the
                     // orange floor bar — otherwise it strands there, out of sync with the actual
@@ -290,7 +295,7 @@ fun BrightnessSlider(
         onValueChangeFinished = {
             if (enabled) {
                 if (!overriddenByAppState) {
-                    hapticsViewModel.onValueChangeEnded()
+                    if (crDroidSlider.haptics) hapticsViewModel.onValueChangeEnded()
                     onStop(value)
                 }
             }
@@ -393,7 +398,7 @@ fun BrightnessSlider(
                                 )
                             }
                         },
-                trackCornerSize = SliderTrackRoundedCorner,
+                trackCornerSize = trackCornerSize,
                 trackInsideCornerSize = 2.dp,
                 drawStopIndicator = null,
                 thumbTrackGapSize = ThumbTrackGapSize,
@@ -585,6 +590,59 @@ private const val StemBendFactor = 0.55f
 // little breathing room between the brightness bar and the QS tiles). Must cover the curved stem
 // plus the whole knob: stemGap (12dp) + knob diameter (20dp) = 32dp, so 42dp leaves 10dp of gap.
 private val FloorKnobReserve = 42.dp
+
+/**
+ * IchthysOS: snapshot of the crDroid brightness-slider settings
+ * (`qs_brightness_slider_shape`, `qs_brightness_slider_haptic`). crDroid ships both preferences but
+ * never shipped a SystemUI consumer for either, so both did nothing.
+ */
+private data class CrDroidSliderState(val shape: Int, val haptics: Boolean)
+
+private const val KEY_SLIDER_SHAPE = "qs_brightness_slider_shape"
+private const val KEY_SLIDER_HAPTIC = "qs_brightness_slider_haptic"
+
+private fun readCrDroidSliderState(cr: ContentResolver): CrDroidSliderState =
+    CrDroidSliderState(
+        shape =
+            QsSliderShape.sanitize(
+                Settings.System.getIntForUser(
+                    cr,
+                    KEY_SLIDER_SHAPE,
+                    QsSliderShape.DEFAULT,
+                    UserHandle.USER_CURRENT,
+                )
+            ),
+        // crDroid's XML defaults this switch to true, so an unwritten setting means "on".
+        haptics =
+            Settings.System.getIntForUser(cr, KEY_SLIDER_HAPTIC, 1, UserHandle.USER_CURRENT) != 0,
+    )
+
+@Composable
+private fun rememberCrDroidSliderState(context: Context): CrDroidSliderState {
+    val cr = context.contentResolver
+    val state by
+        produceState(initialValue = readCrDroidSliderState(cr), cr) {
+            val observer =
+                object : ContentObserver(Handler(Looper.getMainLooper())) {
+                    override fun onChange(selfChange: Boolean) {
+                        value = readCrDroidSliderState(cr)
+                    }
+                }
+            cr.registerContentObserver(
+                Settings.System.getUriFor(KEY_SLIDER_SHAPE),
+                false,
+                observer,
+            )
+            cr.registerContentObserver(
+                Settings.System.getUriFor(KEY_SLIDER_HAPTIC),
+                false,
+                observer,
+            )
+            value = readCrDroidSliderState(cr)
+            awaitDispose { cr.unregisterContentObserver(observer) }
+        }
+    return state
+}
 
 /** IchthysOS: snapshot of the auto-brightness floor settings backing the second handle. */
 private data class BrightnessFloorState(

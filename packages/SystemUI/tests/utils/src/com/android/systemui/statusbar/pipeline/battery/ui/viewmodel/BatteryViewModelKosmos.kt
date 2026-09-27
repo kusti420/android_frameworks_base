@@ -40,3 +40,10 @@ val Kosmos.batteryViewModelAlwaysShowPercentFactory by
             BatteryViewModel.AlwaysShowPercent(batteryInteractor, testableContext)
         }
     }
+
+val Kosmos.batteryViewModelQsHeaderFactory by
+    Kosmos.Fixture {
+        BatteryViewModel.QsHeader.Factory {
+            BatteryViewModel.QsHeader(batteryInteractor, testableContext)
+        }
+    }

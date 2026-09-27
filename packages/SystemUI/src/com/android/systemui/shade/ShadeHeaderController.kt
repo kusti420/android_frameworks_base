@@ -120,7 +120,7 @@ constructor(
     @ShadeDisplayAware private val context: Context,
     private val shadeDisplaysRepositoryLazy: Lazy<ShadeDisplaysRepository>,
     private val variableDateViewControllerFactory: VariableDateViewController.Factory,
-    private val unifiedBatteryViewModelFactory: BatteryViewModel.AlwaysShowPercent.Factory,
+    private val unifiedBatteryViewModelFactory: BatteryViewModel.QsHeader.Factory,
     private val dumpManager: DumpManager,
     private val shadeCarrierGroupControllerBuilder: ShadeCarrierGroupController.Builder,
     private val combinedShadeHeadersConstraintManager: CombinedShadeHeadersConstraintManager,
@@ -437,6 +437,10 @@ constructor(
         }
     }
 
+    // IchthysOS: crDroid qs_show_battery_estimate. Defaults to 1 so the stock behaviour (estimate
+    // shown once QS is expanded and there is room for it) is unchanged unless the user opts out.
+    private var qsShowBatteryEstimate = true
+
     // Custom Options: QS header clock/date customizations (Settings.System). show_qs_clock /
     // show_qs_date toggle the header clock & date; qs_header_clock_size sizes the clock (sp).
     private val qsHeaderSettingsObserver =
@@ -466,6 +470,14 @@ constructor(
         if (clockSize > 0) {
             clock.setTextSize(TypedValue.COMPLEX_UNIT_SP, clockSize.toFloat())
         }
+        qsShowBatteryEstimate =
+            Settings.System.getIntForUser(
+                resolver,
+                "qs_show_battery_estimate",
+                1,
+                UserHandle.USER_CURRENT,
+            ) != 0
+        updateBatteryMode()
     }
 
     override fun onViewAttached() {
@@ -481,6 +493,9 @@ constructor(
             UserHandle.USER_ALL)
         context.contentResolver.registerContentObserver(
             Settings.System.getUriFor("qs_header_clock_size"), false, qsHeaderSettingsObserver,
+            UserHandle.USER_ALL)
+        context.contentResolver.registerContentObserver(
+            Settings.System.getUriFor("qs_show_battery_estimate"), false, qsHeaderSettingsObserver,
             UserHandle.USER_ALL)
         updateQsHeaderCustomizations()
 
@@ -614,7 +629,8 @@ constructor(
 
     private fun updateBatteryMode() {
         qsBatteryModeController.getBatteryMode(cutout, qsExpandedFraction)?.let {
-            showBatteryEstimate.value = it == MODE_ESTIMATE
+            // IchthysOS: crDroid qs_show_battery_estimate
+            showBatteryEstimate.value = qsShowBatteryEstimate && it == MODE_ESTIMATE
         }
     }
 

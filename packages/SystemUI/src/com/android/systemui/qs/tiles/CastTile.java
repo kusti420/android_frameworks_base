@@ -25,6 +25,7 @@ import android.media.MediaRouter.RouteInfo;
 import android.media.projection.StopReason;
 import android.os.Handler;
 import android.os.Looper;
+import android.database.ContentObserver;
 import android.provider.Settings;
 import android.service.quicksettings.Tile;
 import android.text.TextUtils;
@@ -89,6 +90,7 @@ public class CastTile extends QSTileImpl<BooleanState> {
     private final ShadeDialogContextInteractor mShadeDialogContextInteractor;
     private boolean mCastTransportAllowed;
     private boolean mHotspotConnected;
+    private boolean mIchthysCastEnabled;
     private final CastDetailsViewModel.Factory mCastDetailsViewModelFactory;
     private final DialogCreator mDialogCreator;
 
@@ -130,6 +132,21 @@ public class CastTile extends QSTileImpl<BooleanState> {
                 mNetworkModelConsumer
         );
         hotspotController.observe(this, mHotspotCallback);
+
+        // IchthysOS: track the cast kill-switch.
+        mIchthysCastEnabled = Settings.Global.getInt(
+                mContext.getContentResolver(), Settings.Global.CAST_ENABLED, 0) != 0;
+        mContext.getContentResolver().registerContentObserver(
+                Settings.Global.getUriFor(Settings.Global.CAST_ENABLED),
+                false, new ContentObserver(mainHandler) {
+                    @Override
+                    public void onChange(boolean selfChange) {
+                        mIchthysCastEnabled = Settings.Global.getInt(
+                                mContext.getContentResolver(),
+                                Settings.Global.CAST_ENABLED, 0) != 0;
+                        refreshState();
+                    }
+                });
     }
 
     @Override
@@ -319,6 +336,17 @@ public class CastTile extends QSTileImpl<BooleanState> {
     protected void handleUpdateState(BooleanState state, Object arg) {
         state.label = mContext.getString(R.string.quick_settings_cast_title);
         state.contentDescription = state.label;
+
+        // IchthysOS: when cast is disabled, show tile as unavailable.
+        if (!mIchthysCastEnabled) {
+            state.value = false;
+            state.state = Tile.STATE_UNAVAILABLE;
+            state.secondaryLabel = mContext.getString(R.string.quick_settings_cast_off);
+            state.icon = maybeLoadResourceIcon(R.drawable.ic_cast);
+            state.forceExpandIcon = false;
+            return;
+        }
+
         ArrayList<CharSequence> stateDescriptionParts = new ArrayList<>();
         state.value = false;
         final List<CastDevice> devices = mController.getCastDevices();

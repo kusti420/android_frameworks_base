@@ -256,6 +256,7 @@ import com.android.internal.os.DebugStore;
 import com.android.internal.os.RuntimeInit;
 import com.android.internal.os.SafeZipPathValidatorCallback;
 import com.android.internal.os.SomeArgs;
+import com.android.internal.util.ichthys.PropImitationHooks;
 import com.android.internal.os.logging.MetricsLoggerWrapper;
 import com.android.internal.policy.DecorView;
 import com.android.internal.protolog.ProtoLog;
@@ -8167,6 +8168,12 @@ public final class ActivityThread extends ClientTransactionHandler
         final IActivityManager mgr = ActivityManager.getService();
         final ContextImpl appContext = ContextImpl.createAppContext(this, data.info);
         mConfigurationController.updateLocaleListFromAppContext(appContext);
+
+        // IchthysOS: apply the Play Integrity spoof (crDroid play_integrity_fix.xml) before the
+        // application class is instantiated, so the overridden Build fields are already in place
+        // the first time app code reads them. No-ops for every package except the small allow-list
+        // in PropImitationHooks.
+        PropImitationHooks.setProps(appContext, data.appInfo.packageName, data.processName);
 
         // Initialize the default http proxy in this process.
         Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, "Setup proxies");

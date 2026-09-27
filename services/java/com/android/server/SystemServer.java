@@ -3703,6 +3703,17 @@ public final class SystemServer implements Dumpable {
         }
         t.traceEnd();
 
+        // IchthysOS: attach the per-ear hearing-compensation EQ to the global output mix and keep
+        // it in step with the profile the Hearing Check app measured. AudioService is up by now,
+        // and the controller retries by itself if audioserver is still settling.
+        t.traceBegin("StartIchthysHearingController");
+        try {
+            new com.android.server.IchthysHearingController(mSystemContext).onBootPhaseReady();
+        } catch (Throwable e) {
+            reportWtf("starting IchthysHearingController", e);
+        }
+        t.traceEnd();
+
         // IchthysOS: kill cached background processes shortly after the screen turns on (System
         // setting screen_on_memory_reclaim, default on). Mutually exclusive with the unrestricted
         // background mode above. ActivityManagerInternal is registered by this boot phase.
@@ -3712,6 +3723,17 @@ public final class SystemServer implements Dumpable {
                     .onBootPhaseReady();
         } catch (Throwable e) {
             reportWtf("starting ScreenOnMemoryReclaimController", e);
+        }
+        t.traceEnd();
+
+        // IchthysOS: the LAN easter egg -- publish the mDNS decoy services (the DHCP hostname
+        // half of it is an RRO + ro.vendor.net.hostname, no code). Global setting
+        // network_decoy_enabled, default on. ConnectivityService/NsdService are up by now.
+        t.traceBegin("StartNetworkDecoyController");
+        try {
+            new com.android.server.NetworkDecoyController(mSystemContext).onBootPhaseReady();
+        } catch (Throwable e) {
+            reportWtf("starting NetworkDecoyController", e);
         }
         t.traceEnd();
 
