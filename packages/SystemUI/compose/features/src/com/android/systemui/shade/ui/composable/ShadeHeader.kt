@@ -121,7 +121,7 @@ import com.android.systemui.statusbar.pipeline.mobile.ui.viewmodel.MobileIconsVi
 import com.android.systemui.statusbar.pipeline.mobile.ui.viewmodel.ShadeCarrierGroupMobileIconViewModel
 import com.android.systemui.statusbar.pipeline.mobile.ui.viewmodel.ShadeCarrierGroupMobileIconViewModelKairos
 import com.android.systemui.statusbar.pipeline.mobile.ui.viewmodel.composeWrapper
-import com.android.systemui.statusbar.policy.Clock
+import com.android.systemui.statusbar.policy.IchthysHeaderClock
 import com.android.systemui.statusbar.systemstatusicons.SystemStatusIconsInCompose
 import com.android.systemui.statusbar.systemstatusicons.ui.compose.SystemStatusIcons
 import com.android.systemui.statusbar.systemstatusicons.ui.compose.SystemStatusIconsLegacy
@@ -621,7 +621,9 @@ private fun ContentScope.Clock(
         content {
             AndroidView(
                 factory = { context ->
-                    Clock(
+                    // IchthysOS "Shoal": display face + accent seconds when a Shoal surface
+                    // style is set; the stock clock otherwise.
+                    IchthysHeaderClock(
                             ContextThemeWrapper(
                                 context,
                                 R.style.Theme_SystemUI_QuickSettings_Header,
