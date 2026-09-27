@@ -3728,12 +3728,22 @@ public final class SystemServer implements Dumpable {
 
         // IchthysOS: the LAN easter egg -- publish the mDNS decoy services (the DHCP hostname
         // half of it is an RRO + ro.vendor.net.hostname, no code). Global setting
-        // network_decoy_enabled, default on. ConnectivityService/NsdService are up by now.
+        // network_decoy_enabled, default off. ConnectivityService/NsdService are up by now.
         t.traceBegin("StartNetworkDecoyController");
         try {
             new com.android.server.NetworkDecoyController(mSystemContext).onBootPhaseReady();
         } catch (Throwable e) {
             reportWtf("starting NetworkDecoyController", e);
+        }
+        t.traceEnd();
+
+        // IchthysOS: install the bundled third-party apps as user apps once per user, with
+        // Obtainium as update owner. PackageManager is up; the work waits for USER_UNLOCKED.
+        t.traceBegin("StartIchthysPreinstallController");
+        try {
+            new com.android.server.IchthysPreinstallController(mSystemContext).onBootPhaseReady();
+        } catch (Throwable e) {
+            reportWtf("starting IchthysPreinstallController", e);
         }
         t.traceEnd();
 
