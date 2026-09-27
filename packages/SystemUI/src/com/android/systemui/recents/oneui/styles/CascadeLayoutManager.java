@@ -20,9 +20,11 @@ package com.android.systemui.recents.oneui.styles;
 import android.content.Context;
 import android.content.res.Configuration;
 import android.graphics.Insets;
+import android.graphics.Outline;
 import android.graphics.Path;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewOutlineProvider;
 import android.view.WindowInsets;
 
 import androidx.recyclerview.widget.RecyclerView;
@@ -93,10 +95,12 @@ class CascadeLayoutManager extends RecyclerView.LayoutManager {
     /** recents_layout_top_margin_phone == side_margin_phone == bottom_margin == min_margin. */
     private static final float MARGIN_DP = 16f;
     /**
-     * Bottom space reserved so the front card clears the host's floating "Close all" pill, which
-     * sits 48-88dp above the screen bottom. Matches GraceUxStyle's reserve.
+     * {@code AnimateableViewBounds.MIN_ALPHA} / {@code MAX_ALPHA}: the range the depth-driven
+     * {@code viewOutlineAlpha} (0..2) is mapped into, so the shadows of cards further back are
+     * fainter. The outline alpha is what scales the elevation shadow's opacity.
      */
-    private static final float PILL_RESERVE_DP = 100f;
+    private static final float OUTLINE_ALPHA_MIN = 0.1f;
+    private static final float OUTLINE_ALPHA_MAX = 0.8f;
     /** recents_layout_top_peek_size: how far below the stack top the scroll-origin card sits. */
     private static final float TOP_PEEK_DP = 48f;
     /** recents_layout_initial_top_offset_phone_port / _phone_land. */
@@ -181,6 +185,36 @@ class CascadeLayoutManager extends RecyclerView.LayoutManager {
 
     private int mPendingScrollPosition = RecyclerView.NO_POSITION;
     private boolean mHasLaidOut;
+
+    /** Told after every layout or scroll pass; the style moves its "Clear all" with the stack. */
+    private Runnable mStackChangedListener;
+
+    void setStackChangedListener(Runnable listener) {
+        mStackChangedListener = listener;
+    }
+
+    /** Top of the stack rect, in list coordinates. */
+    int getStackTop() {
+        return mStackTop;
+    }
+
+    /** How far the stack is from its back-most scroll position, in task units. */
+    float getScrollFromBack() {
+        return mScrollP - mMinScrollP;
+    }
+
+    /** Height of the stack rect, i.e. how far a card has to travel to leave it downwards. */
+    int getStackHeight() {
+        return mStackHeight;
+    }
+
+    int getMarginPx() {
+        return Math.round(MARGIN_DP * mDensity);
+    }
+
+    int getTopPeekPx() {
+        return Math.round(TOP_PEEK_DP * mDensity);
+    }
 
     CascadeLayoutManager(Context context) {
         mContext = context;
@@ -307,6 +341,9 @@ class CascadeLayoutManager extends RecyclerView.LayoutManager {
             measureCard(child);
             applyTransform(child, position, itemCount);
         }
+        if (mStackChangedListener != null) {
+            mStackChangedListener.run();
+        }
     }
 
     /**
@@ -378,6 +415,9 @@ class CascadeLayoutManager extends RecyclerView.LayoutManager {
         // is swiping to max(elevation) + 1 and only inspects elevation when finding that maximum.
         // Both feed View.getZ(), which is what hwui sorts draws and touch dispatch by.
         child.setElevation(mMinTranslationZ + boundedNormX * (mMaxTranslationZ - mMinTranslationZ));
+        // viewOutlineAlpha = mapRange(boundedNormX, 0, 2), then mapRange into 0.1..0.8.
+        DepthOutline.of(child).setAlpha(Math.min(1f,
+                OUTLINE_ALPHA_MIN + boundedNormX * 2f * (OUTLINE_ALPHA_MAX - OUTLINE_ALPHA_MIN)));
 
         final float dimNormX = getNormalizedX(taskP - Math.min(mScrollP, mMaxScrollP));
         final View dim = child.findViewById(R.id.oneui_recents_grace_dim);
@@ -471,13 +511,10 @@ class CascadeLayoutManager extends RecyclerView.LayoutManager {
 
         mStackTop = statusBarInset + margin;
         mStackHeight = Math.max(1, getHeight() - mStackTop);
-        // AOSP 7.1.1 used navBarInset + 16dp here, but it put its "Clear all" affordance in a band
-        // at the TOP of the stack. IchthysOS follows Samsung and puts "Close all" at the bottom
-        // centre, where it occupies roughly 48-88dp — so 7.1.1's offset left the front card's
-        // lowest ~24dp sitting underneath the pill. Reserve enough to clear it, matching what
-        // GraceUxStyle already does. Everything downstream still derives from this offset, so the
-        // curve identity (cardHeight == stackHeight - topOffset - bottomOffset) is preserved.
-        mStackBottomOffset = Math.max(navBarInset + margin, Math.round(PILL_RESERVE_DP * mDensity));
+        // 7.1.1's own mStackBottomOffset: nav bar inset + the 16dp bottom margin. The "Clear all"
+        // button is back where 7.1.1 had it, in the band at the top of the stack (see
+        // GraceCascadeStyle#styleClearAll), so nothing has to be reserved at the bottom.
+        mStackBottomOffset = navBarInset + margin;
         mInitialTopOffset = Math.round(
                 (landscape ? INITIAL_TOP_OFFSET_LAND_DP : INITIAL_TOP_OFFSET_PORT_DP) * mDensity);
 
@@ -604,5 +641,41 @@ class CascadeLayoutManager extends RecyclerView.LayoutManager {
 
     private static float clamp01(float value) {
         return Math.max(0f, Math.min(1f, value));
+    }
+
+    /**
+     * The card's background outline with a settable alpha, 7.1.1's {@code AnimateableViewBounds}
+     * minus the animated clip. Installed on first use and kept on the recycled view.
+     */
+    static final class DepthOutline extends ViewOutlineProvider {
+        private final View mView;
+        private float mAlpha = 1f;
+
+        private DepthOutline(View view) {
+            mView = view;
+        }
+
+        static DepthOutline of(View view) {
+            final ViewOutlineProvider current = view.getOutlineProvider();
+            if (current instanceof DepthOutline) {
+                return (DepthOutline) current;
+            }
+            final DepthOutline outline = new DepthOutline(view);
+            view.setOutlineProvider(outline);
+            return outline;
+        }
+
+        void setAlpha(float alpha) {
+            if (Float.compare(mAlpha, alpha) != 0) {
+                mAlpha = alpha;
+                mView.invalidateOutline();
+            }
+        }
+
+        @Override
+        public void getOutline(View view, Outline outline) {
+            ViewOutlineProvider.BACKGROUND.getOutline(view, outline);
+            outline.setAlpha(mAlpha);
+        }
     }
 }

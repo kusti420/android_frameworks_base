@@ -30,12 +30,14 @@
             android:orientation="horizontal"
             android:gravity="center_vertical"
             android:paddingHorizontal="16dp">
+            <!-- 7.1.1 header: a 56dp icon cell padded 8/8/16/12 (a 28dp icon 16dp in), the title
+                 starting exactly one header-height in, 16sp sans-serif-medium. -->
 
             <ImageView
                 android:id="@id/oneui_recents_card_icon"
                 android:layout_width="28dp"
                 android:layout_height="28dp"
-                android:layout_marginEnd="16dp"
+                android:layout_marginEnd="12dp"
                 android:scaleType="fitCenter"
                 android:contentDescription="@null" />
 
@@ -46,8 +48,9 @@
                 android:layout_weight="1"
                 android:ellipsize="end"
                 android:maxLines="1"
-                android:textColor="#FFFFFFFF"
-                android:textSize="16sp" />
+                android:textColor="#FFEEEEEE"
+                android:textSize="16sp"
+                android:fontFamily="sans-serif-medium" />
 
             <!-- The precise way to close a task, next to the swipe. Sized to the 48dp minimum
                  touch target — a glyph plus 8dp of padding is about 30dp across, which is a hard
