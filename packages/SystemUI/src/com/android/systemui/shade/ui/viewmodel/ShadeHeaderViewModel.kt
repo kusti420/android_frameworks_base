@@ -77,7 +77,7 @@ constructor(
     private val clockInteractor: ClockInteractor,
     private val batteryMeterViewControllerFactory: BatteryMeterViewController.Factory,
     val statusBarIconController: StatusBarIconController,
-    val batteryViewModelFactory: BatteryViewModel.AlwaysShowPercent.Factory,
+    val batteryViewModelFactory: BatteryViewModel.QsHeader.Factory,
     val systemStatusIconsViewModelFactory: SystemStatusIconsViewModel.Factory,
     val kairosNetwork: KairosNetwork,
     val mobileIconsViewModelKairos: dagger.Lazy<MobileIconsViewModelKairos>,

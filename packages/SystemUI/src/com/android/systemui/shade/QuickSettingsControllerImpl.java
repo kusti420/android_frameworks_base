@@ -743,6 +743,21 @@ public class QuickSettingsControllerImpl implements QuickSettingsController, Dum
     }
 
     /**
+     * IchthysOS: crDroid's {@code enable_lockscreen_quick_settings}. When off, Quick Settings
+     * cannot be pulled down while the keyguard is showing, so the shade's QS is only reachable
+     * after unlocking.
+     *
+     * <p>Defaults to on, matching the preference XML. Read the same way as the neighbouring
+     * pulldown settings: on demand, per current user, because the shade's context user is not
+     * necessarily the foreground user.
+     */
+    private boolean isLockscreenQuickSettingsEnabled() {
+        return Settings.System.getIntForUser(
+                mPanelView.getContext().getContentResolver(),
+                "enable_lockscreen_quick_settings", 1, UserHandle.USER_CURRENT) != 0;
+    }
+
+    /**
      * Returns Whether we should intercept a gesture to open Quick Settings.
      */
     @Override
@@ -752,6 +767,9 @@ public class QuickSettingsControllerImpl implements QuickSettingsController, Dum
             return false;
         }
         boolean keyguardShowing = mBarState == KEYGUARD;
+        if (keyguardShowing && !isLockscreenQuickSettingsEnabled()) {
+            return false;
+        }
         if (!isExpansionEnabled() || mCollapsedOnDown || (keyguardShowing
                 && mKeyguardBypassController.getBypassEnabled() && !Flags.expandQsBypassEnabled())
                 || mSplitShadeEnabled) {

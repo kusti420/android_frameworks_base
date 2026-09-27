@@ -18,7 +18,6 @@ package com.android.systemui.qs.tiles.impl.flashlight.ui.mapper
 
 import android.content.res.Resources
 import android.content.res.Resources.Theme
-import android.widget.Button
 import android.widget.Switch
 import com.android.systemui.common.shared.model.Icon
 import com.android.systemui.flashlight.flags.FlashlightStrength
@@ -105,9 +104,10 @@ constructor(
                 )
         }
         if (hasLevel) {
+            // IchthysOS: tap toggles on/off, long-press opens brightness slider
             supportedActions =
-                setOf(QSTileState.UserAction.CLICK, QSTileState.UserAction.TOGGLE_CLICK)
-            expandedAccessibilityClass = Button::class
+                setOf(QSTileState.UserAction.CLICK, QSTileState.UserAction.LONG_CLICK)
+            expandedAccessibilityClass = Switch::class
         } else {
             supportedActions = setOf(QSTileState.UserAction.CLICK)
             expandedAccessibilityClass = Switch::class

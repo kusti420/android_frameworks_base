@@ -44,26 +44,12 @@ constructor(
         with(input) {
             when (action) {
                 is QSTileUserAction.Click -> {
-                    Log.e(TAG, "Click: strengthFlag=${FlashlightStrength.isEnabled} data=${input.data} monkey=${ActivityManager.isUserAMonkey()}")
                     if (FlashlightStrength.isEnabled) {
-                        if (!ActivityManager.isUserAMonkey()) {
-                            when (input.data) {
-                                is FlashlightModel.Available.Level -> {
-                                    Log.e(TAG, "Click: Level state, showing brightness dialog")
-                                    flashlightInteractor.get().setEnabled(true)
-                                    // the ui code runs on the main thread
-                                    flashlightDialogDelegate.get().showDialog(input.action.expandable)
-                                }
-                                // IchthysOS: handle Binary state on Click — devices without
-                                // adjustable brightness levels should still toggle on tap
-                                is FlashlightModel.Available.Binary -> {
-                                    Log.e(TAG, "Click: Binary state enabled=${input.data.enabled}, toggling to ${!input.data.enabled}")
-                                    flashlightController.setFlashlight(!input.data.enabled)
-                                }
-                                else -> {
-                                    Log.e(TAG, "Click: unhandled state ${input.data}")
-                                }
-                            }
+                        // IchthysOS: single tap toggles the flashlight on/off
+                        // (defaults to max brightness via FlashlightRepositoryImpl)
+                        if (!ActivityManager.isUserAMonkey() &&
+                                input.data is FlashlightModel.Available) {
+                            flashlightInteractor.get().setEnabled(!input.data.enabled)
                         }
                     } else { // preserve old behavior at the cost of some redundancy
                         if (
@@ -83,7 +69,25 @@ constructor(
                         flashlightInteractor.get().setEnabled(!data.enabled)
                     }
                 }
-                is QSTileUserAction.LongClick -> {}
+                is QSTileUserAction.LongClick -> {
+                    // IchthysOS: long-press opens brightness slider for adjustable flashlights
+                    if (FlashlightStrength.isEnabled && !ActivityManager.isUserAMonkey()) {
+                        when (input.data) {
+                            is FlashlightModel.Available.Level -> {
+                                Log.d(TAG, "LongClick: Level state, showing brightness dialog")
+                                // Ensure flashlight is on before showing the slider
+                                if (!input.data.enabled) {
+                                    flashlightInteractor.get().setEnabled(true)
+                                }
+                                flashlightDialogDelegate.get().showDialog(input.action.expandable)
+                            }
+                            else -> {
+                                // Binary or unavailable — no brightness slider available
+                                Log.d(TAG, "LongClick: no adjustable levels, ignoring")
+                            }
+                        }
+                    }
+                }
             }
         }
 

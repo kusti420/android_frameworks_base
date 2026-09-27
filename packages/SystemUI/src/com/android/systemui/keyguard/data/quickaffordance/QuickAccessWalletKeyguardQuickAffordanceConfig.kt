@@ -18,6 +18,8 @@
 package com.android.systemui.keyguard.data.quickaffordance
 
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.drawable.Drawable
 import android.service.quickaccesswallet.GetWalletCardsError
 import android.service.quickaccesswallet.GetWalletCardsResponse
@@ -106,7 +108,9 @@ constructor(
                 // If hasCards is null, this indicates an error occurred upon card retrieval
                 val state =
                     if (hasCards == null) {
-                        KeyguardQuickAffordanceConfig.LockScreenState.Hidden
+                        // IchthysOS: If wallet service failed but Curve Pay is installed,
+                        // still show the affordance so the user can launch Curve Pay.
+                        curvePayFallbackState()
                     } else {
                         state(isWalletAvailable(), hasCards, walletController.walletClient.tileIcon)
                     }
@@ -114,38 +118,60 @@ constructor(
             }
 
     override suspend fun getPickerScreenState(): KeyguardQuickAffordanceConfig.PickerScreenState {
+        // IchthysOS: Allow picking the wallet affordance when Curve Pay is installed,
+        // even if no QuickAccessWalletService is available.
         return when {
+            walletController.walletClient.isWalletServiceAvailable && isWalletAvailable() -> {
+                if (queryCards().isEmpty()) {
+                    KeyguardQuickAffordanceConfig.PickerScreenState.Disabled(
+                        explanation =
+                            context.getString(
+                                R.string.wallet_quick_affordance_unavailable_configure_the_app
+                            )
+                    )
+                } else {
+                    KeyguardQuickAffordanceConfig.PickerScreenState.Default()
+                }
+            }
+
+            isCurvePayInstalled() ->
+                KeyguardQuickAffordanceConfig.PickerScreenState.Default()
+
             !walletController.walletClient.isWalletServiceAvailable ->
                 KeyguardQuickAffordanceConfig.PickerScreenState.UnavailableOnDevice
 
-            !isWalletAvailable() ->
+            else ->
                 KeyguardQuickAffordanceConfig.PickerScreenState.Disabled(
                     explanation =
                         context.getString(
                             R.string.wallet_quick_affordance_unavailable_install_the_app
                         )
                 )
-
-            queryCards().isEmpty() ->
-                KeyguardQuickAffordanceConfig.PickerScreenState.Disabled(
-                    explanation =
-                        context.getString(
-                            R.string.wallet_quick_affordance_unavailable_configure_the_app
-                        )
-                )
-
-            else -> KeyguardQuickAffordanceConfig.PickerScreenState.Default()
         }
     }
 
     override fun onTriggered(
         expandable: Expandable?
     ): KeyguardQuickAffordanceConfig.OnTriggeredResult {
-        walletController.startQuickAccessUiIntent(
-            activityStarter,
-            expandable?.activityTransitionController(),
-            /* hasCard= */ true,
-        )
+        if (walletController.walletClient.isWalletServiceAvailable) {
+            walletController.startQuickAccessUiIntent(
+                activityStarter,
+                expandable?.activityTransitionController(),
+                /* hasCard= */ true,
+            )
+        } else {
+            // IchthysOS: Wallet service not available (e.g. Curve Pay doesn't implement
+            // QuickAccessWalletService). Launch Curve Pay directly.
+            val curveIntent = context.packageManager
+                .getLaunchIntentForPackage(CURVE_PAY_PACKAGE)
+            if (curveIntent != null) {
+                activityStarter.postStartActivityDismissingKeyguard(
+                    curveIntent,
+                    /* delay= */ 0,
+                    expandable?.activityTransitionController(),
+                )
+            }
+        }
         return KeyguardQuickAffordanceConfig.OnTriggeredResult.Handled(true)
     }
 
@@ -200,12 +226,52 @@ constructor(
                     )
                 }
             KeyguardQuickAffordanceConfig.LockScreenState.Visible(icon = icon)
+        } else if (isCurvePayInstalled()) {
+            // IchthysOS: Wallet service not available but Curve Pay is installed.
+            // Show the lockscreen affordance with the wallet icon so the user can
+            // launch Curve Pay from the lockscreen.
+            curvePayFallbackState()
         } else {
+            KeyguardQuickAffordanceConfig.LockScreenState.Hidden
+        }
+    }
+
+    /**
+     * IchthysOS: Check if Curve Pay is installed.
+     */
+    private fun isCurvePayInstalled(): Boolean {
+        return try {
+            context.packageManager.getApplicationInfo(CURVE_PAY_PACKAGE, 0)
+            true
+        } catch (e: PackageManager.NameNotFoundException) {
+            false
+        }
+    }
+
+    /**
+     * IchthysOS: Return a Visible lockscreen state using the Curve Pay app icon,
+     * or the default wallet icon if loading fails.
+     */
+    private fun curvePayFallbackState(): KeyguardQuickAffordanceConfig.LockScreenState {
+        return try {
+            val ai = context.packageManager.getApplicationInfo(CURVE_PAY_PACKAGE, 0)
+            val appIcon = context.packageManager.getApplicationIcon(ai)
+            val drawable = appIcon.constantState?.newDrawable() ?: appIcon
+            KeyguardQuickAffordanceConfig.LockScreenState.Visible(
+                icon = Icon.Loaded(
+                    drawable = drawable,
+                    contentDescription =
+                        ContentDescription.Resource(res = R.string.accessibility_wallet_button),
+                )
+            )
+        } catch (e: PackageManager.NameNotFoundException) {
             KeyguardQuickAffordanceConfig.LockScreenState.Hidden
         }
     }
 
     companion object {
         private const val TAG = "QuickAccessWalletKeyguardQuickAffordanceConfig"
+        // IchthysOS: Curve Pay as preferred wallet app (replaces Google Wallet)
+        private const val CURVE_PAY_PACKAGE = "com.imaginecurve.curve.prd"
     }
 }

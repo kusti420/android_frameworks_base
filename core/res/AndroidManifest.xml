@@ -6949,6 +6949,17 @@
     <permission android:name="android.permission.INSTALL_PACKAGES"
       android:protectionLevel="signature|privileged" />
 
+    <!-- IchthysOS: allows a package to report a signature other than the one it was signed with,
+         by declaring a "fake-signature" application meta-data entry. This exists so microG's
+         GmsCore can stand in for Google Play services, which apps identify by signature.
+         Deliberately signature|privileged: only packages this ROM ships in /system/priv-app can
+         hold it, so a sideloaded app cannot claim another app's identity.
+         <p>Not for use by third-party applications.
+         @hide
+    -->
+    <permission android:name="android.permission.FAKE_PACKAGE_SIGNATURE"
+      android:protectionLevel="signature|privileged" />
+
     <!-- @SystemApi Allows an application to install self updates. This is a limited version
          of {@link android.Manifest.permission#INSTALL_PACKAGES}.
         <p>Not for use by third-party applications.

@@ -34,6 +34,8 @@ import libcore.util.HexEncoding;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import com.android.internal.util.ichthys.PropImitationHooks;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -148,6 +150,9 @@ public class SystemProperties {
     @SystemApi
     public static String get(@NonNull String key) {
         if (TRACK_KEY_ACCESS) onKeyAccess(key);
+        // IchthysOS: check PIF property overrides for spoofed processes
+        String override = PropImitationHooks.getPropertyOverride(key);
+        if (override != null) return override;
         return native_get(key);
     }
 
@@ -164,6 +169,9 @@ public class SystemProperties {
     @SystemApi
     public static String get(@NonNull String key, @Nullable String def) {
         if (TRACK_KEY_ACCESS) onKeyAccess(key);
+        // IchthysOS: check PIF property overrides for spoofed processes
+        String override = PropImitationHooks.getPropertyOverride(key);
+        if (override != null) return override;
         return native_get(key, def);
     }
 

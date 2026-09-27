@@ -1131,9 +1131,17 @@ private suspend fun synchronizeQsState(
                 state.setTargetScene(SceneKeys.QuickSettings, animationScope)?.second?.join()
             }
             if (!editMode) {
-                when (progress) {
-                    0f -> snapTo(QuickQuickSettings)
-                    1f -> snapTo(QuickSettings)
+                // IchthysOS: use a threshold instead of exact equality so that
+                // EARLY_EXPANSION (1e-6f, clamped by the view-model while isQsExpanded
+                // is still true) is treated as "at QQS."  Without this the STL stays in
+                // transition mode after collapse, and the Element approach-layout keeps
+                // overriding the idle grid placement — causing rightmost QQS tiles to
+                // settle at wrong positions until the shade is fully dismissed.
+                when {
+                    progress <= PROGRESS_SNAP_THRESHOLD ->
+                        snapTo(QuickQuickSettings)
+                    progress >= 1f - PROGRESS_SNAP_THRESHOLD ->
+                        snapTo(QuickSettings)
                     else -> {
                         val transition = currentTransition
                         if (transition != null) {
@@ -1191,6 +1199,14 @@ private class ExpansionTransition(currentProgress: Float) :
 }
 
 private const val EDIT_MODE_TIME_MILLIS = 500
+
+/**
+ * Progress values this close to 0 or 1 are treated as having reached the idle scene in
+ * [synchronizeQsState].  Must be above [QSFragmentComposeViewModel.EARLY_EXPANSION] (1e-6f)
+ * so that the clamped near-zero progress snaps the STL to idle QQS instead of keeping the
+ * transition alive.
+ */
+private const val PROGRESS_SNAP_THRESHOLD = 1e-4f
 
 /**
  * Performs different touch handling based on the state of the ComposeView:

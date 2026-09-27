@@ -16,6 +16,8 @@
 
 package com.android.systemui.statusbar.policy
 
+import android.content.Context
+import android.content.pm.PackageManager
 import android.service.quickaccesswallet.QuickAccessWalletClient
 import android.util.Log
 
@@ -28,24 +30,39 @@ import javax.inject.Inject
  */
 @SysUISingleton
 public class WalletControllerImpl @Inject constructor(
+    private val context: Context,
     private val quickAccessWalletClient: QuickAccessWalletClient
 ) : WalletController {
 
     companion object {
         private const val TAG = "WalletControllerImpl"
         internal const val QS_PRIORITY_POSITION = 3
+        // IchthysOS: Curve Pay as preferred wallet app (replaces Google Wallet)
+        private const val CURVE_PAY_PACKAGE = "com.imaginecurve.curve.prd"
     }
 
     /**
      * @return QS_PRIORITY_POSITION or null to indicate no tile should be set
      */
     override fun getWalletPosition(): Int? {
-        return if (quickAccessWalletClient.isWalletServiceAvailable()) {
+        return if (quickAccessWalletClient.isWalletServiceAvailable() || isCurvePayInstalled()) {
             Log.i(TAG, "Setting WalletTile position: $QS_PRIORITY_POSITION")
             QS_PRIORITY_POSITION
         } else {
             Log.i(TAG, "Setting WalletTile position: null")
             null
+        }
+    }
+
+    /**
+     * IchthysOS: Check if Curve Pay is installed.
+     */
+    private fun isCurvePayInstalled(): Boolean {
+        return try {
+            context.packageManager.getApplicationInfo(CURVE_PAY_PACKAGE, 0)
+            true
+        } catch (e: PackageManager.NameNotFoundException) {
+            false
         }
     }
 }

@@ -48,7 +48,6 @@ import com.android.systemui.qs.tiles.base.shared.model.QSTileUserAction
 import com.android.systemui.qs.tiles.impl.flashlight.domain.interactor.FlashlightTileDataInteractor
 import com.android.systemui.qs.tiles.impl.flashlight.domain.interactor.FlashlightTileUserActionInteractor
 import com.android.systemui.qs.tiles.impl.flashlight.ui.mapper.FlashlightTileMapper
-import android.util.Log
 import com.android.systemui.res.R
 import javax.inject.Inject
 import kotlinx.coroutines.launch
@@ -98,7 +97,8 @@ constructor(
 
     override fun newTileState(): BooleanState {
         val state = BooleanState()
-        state.handlesLongClick = false
+        // IchthysOS: long-press opens flashlight brightness slider
+        state.handlesLongClick = true
         return state
     }
 
@@ -109,7 +109,6 @@ constructor(
     override fun getTileLabel() = mContext.getString(config.uiConfig.labelRes)
 
     override fun handleClick(expandable: Expandable?) {
-        Log.e("IchthysFlash", "handleClick called! expandable=$expandable")
         handleAction(QSTileUserAction.Click(expandable))
     }
 
@@ -124,13 +123,10 @@ constructor(
     override fun getLongClickIntent() = null
 
     private fun handleAction(action: QSTileUserAction) = runBlocking {
-        Log.e("IchthysFlash", "handleAction: action=$action")
         val data = dataInteractor.getCurrentTileModel()
-        Log.e("IchthysFlash", "handleAction: data=$data")
         val user = UserHandle.of(currentTileUser)
         val qsTileInput = QSTileInput(user, action, data)
         userActionInteractor.handleInput(qsTileInput)
-        Log.e("IchthysFlash", "handleAction: handleInput returned")
     }
 
     @VisibleForTesting

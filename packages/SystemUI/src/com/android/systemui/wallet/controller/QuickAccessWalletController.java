@@ -26,6 +26,7 @@ import android.app.role.OnRoleHoldersChangedListener;
 import android.app.role.RoleManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.database.ContentObserver;
 import android.os.UserHandle;
 import android.provider.Settings;
@@ -68,6 +69,9 @@ public class QuickAccessWalletController {
 
     private static final String TAG = "QAWController";
     private static final long RECREATION_TIME_WINDOW = TimeUnit.MINUTES.toMillis(10L);
+
+    // IchthysOS: Curve Pay as preferred wallet app (replaces Google Wallet)
+    private static final String CURVE_PAY_PACKAGE = "com.imaginecurve.curve.prd";
     private final Context mContext;
     private final Executor mExecutor;
     private final Executor mBgExecutor;
@@ -262,6 +266,15 @@ public class QuickAccessWalletController {
      */
     public void startGestureUiIntent(ActivityStarter activityStarter,
             ActivityTransitionAnimator.Controller animationController){
+        if (!mQuickAccessWalletClient.isWalletServiceAvailable()) {
+            // IchthysOS: No wallet service available. Try launching Curve Pay directly.
+            Intent curveIntent = getCurvePayLaunchIntent();
+            if (curveIntent != null) {
+                activityStarter.postStartActivityDismissingKeyguard(
+                        curveIntent, /* delay= */ 0, animationController);
+                return;
+            }
+        }
         mQuickAccessWalletClient.getGestureTargetActivityPendingIntent(
                 mExecutor,
                 gesturePendingIntent -> {
@@ -308,6 +321,11 @@ public class QuickAccessWalletController {
                     if (!hasCard) {
                         intent = mQuickAccessWalletClient.createWalletIntent();
                     }
+                    // IchthysOS: If no wallet intent available, try Curve Pay
+                    // before falling back to the SysUI WalletActivity.
+                    if (intent == null) {
+                        intent = getCurvePayLaunchIntent();
+                    }
                     if (intent == null) {
                         intent = getSysUiWalletIntent();
                     }
@@ -337,6 +355,13 @@ public class QuickAccessWalletController {
     private Intent getSysUiWalletIntent() {
         return new Intent(mContext, WalletActivity.class)
                 .setAction(Intent.ACTION_VIEW);
+    }
+
+    /**
+     * IchthysOS: Get a launch intent for Curve Pay, or null if not installed.
+     */
+    private Intent getCurvePayLaunchIntent() {
+        return mContext.getPackageManager().getLaunchIntentForPackage(CURVE_PAY_PACKAGE);
     }
 
     private void startQuickAccessViaIntent(Intent intent,

@@ -165,9 +165,36 @@ public class KeyStoreSecurityLevel {
             Collection<KeyParameter> args, int flags, byte[] entropy)
             throws KeyStoreException {
         StrictMode.noteDiskWrite();
-        return retryBusyException(() -> mSecurityLevel.generateKey(
+        KeyMetadata metadata = retryBusyException(() -> mSecurityLevel.generateKey(
                 descriptor, attestationKey, args.toArray(new KeyParameter[args.size()]),
                 flags, entropy));
+
+        // IchthysOS: attestation chain forgery at the KeyMetadata level.
+        // This intercepts the attestation certificates before they propagate to
+        // AndroidKeyStoreKeyPairGeneratorSpi or any other consumer, so the forged
+        // chain gets stored in the keystore automatically and every subsequent
+        // getCertificateChain() call returns the forged chain.
+        if (metadata != null && metadata.certificate != null) {
+            try {
+                final android.content.Context ctx =
+                        android.app.ActivityThread.currentApplication();
+                if (ctx != null) {
+                    final byte[][] forged =
+                            com.android.internal.util.ichthys.KeyboxAttestation
+                                    .maybeForgeChainDer(ctx,
+                                            metadata.certificate,
+                                            metadata.certificateChain);
+                    if (forged != null) {
+                        metadata.certificate = forged[0];
+                        metadata.certificateChain = forged[1];
+                    }
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "IchthysOS attestation forgery failed, returning original", e);
+            }
+        }
+
+        return metadata;
     }
 
     /**

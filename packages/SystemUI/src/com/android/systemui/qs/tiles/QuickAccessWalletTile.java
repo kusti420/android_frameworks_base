@@ -29,6 +29,7 @@ import static com.android.systemui.wallet.controller.QuickAccessWalletController
 import static com.android.systemui.wallet.util.WalletCardUtilsKt.getPaymentCards;
 
 import android.content.Intent;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.graphics.drawable.Drawable;
 import android.os.Handler;
@@ -76,6 +77,9 @@ public class QuickAccessWalletTile extends QSTileImpl<QSTile.State> {
 
     private static final String TAG = "QuickAccessWalletTile";
     private static final String FEATURE_CHROME_OS = "org.chromium.arc";
+
+    // IchthysOS: Curve Pay as preferred wallet app (replaces Google Wallet)
+    private static final String CURVE_PAY_PACKAGE = "com.imaginecurve.curve.prd";
 
     private final CharSequence mLabel = mContext.getString(R.string.wallet_title);
     private final WalletCardRetriever mCardRetriever = new WalletCardRetriever();
@@ -147,9 +151,23 @@ public class QuickAccessWalletTile extends QSTileImpl<QSTile.State> {
                     if (mSelectedCard != null) {
                         mController.startWalletCardPendingIntent(
                                 mSelectedCard, mActivityStarter, animationController);
-                    } else {
+                    } else if (mController.getWalletClient().isWalletServiceAvailable()) {
                         mController.startQuickAccessUiIntent(
                                 mActivityStarter, animationController, false);
+                    } else {
+                        // IchthysOS: No wallet service available (e.g. Curve Pay doesn't
+                        // implement QuickAccessWalletService). Launch Curve Pay directly.
+                        Intent curveIntent = getCurvePayLaunchIntent();
+                        if (curveIntent != null) {
+                            mActivityStarter.postStartActivityDismissingKeyguard(
+                                    curveIntent, /* delay= */ 0, animationController);
+                        } else {
+                            // Last resort: open NFC payment settings
+                            mActivityStarter.postStartActivityDismissingKeyguard(
+                                    new Intent(
+                                        android.provider.Settings.ACTION_NFC_PAYMENT_SETTINGS),
+                                    /* delay= */ 0, animationController);
+                        }
                     }
                 });
     }
@@ -181,6 +199,25 @@ public class QuickAccessWalletTile extends QSTileImpl<QSTile.State> {
                 state.sideViewCustomDrawable = null;
             }
             state.stateDescription = state.secondaryLabel;
+        } else if (isCurvePayInstalled()) {
+            // IchthysOS: Curve Pay is installed but doesn't provide a
+            // QuickAccessWalletService. Show the tile as inactive so the user
+            // can still tap it to open Curve Pay.
+            state.state = Tile.STATE_INACTIVE;
+            try {
+                ApplicationInfo ai = mPackageManager.getApplicationInfo(CURVE_PAY_PACKAGE, 0);
+                CharSequence curveLabel = mPackageManager.getApplicationLabel(ai);
+                state.label = curveLabel;
+                state.contentDescription = curveLabel;
+                Drawable curveIcon = mPackageManager.getApplicationIcon(ai);
+                if (curveIcon != null) {
+                    state.icon = new DrawableIcon(curveIcon);
+                }
+            } catch (PackageManager.NameNotFoundException e) {
+                // Shouldn't happen since we just checked, but fall back gracefully
+            }
+            state.secondaryLabel = null;
+            state.sideViewCustomDrawable = null;
         } else {
             state.state = Tile.STATE_UNAVAILABLE;
             state.secondaryLabel = null;
@@ -196,17 +233,45 @@ public class QuickAccessWalletTile extends QSTileImpl<QSTile.State> {
 
     @Override
     public boolean isAvailable() {
+        if (mPackageManager.hasSystemFeature(FEATURE_CHROME_OS)) {
+            return false;
+        }
         if (isWalletRoleAvailable()) {
-            return !mPackageManager.hasSystemFeature(FEATURE_CHROME_OS);
+            return true;
+        }
+        // IchthysOS: also show the tile when Curve Pay is installed, even if no
+        // NFC payment default has been set yet (Curve Pay may not register a
+        // QuickAccessWalletService, but the tile should still launch it).
+        if (isCurvePayInstalled()) {
+            return true;
         }
         return mPackageManager.hasSystemFeature(PackageManager.FEATURE_NFC_HOST_CARD_EMULATION)
-                && !mPackageManager.hasSystemFeature(FEATURE_CHROME_OS)
                 && mSecureSettings.getStringForUser(NFC_PAYMENT_DEFAULT_COMPONENT,
                     UserHandle.USER_CURRENT) != null;
     }
 
     private boolean isWalletRoleAvailable() {
         return mHost.getUserId() == UserHandle.USER_SYSTEM && mController.isWalletRoleAvailable();
+    }
+
+    /**
+     * IchthysOS: Check if Curve Pay is installed.
+     */
+    private boolean isCurvePayInstalled() {
+        try {
+            mPackageManager.getApplicationInfo(CURVE_PAY_PACKAGE, 0);
+            return true;
+        } catch (PackageManager.NameNotFoundException e) {
+            return false;
+        }
+    }
+
+    /**
+     * IchthysOS: Get a launch intent for Curve Pay.
+     */
+    @Nullable
+    private Intent getCurvePayLaunchIntent() {
+        return mPackageManager.getLaunchIntentForPackage(CURVE_PAY_PACKAGE);
     }
 
     @Nullable

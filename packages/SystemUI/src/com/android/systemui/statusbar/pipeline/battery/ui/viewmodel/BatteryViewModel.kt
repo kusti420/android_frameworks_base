@@ -49,6 +49,10 @@ import kotlinx.coroutines.flow.map
 sealed class BatteryViewModel(
     val interactor: BatteryInteractor,
     shouldShowPercent: Flow<Boolean>,
+    // crDroid "next to icon" percent mode. Parameterized rather than read straight off the
+    // interactor so the QS header can follow `qs_show_battery_percent` instead of the status bar
+    // key (see [QsHeader]).
+    showPercentNextToIconFlow: Flow<Boolean>,
     @Application context: Context,
 ) : HydratedActivatable() {
 
@@ -74,12 +78,12 @@ sealed class BatteryViewModel(
      * than as glyphs inside it. In this mode the inside glyphs are suppressed below.
      */
     val showPercentNextToIcon: Boolean by
-        interactor.isBatteryPercentNextToIconEnabled.hydratedStateOf(initialValue = false)
+        showPercentNextToIconFlow.hydratedStateOf(initialValue = false)
 
     private val _glyphList: Flow<List<BatteryGlyph>> =
         combine(
             shouldShowPercent,
-            interactor.isBatteryPercentNextToIconEnabled,
+            showPercentNextToIconFlow,
             interactor.batteryStyle,
             interactor.level,
         ) { showPercent, nextToIcon, style, level ->
@@ -235,6 +239,7 @@ sealed class BatteryViewModel(
                 ) { settingEnabled, charging, textCharging ->
                     settingEnabled || (charging && textCharging)
                 },
+            showPercentNextToIconFlow = interactor.isBatteryPercentNextToIconEnabled,
             context = context,
         ) {
 
@@ -259,6 +264,7 @@ sealed class BatteryViewModel(
                     settingEnabled ->
                     charging || settingEnabled
                 },
+            showPercentNextToIconFlow = interactor.isBatteryPercentNextToIconEnabled,
             context = context,
         ) {
 
@@ -275,12 +281,34 @@ sealed class BatteryViewModel(
         BatteryViewModel(
             interactor = interactor,
             shouldShowPercent = flowOf(true),
+            showPercentNextToIconFlow = interactor.isBatteryPercentNextToIconEnabled,
             context = context,
         ) {
 
         @AssistedFactory
         fun interface Factory : BatteryViewModel.Factory {
             override fun create(): AlwaysShowPercent
+        }
+    }
+
+    /**
+     * IchthysOS: the QS header battery. crDroid `qs_show_battery_percent` overrides the status bar
+     * percent setting for the QS header alone; its default value keeps the upstream
+     * [AlwaysShowPercent] behaviour, so the header is unchanged until the user picks a mode.
+     */
+    class QsHeader
+    @AssistedInject
+    constructor(interactor: BatteryInteractor, @Application context: Context) :
+        BatteryViewModel(
+            interactor = interactor,
+            shouldShowPercent = interactor.isQsBatteryPercentSettingEnabled,
+            showPercentNextToIconFlow = interactor.isQsBatteryPercentNextToIconEnabled,
+            context = context,
+        ) {
+
+        @AssistedFactory
+        fun interface Factory : BatteryViewModel.Factory {
+            override fun create(): QsHeader
         }
     }
 

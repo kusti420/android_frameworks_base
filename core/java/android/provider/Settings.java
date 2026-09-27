@@ -14850,6 +14850,65 @@ public final class Settings {
         @SuppressLint({"NoSettingsProvider", "UnflaggedApi"})
         public static final String CONTACTS_LOCKDOWN = "ichthys_contacts_lockdown";
 
+        /**
+         * IchthysOS hearing compensation: whether the per-ear corrective EQ measured by the
+         * Hearing Check app is applied to the global output mix. 0 = off (default), 1 = on.
+         * @hide
+         */
+        @SuppressLint({"NoSettingsProvider", "UnflaggedApi"})
+        public static final String HEARING_COMPENSATION_ENABLED = "hearing_compensation_enabled";
+        /**
+         * IchthysOS hearing compensation: the prescribed curve, as
+         * "L:mB,mB,...;R:mB,mB,..." — one signed millibel gain per band per ear, in the band
+         * order the effect declares (125, 250, 500, 1k, 2k, 4k, 6k, 8k Hz). Empty or malformed
+         * means "no profile", which leaves the EQ flat.
+         * @hide
+         */
+        @SuppressLint({"NoSettingsProvider", "UnflaggedApi"})
+        public static final String HEARING_COMPENSATION_GAINS = "hearing_compensation_gains";
+        /**
+         * IchthysOS hearing compensation: broadband make-up gain in millibels applied after the
+         * corrective EQ, to win back some of the loudness the correction gives away. Clamped to
+         * [0, 1200]; the effect's limiter catches what it pushes over full scale.
+         * @hide
+         */
+        @SuppressLint({"NoSettingsProvider", "UnflaggedApi"})
+        public static final String HEARING_COMPENSATION_MAKEUP = "hearing_compensation_makeup";
+        /**
+         * IchthysOS hearing compensation: set to 1 by the Hearing Check app while a measurement
+         * is running, so the tones are not shaped by the very EQ they are measuring. Cleared on
+         * boot, so a crash mid-test cannot leave the correction silently bypassed forever.
+         * @hide
+         */
+        @SuppressLint({"NoSettingsProvider", "UnflaggedApi"})
+        public static final String HEARING_COMPENSATION_BYPASS = "hearing_compensation_bypass";
+        /**
+         * IchthysOS hearing compensation: the raw measurement the curve was derived from, as
+         * "L:dBFS,...;R:dBFS,..." in tenths of a dB. Kept so the app can re-derive the curve at a
+         * different strength without making the user sit through the beeps again.
+         * @hide
+         */
+        @SuppressLint({"NoSettingsProvider", "UnflaggedApi"})
+        public static final String HEARING_COMPENSATION_THRESHOLDS =
+                "hearing_compensation_thresholds";
+        /**
+         * IchthysOS hearing compensation: how much of the measured loss to correct for, in
+         * percent. 100 is the textbook half-gain rule; the default of 50 is half of that again.
+         * @hide
+         */
+        @SuppressLint({"NoSettingsProvider", "UnflaggedApi"})
+        public static final String HEARING_COMPENSATION_STRENGTH = "hearing_compensation_strength";
+
+        /**
+         * IchthysOS: Google Cast / Chromecast kill-switch (0/1, default 0 = disabled).
+         * When 0, remote display provider discovery is suppressed at the MediaRouterService
+         * level so no app can discover or connect to Cast targets.  When 1, normal Cast
+         * behaviour is restored.
+         * @hide
+         */
+        @SuppressLint({"NoSettingsProvider", "UnflaggedApi"})
+        public static final String CAST_ENABLED = "ichthys_cast_enabled";
+
         // NOTE: If you add new settings here, be sure to add them to
         // com.android.providers.settings.SettingsProtoDumpUtil#dumpProtoGlobalSettingsLocked.
 

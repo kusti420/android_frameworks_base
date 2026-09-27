@@ -77,6 +77,12 @@ class BatteryInteractor @Inject constructor(repo: BatteryRepository) {
     /** @see [BatteryRepository.isShowBatteryPercentNextToIcon] */
     val isBatteryPercentNextToIconEnabled = repo.isShowBatteryPercentNextToIcon
 
+    /** @see [BatteryRepository.isQsShowBatteryPercentSettingEnabled] */
+    val isQsBatteryPercentSettingEnabled = repo.isQsShowBatteryPercentSettingEnabled
+
+    /** @see [BatteryRepository.isQsShowBatteryPercentNextToIcon] */
+    val isQsBatteryPercentNextToIconEnabled = repo.isQsShowBatteryPercentNextToIcon
+
     /** @see [BatteryRepository.batteryStyle] */
     val batteryStyle = repo.batteryStyle
 

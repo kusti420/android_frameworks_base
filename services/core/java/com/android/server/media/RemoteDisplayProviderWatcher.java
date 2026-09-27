@@ -25,9 +25,11 @@ import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.content.pm.ServiceInfo;
+import android.database.ContentObserver;
 import android.media.RemoteDisplayState;
 import android.os.Handler;
 import android.os.UserHandle;
+import android.provider.Settings;
 import android.util.Log;
 import android.util.Slog;
 
@@ -54,6 +56,18 @@ public final class RemoteDisplayProviderWatcher {
     private final ArrayList<RemoteDisplayProviderProxy> mProviders =
             new ArrayList<RemoteDisplayProviderProxy>();
     private boolean mRunning;
+
+    private final ContentObserver mCastSettingObserver = new ContentObserver(null) {
+        @Override
+        public void onChange(boolean selfChange) {
+            mHandler.post(mScanPackagesRunnable);
+        }
+    };
+
+    private boolean isCastEnabled() {
+        return Settings.Global.getInt(
+                mContext.getContentResolver(), Settings.Global.CAST_ENABLED, 0) != 0;
+    }
 
     public RemoteDisplayProviderWatcher(Context context,
             Callback callback, Handler handler, int userId) {
@@ -85,6 +99,11 @@ public final class RemoteDisplayProviderWatcher {
             mContext.registerReceiverAsUser(mScanPackagesReceiver,
                     new UserHandle(mUserId), filter, null, mHandler);
 
+            // IchthysOS: watch the cast kill-switch so we re-scan when it flips.
+            mContext.getContentResolver().registerContentObserver(
+                    Settings.Global.getUriFor(Settings.Global.CAST_ENABLED),
+                    false, mCastSettingObserver);
+
             // Scan packages.
             // Also has the side-effect of restarting providers if needed.
             mHandler.post(mScanPackagesRunnable);
@@ -96,6 +115,7 @@ public final class RemoteDisplayProviderWatcher {
             mRunning = false;
 
             mContext.unregisterReceiver(mScanPackagesReceiver);
+            mContext.getContentResolver().unregisterContentObserver(mCastSettingObserver);
             mHandler.removeCallbacks(mScanPackagesRunnable);
 
             // Stop all providers.
@@ -107,6 +127,17 @@ public final class RemoteDisplayProviderWatcher {
 
     private void scanPackages() {
         if (!mRunning) {
+            return;
+        }
+
+        // IchthysOS: suppress all remote-display providers when cast is disabled.
+        if (!isCastEnabled()) {
+            for (int i = mProviders.size() - 1; i >= 0; i--) {
+                RemoteDisplayProviderProxy provider = mProviders.get(i);
+                mCallback.removeProvider(provider);
+                mProviders.remove(provider);
+                provider.stop();
+            }
             return;
         }
 

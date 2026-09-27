@@ -21,6 +21,7 @@ import com.android.systemui.CoreStartable
 import com.android.systemui.LatencyTester
 import com.android.systemui.SliceBroadcastRelayHandler
 import com.android.systemui.accessibility.Magnification
+import com.android.systemui.adaptiveplayback.AdaptivePlaybackController
 import com.android.systemui.back.domain.interactor.BackActionInteractor
 import com.android.systemui.biometrics.BiometricNotificationService
 import com.android.systemui.bouncer.domain.startable.BouncerStartable
@@ -32,6 +33,7 @@ import com.android.systemui.dreams.AssistantAttentionMonitor
 import com.android.systemui.dreams.DreamMonitor
 import com.android.systemui.dreams.DreamOverlayRegistrant
 import com.android.systemui.dreams.homecontrols.system.HomeControlsDreamStartable
+import com.android.systemui.edgelight.EdgeLightController
 import com.android.systemui.globalactions.GlobalActionsComponent
 import com.android.systemui.haptics.msdl.MSDLCoreStartable
 import com.android.systemui.keyboard.KeyboardUI
@@ -50,6 +52,7 @@ import com.android.systemui.media.taptotransfer.receiver.MediaTttChipControllerR
 import com.android.systemui.media.taptotransfer.sender.MediaTttSenderCoordinator
 import com.android.systemui.mediaprojection.taskswitcher.MediaProjectionTaskSwitcherCoreStartable
 import com.android.systemui.shortcut.ShortcutKeyDispatcher
+import com.android.systemui.smartpixels.SmartPixelsController
 import com.android.systemui.statusbar.CutoutRingOverlayStartable
 import com.android.systemui.statusbar.ImmersiveModeConfirmation
 import com.android.systemui.statusbar.gesture.GesturePointerEventListener
@@ -89,6 +92,24 @@ abstract class SystemUICoreStartableModule {
     @IntoMap
     @ClassKey(ClipboardListener::class)
     abstract fun bindClipboardListener(sysui: ClipboardListener): CoreStartable
+
+    /** IchthysOS: Adaptive playback (crDroid adaptive_playback_settings.xml). */
+    @Binds
+    @IntoMap
+    @ClassKey(AdaptivePlaybackController::class)
+    abstract fun bindAdaptivePlaybackController(sysui: AdaptivePlaybackController): CoreStartable
+
+    /** IchthysOS: Edge light (crDroid edge_light_settings.xml). */
+    @Binds
+    @IntoMap
+    @ClassKey(EdgeLightController::class)
+    abstract fun bindEdgeLightController(sysui: EdgeLightController): CoreStartable
+
+    /** IchthysOS: Smart Pixels burn-in filter (crDroid smart_pixels.xml). */
+    @Binds
+    @IntoMap
+    @ClassKey(SmartPixelsController::class)
+    abstract fun bindSmartPixelsController(sysui: SmartPixelsController): CoreStartable
 
     /** SPIKE (IchthysOS): cutout ring overlay window placeholder. */
     @Binds

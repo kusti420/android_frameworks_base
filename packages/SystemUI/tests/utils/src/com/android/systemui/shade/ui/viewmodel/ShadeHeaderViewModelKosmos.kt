@@ -30,7 +30,7 @@ import com.android.systemui.shade.domain.interactor.shadeModeInteractor
 import com.android.systemui.statusbar.domain.interactor.emptySystemStatusIconBlockListInteractor
 import com.android.systemui.statusbar.phone.domain.interactor.shadeDarkIconInteractor
 import com.android.systemui.statusbar.phone.ui.StatusBarIconController
-import com.android.systemui.statusbar.pipeline.battery.ui.viewmodel.batteryViewModelAlwaysShowPercentFactory
+import com.android.systemui.statusbar.pipeline.battery.ui.viewmodel.batteryViewModelQsHeaderFactory
 import com.android.systemui.statusbar.pipeline.mobile.domain.interactor.fakeCarrierTextInteractor
 import com.android.systemui.statusbar.pipeline.mobile.domain.interactor.mobileIconsInteractor
 import com.android.systemui.statusbar.pipeline.mobile.ui.viewmodel.mobileIconsViewModel
@@ -56,7 +56,7 @@ val Kosmos.shadeHeaderViewModelFactory: ShadeHeaderViewModel.Factory by
                     clockInteractor = clockInteractor,
                     batteryMeterViewControllerFactory = batteryMeterViewControllerFactory,
                     statusBarIconController = mock<StatusBarIconController>(),
-                    batteryViewModelFactory = batteryViewModelAlwaysShowPercentFactory,
+                    batteryViewModelFactory = batteryViewModelQsHeaderFactory,
                     kairosNetwork = kairos,
                     mobileIconsViewModelKairos = { mobileIconsViewModelKairos },
                     dualShadeEducationInteractor = dualShadeEducationInteractor,

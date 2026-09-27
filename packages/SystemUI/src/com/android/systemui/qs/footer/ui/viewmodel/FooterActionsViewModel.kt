@@ -271,6 +271,10 @@ fun createFooterActionsViewModel(
     // wired here so it takes effect immediately if that pref is re-enabled (default 1 = no change).
     val showFooterUser =
         Settings.System.getInt(appContext.contentResolver, "qs_footer_show_user", 1) == 1
+    val showFooterWarnings =
+        Settings.System.getInt(appContext.contentResolver, "qs_footer_warnings", 1) == 1
+    val showFooterServices =
+        Settings.System.getInt(appContext.contentResolver, "qs_footer_show_services", 1) == 1
 
     val security =
         footerActionsInteractor.securityButtonConfig
@@ -299,7 +303,14 @@ fun createFooterActionsViewModel(
                     ::onForegroundServiceButtonClicked,
                 )
             }
+            // IchthysOS: crDroid qs_footer_show_services
+            .map { it.takeIf { showFooterServices } }
             .distinctUntilChanged()
+
+    // IchthysOS: crDroid qs_footer_warnings. Gated separately from `security` above so the
+    // ungated flow still feeds `foregroundServices`, which folds the security text into the
+    // "N apps are active" chip.
+    val securityButton = security.map { it.takeIf { showFooterWarnings } }.distinctUntilChanged()
 
     val userSwitcher =
         userSwitcherViewModel(qsThemedContext, footerActionsInteractor, ::onUserSwitcherClicked)
@@ -328,7 +339,7 @@ fun createFooterActionsViewModel(
     val textFeedback = textFeedbackInteractor.textFeedback.map { it.load(qsThemedContext) }
 
     return FooterActionsViewModel(
-        security = security,
+        security = securityButton,
         foregroundServices = foregroundServices,
         userSwitcher = userSwitcher,
         settings = settings,

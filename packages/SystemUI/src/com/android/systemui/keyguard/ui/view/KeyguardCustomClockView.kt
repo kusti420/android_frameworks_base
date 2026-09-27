@@ -47,6 +47,8 @@ import android.widget.TextClock
 import android.widget.TextView
 import com.airbnb.lottie.LottieAnimationView
 import com.airbnb.lottie.LottieDrawable
+import com.android.systemui.Dependency
+import com.android.systemui.plugins.statusbar.StatusBarStateController
 import java.util.Calendar
 
 /**
@@ -84,6 +86,38 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
 
     private var currentClock: View? = null
 
+    /**
+     * IchthysOS [KEY_AOD_ANIM]: whether the face's Lottie animation keeps running on AOD. Faces are
+     * inflated with `setRepeatCount(INFINITE)` + `playAnimation()`, so without this they animate
+     * forever while dozing.
+     *
+     * The controller is fetched through [Dependency] rather than injected because this view is
+     * constructed bare from Compose (`AndroidView { KeyguardCustomClockView(it) }`) and has no
+     * Dagger entry point. Null if SysUI's dependency graph is not up, in which case the animation
+     * simply keeps its current behaviour.
+     */
+    private val statusBarStateController: StatusBarStateController? =
+        try {
+            Dependency.get(StatusBarStateController::class.java)
+        } catch (e: Exception) {
+            Log.w(TAG, "no StatusBarStateController; AOD animation control disabled", e)
+            null
+        }
+
+    private var isDozing: Boolean = statusBarStateController?.isDozing ?: false
+
+    /** Whether [applyAodAnimation] currently has the face's animations paused. */
+    private var pausedForAod = false
+
+    private val dozeListener =
+        object : StatusBarStateController.StateListener {
+            override fun onDozingChanged(dozing: Boolean) {
+                if (isDozing == dozing) return
+                isDozing = dozing
+                applyAodAnimation()
+            }
+        }
+
     init {
         isClickable = false
         isFocusable = false
@@ -103,12 +137,17 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
                 UserHandle.USER_ALL,
             )
         }
+        statusBarStateController?.let {
+            isDozing = it.isDozing
+            it.addCallback(dozeListener)
+        }
         rebuild()
     }
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         stopWordTicker()
+        statusBarStateController?.removeCallback(dozeListener)
         context.contentResolver.unregisterContentObserver(observer)
     }
 
@@ -159,6 +198,34 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
         }
         addView(clock, lp)
         currentClock = clock
+        // The freshly inflated face is playing, whatever the previous one was doing.
+        pausedForAod = false
+        applyAodAnimation()
+    }
+
+    /**
+     * IchthysOS [KEY_AOD_ANIM]: pause the face's Lottie animations while dozing when the user has
+     * turned the AOD animation off. Defaults to on, which is the behaviour the faces shipped with.
+     */
+    private fun applyAodAnimation() {
+        val clock = currentClock ?: return
+        val allowOnAod = secureInt(KEY_AOD_ANIM, 1) != 0
+        val shouldPause = isDozing && !allowOnAod
+        // Only touch the views on an actual transition. A freshly inflated face is already playing
+        // (LottieFactory calls playAnimation), and its composition may still be parsing, so an
+        // unconditional resume here would fight that.
+        if (shouldPause == pausedForAod) return
+        pausedForAod = shouldPause
+        forEachLottieView(clock) { view ->
+            if (shouldPause) view.pauseAnimation() else view.resumeAnimation()
+        }
+    }
+
+    private fun forEachLottieView(view: View, action: (LottieAnimationView) -> Unit) {
+        when (view) {
+            is LottieAnimationView -> action(view)
+            is ViewGroup -> for (i in 0 until view.childCount) forEachLottieView(view.getChildAt(i), action)
+        }
     }
 
     private fun applyContainerAttributes(clock: View) {
@@ -1173,6 +1240,7 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
         private const val KEY_CUSTOM_COLOR = "lock_screen_custom_clock_custom_color"
         private const val KEY_OPACITY = "lock_screen_custom_clock_opacity"
         private const val KEY_MARGIN_TOP = "lock_screen_custom_clock_margin_top"
+        private const val KEY_AOD_ANIM = "lock_screen_custom_clock_aod_anim"
 
         private const val MODE_DEFAULT = "default"
         private const val MODE_ACCENT = "accent"
@@ -1186,6 +1254,7 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
                 KEY_CUSTOM_COLOR,
                 KEY_OPACITY,
                 KEY_MARGIN_TOP,
+                KEY_AOD_ANIM,
             )
     }
 }

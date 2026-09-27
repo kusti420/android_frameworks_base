@@ -386,11 +386,10 @@ constructor(
             try {
                 if (enabled != currentState.enabled) {
                     if (currentFlashlightInfo.hasAdjustableLevels && enabled) {
+                        // IchthysOS: always turn on at max brightness
                         cameraManager.turnOnTorchWithStrengthLevel(
                             currentFlashlightInfo.cameraId,
-                            defaultEnabledLevelForUser.getOrPut(currentUserId) {
-                                initialDefaultLevel
-                            },
+                            currentFlashlightInfo.maxLevel!!,
                         )
                     } else {
                         cameraManager.setTorchMode(currentFlashlightInfo.cameraId, enabled)

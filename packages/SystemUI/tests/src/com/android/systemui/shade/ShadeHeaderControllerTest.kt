@@ -58,7 +58,7 @@ import com.android.systemui.statusbar.phone.StatusIconContainer
 import com.android.systemui.statusbar.phone.StatusOverlayHoverListenerFactory
 import com.android.systemui.statusbar.phone.ui.StatusBarIconController
 import com.android.systemui.statusbar.phone.ui.TintedIconManager
-import com.android.systemui.statusbar.pipeline.battery.ui.viewmodel.batteryViewModelAlwaysShowPercentFactory
+import com.android.systemui.statusbar.pipeline.battery.ui.viewmodel.batteryViewModelQsHeaderFactory
 import com.android.systemui.statusbar.policy.Clock
 import com.android.systemui.statusbar.policy.FakeConfigurationController
 import com.android.systemui.statusbar.policy.NextAlarmController
@@ -195,7 +195,7 @@ class ShadeHeaderControllerTest : SysuiTestCase() {
                 viewContext,
                 Lazy { kosmos.shadeDisplaysRepository },
                 variableDateViewControllerFactory,
-                kosmos.batteryViewModelAlwaysShowPercentFactory,
+                kosmos.batteryViewModelQsHeaderFactory,
                 dumpManager,
                 mShadeCarrierGroupControllerBuilder,
                 combinedShadeHeadersConstraintManager,

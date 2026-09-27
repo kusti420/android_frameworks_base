@@ -63,6 +63,7 @@ import com.android.systemui.compose.modifiers.sysuiResTag
 import com.android.systemui.qs.panels.ui.compose.toolbar.EditModeButtonDefaults.SpacingBetweenTooltipAndAnchor
 import com.android.systemui.qs.panels.ui.compose.toolbar.EditModeButtonDefaults.TooltipMaxWidth
 import com.android.systemui.qs.panels.ui.viewmodel.toolbar.EditModeButtonViewModel
+import com.android.systemui.qs.rememberSystemSettingBoolean
 import com.android.systemui.qs.ui.compose.borderOnFocus
 import com.android.systemui.res.R
 import kotlinx.coroutines.launch
@@ -75,6 +76,11 @@ fun EditModeButton(
     isVisible: Boolean = true,
 ) {
     if (!viewModel.isEditButtonVisible) {
+        return
+    }
+    // IchthysOS: crDroid's "Edit icon" switch (qs_footer_show_edit). Gated here rather than at the
+    // call sites so both the paginated grid and the standard toolbar honour it.
+    if (!rememberSystemSettingBoolean(KEY_QS_FOOTER_SHOW_EDIT, default = true)) {
         return
     }
     CompositionLocalProvider(
@@ -313,3 +319,6 @@ private object EditModeButtonDefaults {
     val TooltipMaxWidth = 360.dp
     val TooltipShadowElevation = 2.dp
 }
+
+/** crDroid `qs_footer_show_edit`: show the Quick Settings edit (pencil) button. */
+private const val KEY_QS_FOOTER_SHOW_EDIT = "qs_footer_show_edit"
