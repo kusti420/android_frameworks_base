@@ -7201,7 +7201,10 @@ public class ActivityManagerService extends IActivityManager.Stub
 
         return Arrays.binarySearch(allowlist, appId) >= 0
                 || Arrays.binarySearch(mDeviceIdleTempAllowlist, appId) >= 0
-                || mPendingTempAllowlist.get(uid) != null;
+                || mPendingTempAllowlist.get(uid) != null
+                // IchthysOS "Unrestricted background" (everything): every app the user didn't
+                // restrict counts as allowlisted.
+                || IchthysBackgroundExemptions.isGlobalFor(uid);
     }
 
     /**
@@ -7213,7 +7216,8 @@ public class ActivityManagerService extends IActivityManager.Stub
     @Nullable
     @GuardedBy(anyOf = {"this", "mProcLock"})
     FgsTempAllowListItem isAllowlistedForFgsStartLOSP(int uid) {
-        if (Arrays.binarySearch(mDeviceIdleExceptIdleAllowlist, UserHandle.getAppId(uid)) >= 0) {
+        if (Arrays.binarySearch(mDeviceIdleExceptIdleAllowlist, UserHandle.getAppId(uid)) >= 0
+                || IchthysBackgroundExemptions.isGlobalFor(uid)) {
             return FAKE_TEMP_ALLOW_LIST_ITEM;
         }
         final Pair<Long, FgsTempAllowListItem> entry = mFgsStartTempAllowList.get(uid);

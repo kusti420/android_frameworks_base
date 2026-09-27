@@ -1409,6 +1409,11 @@ public class CachedAppOptimizer {
             return;
         }
 
+        // IchthysOS "Unrestricted background": apps the user picked are never frozen.
+        if (!force && IchthysBackgroundExemptions.isPickedApp(app.uid)) {
+            return;
+        }
+
         if (app.getSetAdj() >= CACHED_APP_MIN_ADJ) {
             final IApplicationThread thread = app.getThread();
             if (thread != null) {

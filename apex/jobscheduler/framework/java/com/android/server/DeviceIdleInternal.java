@@ -35,6 +35,23 @@ public interface DeviceIdleInternal {
     void exitIdle(String reason);
 
     /**
+     * IchthysOS: turns deep / light idle (Doze) on or off at runtime, like
+     * {@code cmd deviceidle enable|disable deep|light}. Not persisted: a reboot returns to the
+     * config default. Used by the "Unrestricted background" everything mode.
+     */
+    default void setIdleModesEnabled(boolean deepEnabled, boolean lightEnabled) {}
+
+    /** IchthysOS: whether deep idle is currently enabled. */
+    default boolean isDeepIdleModeEnabled() {
+        return true;
+    }
+
+    /** IchthysOS: whether light idle is currently enabled. */
+    default boolean isLightIdleModeEnabled() {
+        return true;
+    }
+
+    /**
      * Same as {@link #addPowerSaveTempWhitelistApp(int, String, long, int, boolean, int, String)}
      * with {@link PowerExemptionManager#TEMPORARY_ALLOW_LIST_TYPE_FOREGROUND_SERVICE_ALLOWED}.
      */

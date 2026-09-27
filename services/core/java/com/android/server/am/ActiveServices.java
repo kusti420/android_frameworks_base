@@ -3757,6 +3757,14 @@ public final class ActiveServices {
                 }
                 return;
             }
+            if (IchthysBackgroundExemptions.isFgsTimeLimitExempt(sr.appInfo.uid)) {
+                // IchthysOS "Unrestricted background": no short-FGS time limit for this app.
+                // Look again after another full allowance instead of timing it out.
+                mAm.mHandler.sendMessageAtTime(mAm.mHandler.obtainMessage(
+                                ActivityManagerService.SERVICE_SHORT_FGS_TIMEOUT_MSG, sr),
+                        nowUptime + mAm.mConstants.mShortFgsTimeoutDuration);
+                return;
+            }
             Slog.e(TAG_SERVICE, "Short FGS timed out: " + sr);
             traceInstantFgs("short FGS timeout: ", sr);
 
@@ -4032,6 +4040,17 @@ public final class ActiveServices {
             final long lastTopTime = currentlyTop
                     ? nowUptime : sr.getHostProcess().getLastTopTime();
             final long constantTimeLimit = getTimeLimitForFgsType(fgsType);
+            if (IchthysBackgroundExemptions.isFgsTimeLimitExempt(sr.appInfo.uid)) {
+                // IchthysOS "Unrestricted background": no dataSync / mediaProcessing time limit
+                // for this app. Re-check after another full allowance instead of timing it out.
+                mAm.mHandler.removeMessages(ActivityManagerService.SERVICE_FGS_TIMEOUT_MSG, sr);
+                mAm.mHandler.removeMessages(
+                                ActivityManagerService.SERVICE_FGS_CRASH_TIMEOUT_MSG, sr);
+                mAm.mHandler.sendMessageAtTime(mAm.mHandler.obtainMessage(
+                                ActivityManagerService.SERVICE_FGS_TIMEOUT_MSG, sr),
+                        nowUptime + constantTimeLimit);
+                return;
+            }
             if (lastTopTime != Long.MIN_VALUE && constantTimeLimit > (nowUptime - lastTopTime)) {
                 // Discard any other messages for this service
                 mAm.mHandler.removeMessages(ActivityManagerService.SERVICE_FGS_TIMEOUT_MSG, sr);

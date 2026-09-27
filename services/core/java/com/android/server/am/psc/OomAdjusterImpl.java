@@ -106,6 +106,7 @@ import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.server.ServiceThread;
 import com.android.server.am.Flags;
+import com.android.server.am.IchthysBackgroundExemptions;
 import com.android.server.am.ProcessList;
 import com.android.server.am.psc.Constants.OomAdjust;
 import com.android.server.am.psc.Constants.SchedGroup;
@@ -1530,6 +1531,23 @@ public class OomAdjusterImpl extends OomAdjuster {
                 if (reportDebugMsgs) {
                     reportOomAdjMessageLocked(TAG_OOM_ADJ, "Raise to force imp: " + app);
                 }
+            }
+        }
+
+        // IchthysOS "Unrestricted background": apps the user picked never drop below
+        // perceptible, so LMK and the cached-process trimming leave them alone.
+        if ((adj > PERCEPTIBLE_APP_ADJ || procState > PROCESS_STATE_TRANSIENT_BACKGROUND)
+                && IchthysBackgroundExemptions.isPickedApp(app.uid)) {
+            if (adj > PERCEPTIBLE_APP_ADJ) {
+                adj = PERCEPTIBLE_APP_ADJ;
+                schedGroup = SCHED_GROUP_DEFAULT;
+            }
+            if (procState > PROCESS_STATE_TRANSIENT_BACKGROUND) {
+                procState = PROCESS_STATE_TRANSIENT_BACKGROUND;
+            }
+            app.setAdjType("ichthys-unrestricted");
+            if (reportDebugMsgs) {
+                reportOomAdjMessageLocked(TAG_OOM_ADJ, "Raise to unrestricted-bg: " + app);
             }
         }
 

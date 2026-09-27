@@ -2362,6 +2362,25 @@ public class DeviceIdleController extends SystemService
         }
 
         @Override
+        public void setIdleModesEnabled(boolean deepEnabled, boolean lightEnabled) {
+            setIdleModesEnabledInternal(deepEnabled, lightEnabled);
+        }
+
+        @Override
+        public boolean isDeepIdleModeEnabled() {
+            synchronized (DeviceIdleController.this) {
+                return mDeepEnabled;
+            }
+        }
+
+        @Override
+        public boolean isLightIdleModeEnabled() {
+            synchronized (DeviceIdleController.this) {
+                return mLightEnabled;
+            }
+        }
+
+        @Override
         public void addPowerSaveTempWhitelistApp(int callingUid, String packageName,
                 long durationMs, int userId, boolean sync, @ReasonCode int reasonCode,
                 @Nullable String reason) {
@@ -3673,6 +3692,28 @@ public class DeviceIdleController extends SystemService
                 // Only report active if light is also ACTIVE.
                 scheduleReportActiveLocked(activeReason, activeUid);
                 addEvent(EVENT_NORMAL, activeReason);
+            }
+        }
+    }
+
+    /**
+     * IchthysOS: same as the {@code disable} / {@code enable} shell commands, for
+     * UnrestrictedBackgroundController.
+     */
+    void setIdleModesEnabledInternal(boolean deepEnabled, boolean lightEnabled) {
+        synchronized (this) {
+            final boolean disabling = (mDeepEnabled && !deepEnabled)
+                    || (mLightEnabled && !lightEnabled);
+            final boolean enabling = (!mDeepEnabled && deepEnabled)
+                    || (!mLightEnabled && lightEnabled);
+            mDeepEnabled = deepEnabled;
+            mLightEnabled = lightEnabled;
+            if (disabling) {
+                mActiveReason = ACTIVE_REASON_FORCED;
+                becomeActiveLocked("unrestricted-background", Process.myUid());
+            }
+            if (enabling) {
+                becomeInactiveIfAppropriateLocked();
             }
         }
     }

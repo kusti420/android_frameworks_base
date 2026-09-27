@@ -3691,9 +3691,8 @@ public final class SystemServer implements Dumpable {
         }
         t.traceEnd();
 
-        // IchthysOS: apply/observe the "unrestricted background" mode (undoes battery/doze/
-        // phantom-killer restrictions while on; reverts on disable; off after reboot unless the
-        // user asked to keep it). deviceidle + package manager are up by this point.
+        // IchthysOS: "Unrestricted background" (selected apps / everything). The controller does
+        // its work on the background thread; this only schedules it. (tracker#39)
         t.traceBegin("StartUnrestrictedBackgroundController");
         try {
             new com.android.server.UnrestrictedBackgroundController(mSystemContext)
