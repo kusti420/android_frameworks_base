@@ -16,12 +16,15 @@
 
 package com.android.server;
 
+import android.Manifest;
+import android.app.AppOpsManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
+import android.content.ContentResolver;
 import android.content.Context;
 import android.content.IIntentReceiver;
 import android.content.IIntentSender;
@@ -29,6 +32,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.IntentSender;
 import android.content.pm.ActivityInfo;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageInstaller;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
@@ -59,8 +63,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
@@ -95,6 +101,42 @@ public final class IchthysPreinstallController {
         MediaStore.ACTION_IMAGE_CAPTURE,
         MediaStore.ACTION_VIDEO_CAPTURE,
     };
+    // Gets storage access up front, as if termux-setup-storage had already been run.
+    private static final String TERMUX = "com.termux";
+    private static final String[] TERMUX_STORAGE_PERMISSIONS = {
+        Manifest.permission.READ_EXTERNAL_STORAGE,
+        Manifest.permission.WRITE_EXTERNAL_STORAGE,
+    };
+    // The file manager and default document picker (replaces the IchthysFiles fork, #26).
+    // Stock DocumentsUI stays the system document manager for CREATE_DOCUMENT /
+    // OPEN_DOCUMENT_TREE; its OPEN_DOCUMENT / GET_CONTENT filters have no priority so that a
+    // preferred activity can win (the resolver skips preferred activities when the top two
+    // candidates differ in priority).
+    private static final String ZARCHIVER = "ru.zdevs.zarchiver";
+    private static final ComponentName ZARCHIVER_MAIN =
+            new ComponentName(ZARCHIVER, "ru.zdevs.zarchiver.ZArchiver");
+    private static final ComponentName ZARCHIVER_PICKER =
+            new ComponentName(ZARCHIVER, "ru.zdevs.zarchiver.ZSelectFile");
+    private static final String[] ZARCHIVER_PICKER_ACTIONS = {
+        Intent.ACTION_OPEN_DOCUMENT,
+        Intent.ACTION_GET_CONTENT,
+    };
+    // Archive types opened in ZArchiver's browser (its main activity's archive filter).
+    private static final String[] ZARCHIVER_ARCHIVE_TYPES = {
+        "application/zip", "application/x-zip-compressed", "application/zipx",
+        "application/x-7z-compressed", "application/7z",
+        "application/vnd.rar", "application/rar", "application/x-rar-compressed",
+        "application/x-tar", "application/x-gtar", "application/x-ustar", "application/gnutar",
+        "application/x-gtar-compressed", "application/gzip", "application/x-gzip",
+        "application/gz", "application/x-bzip", "application/x-bzip2", "application/bz",
+        "application/bz2", "application/x-xz", "application/xz", "application/x-lzma",
+        "application/lzma", "application/zstd", "application/x-lz4", "application/x-compress",
+        "application/x-compressed", "application/vnd.ms-cab-compressed",
+        "application/x-iso9660-image", "application/x-apple-diskimage", "application/x-cpio",
+        "application/x-rpm", "application/x-debian-package", "application/x-lha",
+        "application/x-lzh", "application/x-lzx", "application/lzx", "application/lza",
+        "application/x-ace-compressed",
+    };
     private static final String CHANNEL_ID = "ichthys_preinstall";
     private static final int NOTIFICATION_ID = 0x1c7;
     private static final long COMMIT_TIMEOUT_SECONDS = 180;
@@ -103,6 +145,10 @@ public final class IchthysPreinstallController {
     private static final String STATE_FAILED = "failed";
     /** Pseudo package name recording that the Obtainium prompt was already shown to a user. */
     private static final String OBTAINIUM_PROMPTED = ":obtainium-prompted";
+    /** Pseudo package name recording that Termux's storage access was granted to a user. */
+    private static final String TERMUX_STORAGE_GRANTED = ":termux-storage-granted";
+    /** Pseudo package name recording that ZArchiver was set up as file manager for a user. */
+    private static final String ZARCHIVER_SET_UP = ":zarchiver-set-up";
 
     private final Context mContext;
     private final Handler mHandler;
@@ -198,6 +244,22 @@ public final class IchthysPreinstallController {
             if (ok && DEFAULT_CAMERA.equals(pkg)) {
                 makeDefaultCamera(pm);
             }
+            changed = true;
+        }
+
+        // Once per user, never again: a later revocation by the user sticks. Keyed separately from
+        // the install state so a Termux installed by an earlier build gets it once too.
+        if (!userState.containsKey(TERMUX_STORAGE_GRANTED) && isInstalled(pm, TERMUX)) {
+            grantTermuxStorage(pm, userId);
+            userState.put(TERMUX_STORAGE_GRANTED, STATE_INSTALLED);
+            changed = true;
+        }
+
+        // Same once-per-user rule: a default the user later changes, or all-files access they
+        // revoke, stays that way.
+        if (!userState.containsKey(ZARCHIVER_SET_UP) && isInstalled(pm, ZARCHIVER)) {
+            setUpZArchiver(pm, userId);
+            userState.put(ZARCHIVER_SET_UP, STATE_INSTALLED);
             changed = true;
         }
 
@@ -384,6 +446,136 @@ public final class IchthysPreinstallController {
             } catch (RuntimeException e) {
                 Slog.w(TAG, "could not set default camera for " + action, e);
             }
+        }
+    }
+
+    /**
+     * What {@code termux-setup-storage} asks for: the legacy storage permissions (Termux targets
+     * API 28, so these are what it checks) plus "All files access". Restricted-permission
+     * allowlisting is normally done by the install session already; it is repeated here because
+     * without it the soft-restricted storage grant is silently ineffective for a pre-Q app.
+     * The ~/storage symlinks themselves are created by termux-setup.sh (init).
+     */
+    private void grantTermuxStorage(PackageManager pm, int userId) {
+        final UserHandle user = UserHandle.of(userId);
+        final PackageInfo info;
+        try {
+            info = pm.getPackageInfo(TERMUX, PackageManager.GET_PERMISSIONS);
+        } catch (PackageManager.NameNotFoundException e) {
+            return;
+        }
+        final List<String> requested = info.requestedPermissions == null
+                ? List.of() : Arrays.asList(info.requestedPermissions);
+        for (String perm : TERMUX_STORAGE_PERMISSIONS) {
+            if (!requested.contains(perm)) {
+                continue;
+            }
+            try {
+                pm.addWhitelistedRestrictedPermission(TERMUX, perm,
+                        PackageManager.FLAG_PERMISSION_WHITELIST_INSTALLER);
+            } catch (RuntimeException e) {
+                Slog.w(TAG, "could not allowlist " + perm + " for " + TERMUX, e);
+            }
+            try {
+                pm.grantRuntimePermission(TERMUX, perm, user);
+            } catch (RuntimeException e) {
+                Slog.w(TAG, "could not grant " + perm + " to " + TERMUX, e);
+            }
+        }
+        if (requested.contains(Manifest.permission.MANAGE_EXTERNAL_STORAGE)
+                && info.applicationInfo != null) {
+            try {
+                mContext.getSystemService(AppOpsManager.class).setUidMode(
+                        AppOpsManager.OPSTR_MANAGE_EXTERNAL_STORAGE, info.applicationInfo.uid,
+                        AppOpsManager.MODE_ALLOWED);
+            } catch (RuntimeException e) {
+                Slog.w(TAG, "could not allow all-files access for " + TERMUX, e);
+            }
+        }
+        Slog.i(TAG, "granted storage access to " + TERMUX + " for user " + userId);
+    }
+
+    /**
+     * Makes ZArchiver the file manager: "All files access" (the only storage permission it asks
+     * for on R+; without it its picker shows "Access is denied"), the default for
+     * OPEN_DOCUMENT / GET_CONTENT, and the default viewer for archives.
+     */
+    private void setUpZArchiver(PackageManager pm, int userId) {
+        try {
+            final PackageInfo info = pm.getPackageInfo(ZARCHIVER, PackageManager.GET_PERMISSIONS);
+            final List<String> requested = info.requestedPermissions == null
+                    ? List.of() : Arrays.asList(info.requestedPermissions);
+            if (requested.contains(Manifest.permission.MANAGE_EXTERNAL_STORAGE)
+                    && info.applicationInfo != null) {
+                mContext.getSystemService(AppOpsManager.class).setUidMode(
+                        AppOpsManager.OPSTR_MANAGE_EXTERNAL_STORAGE, info.applicationInfo.uid,
+                        AppOpsManager.MODE_ALLOWED);
+            }
+        } catch (PackageManager.NameNotFoundException | RuntimeException e) {
+            Slog.w(TAG, "could not allow all-files access for " + ZARCHIVER, e);
+        }
+
+        // Pickers: one "*/*" entry per action, which also covers requests for a specific type
+        // (a preferred filter with "*/*" matches every type). The candidate set is the "*/*"
+        // query, i.e. every handler of any type, so later narrower queries are subsets of it.
+        for (String action : ZARCHIVER_PICKER_ACTIONS) {
+            final Intent intent = new Intent(action)
+                    .addCategory(Intent.CATEGORY_OPENABLE)
+                    .setType("*/*");
+            final IntentFilter filter = new IntentFilter(action);
+            filter.addCategory(Intent.CATEGORY_DEFAULT);
+            filter.addCategory(Intent.CATEGORY_OPENABLE);
+            try {
+                filter.addDataType("*/*");
+            } catch (IntentFilter.MalformedMimeTypeException e) {
+                continue; // can't happen
+            }
+            addPreferred(pm, intent, filter, ZARCHIVER_PICKER);
+        }
+
+        // Archives: one entry per type, like the resolver's "Always" records it, each with the
+        // exact handler set for that type.
+        for (String type : ZARCHIVER_ARCHIVE_TYPES) {
+            final Intent intent = new Intent(Intent.ACTION_VIEW)
+                    .setDataAndType(Uri.parse("content://ichthys.invalid/file"), type);
+            final IntentFilter filter = new IntentFilter(Intent.ACTION_VIEW);
+            filter.addCategory(Intent.CATEGORY_DEFAULT);
+            filter.addDataScheme(ContentResolver.SCHEME_CONTENT);
+            filter.addDataScheme(ContentResolver.SCHEME_FILE);
+            try {
+                filter.addDataType(type);
+            } catch (IntentFilter.MalformedMimeTypeException e) {
+                continue;
+            }
+            addPreferred(pm, intent, filter, ZARCHIVER_MAIN);
+        }
+        Slog.i(TAG, "set up " + ZARCHIVER + " as file manager for user " + userId);
+    }
+
+    /**
+     * Records {@code preferred} as the "Always" choice for {@code intent}, the way
+     * ResolverActivity does: {@code filter} describes the intent, and the set is every activity
+     * that currently resolves it (the resolver drops the preference once a handler outside the
+     * set appears). Skipped when {@code preferred} doesn't handle it or there is no choice.
+     */
+    @SuppressWarnings("deprecation") // addPreferredActivity: what ResolverActivity's "Always" uses
+    private static void addPreferred(PackageManager pm, Intent intent, IntentFilter filter,
+            ComponentName preferred) {
+        final Set<ComponentName> set = new LinkedHashSet<>();
+        int bestMatch = 0;
+        for (ResolveInfo ri : pm.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)) {
+            set.add(new ComponentName(ri.activityInfo.packageName, ri.activityInfo.name));
+            bestMatch = Math.max(bestMatch, ri.match);
+        }
+        if (!set.contains(preferred) || set.size() < 2) {
+            return;
+        }
+        try {
+            pm.addPreferredActivity(filter, bestMatch, set.toArray(new ComponentName[0]),
+                    preferred);
+        } catch (RuntimeException e) {
+            Slog.w(TAG, "could not make " + preferred.flattenToShortString() + " the default for "
+                    + intent, e);
         }
     }
 
