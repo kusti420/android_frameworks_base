@@ -72,24 +72,26 @@ final class ThemeApplier {
         } else {
             final int r = radiusDp.intValue();
             final int button = "pill".equals(style) ? PILL_DP : Math.max(4, r / 2);
-            final FabricatedOverlay android = new FabricatedOverlay.Builder(OWNER, ANDROID_OVERLAY,
-                    "android")
-                    .setResourceValue("android:dimen/config_dialogCornerRadius",
-                            TypedValue.TYPE_DIMENSION, dp(r))
-                    .setResourceValue("android:dimen/config_bottomDialogCornerRadius",
-                            TypedValue.TYPE_DIMENSION, dp(r))
-                    .setResourceValue("android:dimen/system_app_widget_background_radius",
-                            TypedValue.TYPE_DIMENSION, dp(r))
-                    .setResourceValue("android:dimen/config_buttonCornerRadius",
-                            TypedValue.TYPE_DIMENSION, dp(button))
-                    .build();
-            final FabricatedOverlay sysui = new FabricatedOverlay.Builder(OWNER, SYSUI_OVERLAY,
-                    SYSUI)
-                    .setResourceValue(SYSUI + ":dimen/qs_corner_radius",
-                            TypedValue.TYPE_DIMENSION, dp(r))
-                    .setResourceValue(SYSUI + ":dimen/notification_corner_radius",
-                            TypedValue.TYPE_DIMENSION, dp(r))
-                    .build();
+            final FabricatedOverlay android;
+            final FabricatedOverlay sysui;
+            try {
+                // The legacy Builder only takes int data types (16..31); dimensions need the
+                // FRRO dimension overload on FabricatedOverlay itself.
+                android = new FabricatedOverlay(ANDROID_OVERLAY, "android");
+                android.setOwningPackage(OWNER);
+                setDp(android, "android:dimen/config_dialogCornerRadius", r);
+                setDp(android, "android:dimen/config_bottomDialogCornerRadius", r);
+                setDp(android, "android:dimen/system_app_widget_background_radius", r);
+                setDp(android, "android:dimen/config_buttonCornerRadius", button);
+                sysui = new FabricatedOverlay(SYSUI_OVERLAY, SYSUI);
+                sysui.setOwningPackage(OWNER);
+                setDp(sysui, SYSUI + ":dimen/qs_corner_radius", r);
+                setDp(sysui, SYSUI + ":dimen/notification_corner_radius", r);
+            } catch (RuntimeException e) {
+                // Shape is cosmetic: never let it fail the whole generation.
+                Slog.w(TAG, "shape overlay not built, radius not applied", e);
+                return;
+            }
             t.registerFabricatedOverlay(android);
             t.registerFabricatedOverlay(sysui);
             t.setEnabled(android.getIdentifier(), true, userId);
@@ -103,7 +105,8 @@ final class ThemeApplier {
         }
     }
 
-    private static int dp(int value) {
-        return TypedValue.createComplexDimension(value, TypedValue.COMPLEX_UNIT_DIP);
+    private static void setDp(FabricatedOverlay overlay, String resourceName, int dp) {
+        overlay.setResourceValue(resourceName, (float) dp, TypedValue.COMPLEX_UNIT_DIP,
+                null /* configuration */);
     }
 }
