@@ -6631,4 +6631,60 @@
   <java-symbol type="drawable" name="ic_cross_device_sync_airplane" />
   <!-- Disable the Video Capability over IWLAN when Wi-Fi Calling is turned off  -->
   <java-symbol type="bool" name="config_disable_video_capability_when_wfc_off" />
-  </resources>
+
+  <!-- IchthysOS "Shoal" design tokens (values/ichthys_tokens.xml). -->
+  <java-symbol type="color" name="ichthys_ink" />
+  <java-symbol type="color" name="ichthys_ink_dark" />
+  <java-symbol type="color" name="ichthys_ink_light" />
+  <java-symbol type="color" name="ichthys_card" />
+  <java-symbol type="color" name="ichthys_card_dark" />
+  <java-symbol type="color" name="ichthys_card_light" />
+  <java-symbol type="color" name="ichthys_raised" />
+  <java-symbol type="color" name="ichthys_raised_dark" />
+  <java-symbol type="color" name="ichthys_raised_light" />
+  <java-symbol type="color" name="ichthys_tile" />
+  <java-symbol type="color" name="ichthys_tile_dark" />
+  <java-symbol type="color" name="ichthys_tile_light" />
+  <java-symbol type="color" name="ichthys_hairline" />
+  <java-symbol type="color" name="ichthys_hairline_dark" />
+  <java-symbol type="color" name="ichthys_hairline_light" />
+  <java-symbol type="color" name="ichthys_track" />
+  <java-symbol type="color" name="ichthys_track_dark" />
+  <java-symbol type="color" name="ichthys_track_light" />
+  <java-symbol type="color" name="ichthys_outline" />
+  <java-symbol type="color" name="ichthys_outline_dark" />
+  <java-symbol type="color" name="ichthys_outline_light" />
+  <java-symbol type="color" name="ichthys_text" />
+  <java-symbol type="color" name="ichthys_text_dark" />
+  <java-symbol type="color" name="ichthys_text_light" />
+  <java-symbol type="color" name="ichthys_body" />
+  <java-symbol type="color" name="ichthys_body_dark" />
+  <java-symbol type="color" name="ichthys_body_light" />
+  <java-symbol type="color" name="ichthys_muted" />
+  <java-symbol type="color" name="ichthys_muted_dark" />
+  <java-symbol type="color" name="ichthys_muted_light" />
+  <java-symbol type="color" name="ichthys_accent" />
+  <java-symbol type="color" name="ichthys_accent_dark" />
+  <java-symbol type="color" name="ichthys_accent_light" />
+  <java-symbol type="color" name="ichthys_on_accent" />
+  <java-symbol type="color" name="ichthys_on_accent_dark" />
+  <java-symbol type="color" name="ichthys_on_accent_light" />
+  <java-symbol type="color" name="ichthys_accent_tint" />
+  <java-symbol type="color" name="ichthys_accent_tint_dark" />
+  <java-symbol type="color" name="ichthys_accent_tint_light" />
+  <java-symbol type="color" name="ichthys_accent_fill" />
+  <java-symbol type="color" name="ichthys_accent_fill_dark" />
+  <java-symbol type="color" name="ichthys_accent_fill_light" />
+  <java-symbol type="color" name="ichthys_accent_dim" />
+  <java-symbol type="color" name="ichthys_accent_dim_dark" />
+  <java-symbol type="color" name="ichthys_accent_dim_light" />
+  <java-symbol type="integer" name="ichthys_surface_style" />
+  <java-symbol type="integer" name="ichthys_surface_levels" />
+  <java-symbol type="integer" name="ichthys_palette_hash" />
+  <java-symbol type="dimen" name="ichthys_radius" />
+  <java-symbol type="dimen" name="ichthys_radius_small" />
+  <java-symbol type="dimen" name="ichthys_hairline_width" />
+  <java-symbol type="string" name="ichthys_font_display" />
+  <java-symbol type="string" name="ichthys_font_text" />
+  <java-symbol type="string" name="ichthys_font_mono" />
+</resources>

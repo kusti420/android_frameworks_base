@@ -134,9 +134,17 @@ public class ThemeEventObserver {
         // IchthysOS: observe the pitch-black toggle so the system_server overlay regenerates
         // when the user flips it. Without this, only SystemUI's overlay (which is not active)
         // reacts, and the active android:dynamic_0 overlay stays stale.
-        resolver.registerContentObserver(
-                Settings.Secure.getUriFor("custom_pitch_black"),
-                false, mThemeSettingsObserver, UserHandle.USER_ALL);
+        // IchthysOS "Shoal": the rest of the palette inputs (theme.surface, theme.neutral,
+        // theme.surfaces from ichthys.nix) feed ShoalPalette the same way; ThemeOverlayHelper's
+        // palette hash makes each change regenerate the overlay exactly once.
+        for (String key : new String[] {
+                ThemeOverlayHelper.KEY_PITCH_BLACK,
+                ThemeOverlayHelper.KEY_SURFACE,
+                ThemeOverlayHelper.KEY_NEUTRAL,
+                ThemeOverlayHelper.KEY_SURFACES}) {
+            resolver.registerContentObserver(Settings.Secure.getUriFor(key),
+                    false, mThemeSettingsObserver, UserHandle.USER_ALL);
+        }
 
         // Overlay Changes
         final IntentFilter filter = new IntentFilter();

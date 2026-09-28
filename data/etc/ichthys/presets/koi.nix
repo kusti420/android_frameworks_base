@@ -5,9 +5,9 @@
     accent = "#ff6b3d";
     style = "tonalSpot";
     neutral = "neutral";
-    pitchBlack = true;
+    pitchBlack = false; # true pins the ink ground to #000 (OLED); koi's ink is #07090b
     surface = "hairline";
-    surfaces = 2;
+    surfaces = 4; # ink, card, raised, tile: the full koi ramp
     shape.radius = 22;
     shape.style = "pill";
     density = "standard";

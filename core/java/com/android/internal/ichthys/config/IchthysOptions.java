@@ -64,10 +64,12 @@ final class IchthysOptions {
                 "Darkest surface is pure #000 (OLED).", setting(SECURE, "custom_pitch_black")));
         s.add(Option.enumeration("theme.neutral", new String[] {"tinted", "neutral"},
                 new String[] {"tinted", "neutral"}, "tinted",
-                "Surfaces tinted by the accent, or plain neutral grey.",
+                "Surfaces tinted by the accent (its hue nudged cool, low chroma), or the preset's "
+                        + "own neutral ink ramp.",
                 setting(SECURE, "ichthys_theme_neutral")));
         s.add(Option.integer("theme.surfaces", 3L, 2, 5,
-                "Number of distinct surface elevation levels in panels and cards.",
+                "Number of distinct surface elevation levels in panels and cards (2: ground + "
+                        + "card; 3: + raised; 4-5: + tile).",
                 setting(SECURE, "ichthys_theme_surfaces")));
         s.add(Option.integer("theme.shape.radius", null, 0, 40,
                 "Corner radius in dp for dialogs, cards, QS panel and notifications.",
@@ -83,21 +85,30 @@ final class IchthysOptions {
         s.add(Option.packageName("theme.font.body", null,
                 "System font overlay package (android.theme.customization.font), null for default.",
                 Binding.themeJson("font")));
-        s.add(Option.string("theme.font.display", null,
-                "Font family for large titles and clocks in IchthysOS UI, null for default.",
+        // Font families: named families from fonts_customization.xml. Unset means the koi faces
+        // (the defaults below, which are also the android:string/ichthys_font_* resource
+        // defaults); "sans-serif" etc. picks a system family instead.
+        s.add(Option.string("theme.font.display", "syne",
+                "Font family for large titles and clocks (e.g. \"syne\", \"outfit\"). Unless "
+                        + "theme.surface = \"stock\" or theme.font.body is set, it is also the "
+                        + "system headline font.",
                 setting(SECURE, "ichthys_theme_font_display")));
-        s.add(Option.string("theme.font.text", null,
-                "Font family for body text in IchthysOS UI (e.g. \"instrument-sans\"), null for "
-                        + "the system font.",
+        s.add(Option.string("theme.font.text", "instrument-sans",
+                "Font family for body text (e.g. \"instrument-sans\", \"ibm-plex-sans\", "
+                        + "\"sans-serif\"). Unless theme.surface = \"stock\" or theme.font.body "
+                        + "is set, it is also the system body font.",
                 setting(SECURE, "ichthys_theme_font_text")));
-        s.add(Option.string("theme.font.mono", null,
-                "Font family for numbers in IchthysOS UI (e.g. \"jetbrains-mono\"), null for the "
-                        + "text font.",
+        s.add(Option.string("theme.font.mono", "jetbrains-mono",
+                "Font family for numbers in IchthysOS UI (e.g. \"jetbrains-mono\").",
                 setting(SECURE, "ichthys_theme_font_mono")));
-        s.add(Option.enumeration("theme.surface", new String[] {"hairline", "tonal"},
-                new String[] {"hairline", "tonal"}, "hairline",
-                "Panel style in IchthysOS UI: hairline-outlined on the ground (Koi) or filled tonal "
-                        + "surfaces (Abyss).",
+        // Consumers treat an unset key as the default (hairline): a value equal to the default is
+        // never written. "stock" turns the whole Shoal palette off (plain Monet colours, stock
+        // fonts); the palette itself is derived in system_server (ShoalPalette).
+        s.add(Option.enumeration("theme.surface", new String[] {"stock", "hairline", "tonal"},
+                new String[] {"stock", "hairline", "tonal"}, "hairline",
+                "Surface style: \"hairline\" (Koi: ink ground, 1dp-outlined panels), \"tonal\" "
+                        + "(Abyss: filled panels, no outline) or \"stock\" (plain Monet, no "
+                        + "Shoal palette or fonts).",
                 setting(SECURE, "ichthys_theme_surface")));
         s.add(Option.bool("theme.iconBadges", Boolean.TRUE,
                 "Draw Settings category icons on badge tiles (false: plain icons).",
@@ -250,6 +261,12 @@ final class IchthysOptions {
         s.add(Option.enumeration("volume.style", new String[] {"aosp", "oneui"},
                 new String[] {"0", "1"}, "oneui", "Volume panel look.",
                 setting(SYSTEM, "volume_panel_style")));
+        s.add(Option.enumeration("navBar.style",
+                new String[] {"stock", "shoal", "lattice", "mono", "gestures"},
+                new String[] {"stock", "shoal", "lattice", "mono", "gestures"}, "shoal",
+                "Navigation bar look: stock, shoal (outlined circles, accent home), lattice "
+                        + "(small discs), mono (text labels) or gestures (accent gesture handle).",
+                setting(SECURE, "ichthys_navbar_style")));
         s.add(Option.integer("system.torchLevel", 3L, 1, 5,
                 "Flashlight brightness step used when the torch turns on.",
                 setting(SECURE, "ichthys_torch_level")));

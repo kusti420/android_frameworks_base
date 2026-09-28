@@ -33,6 +33,7 @@ import com.android.internal.ichthys.config.NixParseException;
 import com.android.internal.ichthys.config.NixParser;
 import com.android.internal.ichthys.config.Option;
 import com.android.internal.ichthys.config.OptionSchema;
+import com.android.internal.os.BackgroundThread;
 import com.android.internal.util.DumpUtils;
 import com.android.server.SystemService;
 
@@ -95,6 +96,18 @@ public final class IchthysConfigService extends SystemService {
     @Override
     public void onStart() {
         publishBinderService(SERVICE_NAME, new BinderService());
+    }
+
+    @Override
+    public void onBootPhase(int phase) {
+        if (phase == PHASE_BOOT_COMPLETED) {
+            applyTokensAsync(ActivityManager.getCurrentUser());
+        }
+    }
+
+    @Override
+    public void onUserSwitching(TargetUser from, TargetUser to) {
+        applyTokensAsync(to.getUserIdentifier());
     }
 
     OptionSchema schema() {
@@ -219,8 +232,8 @@ public final class IchthysConfigService extends SystemService {
                 throw new IllegalArgumentException("applying " + failed + " failed: "
                         + e.getMessage() + " (all changes rolled back)");
             }
-            if (touchesShape(diff)) {
-                applyShape(userId);
+            if (touchesTokens(diff)) {
+                applyTokens(userId, false);
             }
             final int gen = gens.next();
             gens.save(gen, export(userId, false), diff.summary(), source);
@@ -247,20 +260,58 @@ public final class IchthysConfigService extends SystemService {
         }
     }
 
-    private static boolean touchesShape(ConfigDiff diff) {
+    /** Options that feed ThemeApplier's token overlays. */
+    private static boolean touchesTokens(ConfigDiff diff) {
         for (ConfigDiff.Change c : diff.changes) {
-            if (c.path.startsWith("theme.shape.") || c.path.equals("theme.preset")) {
+            if (c.path.startsWith("theme.shape.") || c.path.startsWith("theme.font.")
+                    || c.path.equals("theme.preset") || c.path.equals("theme.surface")) {
                 return true;
             }
         }
         return false;
     }
 
-    private void applyShape(int userId) {
-        final Object radius = mBackend.read(mSchema.get("theme.shape.radius"), userId);
-        final Object style = mBackend.read(mSchema.get("theme.shape.style"), userId);
-        mTheme.applyShape(radius instanceof Long ? (Long) radius : null,
-                style instanceof String ? (String) style : "rounded", userId);
+    /**
+     * Rebuilds the token overlays (radius, fonts) from the live settings. Runs after every apply
+     * that touches them and, with {@code onlyIfStale}, at boot and on user switch, so a freshly
+     * flashed device (or one whose overlay state was wiped) gets its tokens without an apply.
+     */
+    void applyTokens(int userId, boolean onlyIfStale) {
+        final Object radius = effective("theme.shape.radius", userId);
+        final Object style = effective("theme.shape.style", userId);
+        final Object surface = effective("theme.surface", userId);
+        final ThemeApplier.Tokens t = new ThemeApplier.Tokens(
+                radius instanceof Long ? (Long) radius : null,
+                style instanceof String ? (String) style : null,
+                stringOrNull(effective("theme.font.display", userId)),
+                stringOrNull(effective("theme.font.text", userId)),
+                stringOrNull(effective("theme.font.mono", userId)),
+                "stock".equals(surface),
+                effective("theme.font.body", userId) != null);
+        mTheme.applyTokens(t, userId, onlyIfStale);
+    }
+
+    /** The option's live value, or its default when unset. */
+    private Object effective(String path, int userId) {
+        final Option o = mSchema.get(path);
+        final Object v = mBackend.read(o, userId);
+        return v != null ? v : o.defaultValue;
+    }
+
+    private static String stringOrNull(Object o) {
+        return o instanceof String ? (String) o : null;
+    }
+
+    private void applyTokensAsync(int userId) {
+        BackgroundThread.getHandler().post(() -> {
+            try {
+                synchronized (mLock) {
+                    applyTokens(userId, true);
+                }
+            } catch (RuntimeException e) {
+                Slog.w(TAG, "user " + userId + ": tokens not applied", e);
+            }
+        });
     }
 
     // ---------------------------------------------------------------------------------------------

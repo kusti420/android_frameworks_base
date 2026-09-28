@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Copyright (C) 2026 IchthysOS
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+<!-- IchthysOS "Shoal" design tokens: the contract between the theme engine and every Shoal
+     consumer (SystemUI, Settings, SettingsLib, apps).
+
+     Colours: system_server's theming service (ThemeOverlayHelper + ShoalPalette) writes the
+     ichthys_*_dark / ichthys_*_light leaves into the android:dynamic_<user> fabricated overlay from
+     ichthys.nix (theme.accent, theme.surface, theme.neutral, theme.surfaces, theme.pitchBlack).
+     The defaults below alias the Material system roles, so with theme.surface = "stock" (and on
+     first boot before the overlay exists) everything degrades to plain Monet. Consumers should use
+     the unsuffixed ichthys_<token> (resolves to _light / _dark by night mode) unless they need a
+     fixed theme. Never hard-code a Shoal hex in a consumer: ShoalPalette.java is the only place.
+
+     Integers: ichthys_surface_style (0 stock, 1 hairline, 2 tonal), ichthys_surface_levels (2..5)
+     and ichthys_palette_hash are written into the same dynamic overlay.
+     Dimens / strings: ichthys_radius, ichthys_radius_small and the three font families are
+     written by IchthysConfigService's android:ichthys_theme_tokens overlay (theme.shape.*,
+     theme.font.*). -->
+<resources>
+    <color name="ichthys_ink_dark">@color/system_background_dark</color>
+    <color name="ichthys_ink_light">@color/system_background_light</color>
+    <color name="ichthys_card_dark">@color/system_surface_container_low_dark</color>
+    <color name="ichthys_card_light">@color/system_surface_container_low_light</color>
+    <color name="ichthys_raised_dark">@color/system_surface_container_high_dark</color>
+    <color name="ichthys_raised_light">@color/system_surface_container_high_light</color>
+    <color name="ichthys_tile_dark">@color/system_surface_container_highest_dark</color>
+    <color name="ichthys_tile_light">@color/system_surface_container_highest_light</color>
+    <color name="ichthys_hairline_dark">@color/system_outline_variant_dark</color>
+    <color name="ichthys_hairline_light">@color/system_outline_variant_light</color>
+    <color name="ichthys_track_dark">@color/system_surface_container_highest_dark</color>
+    <color name="ichthys_track_light">@color/system_surface_container_highest_light</color>
+    <color name="ichthys_outline_dark">@color/system_outline_dark</color>
+    <color name="ichthys_outline_light">@color/system_outline_light</color>
+    <color name="ichthys_text_dark">@color/system_on_surface_dark</color>
+    <color name="ichthys_text_light">@color/system_on_surface_light</color>
+    <color name="ichthys_body_dark">@color/system_on_surface_dark</color>
+    <color name="ichthys_body_light">@color/system_on_surface_light</color>
+    <color name="ichthys_muted_dark">@color/system_on_surface_variant_dark</color>
+    <color name="ichthys_muted_light">@color/system_on_surface_variant_light</color>
+    <color name="ichthys_accent_dark">@color/system_primary_dark</color>
+    <color name="ichthys_accent_light">@color/system_primary_light</color>
+    <color name="ichthys_on_accent_dark">@color/system_on_primary_dark</color>
+    <color name="ichthys_on_accent_light">@color/system_on_primary_light</color>
+    <color name="ichthys_accent_tint_dark">@color/system_secondary_container_dark</color>
+    <color name="ichthys_accent_tint_light">@color/system_secondary_container_light</color>
+    <color name="ichthys_accent_fill_dark">@color/system_primary_container_dark</color>
+    <color name="ichthys_accent_fill_light">@color/system_primary_container_light</color>
+    <color name="ichthys_accent_dim_dark">@color/system_secondary_container_dark</color>
+    <color name="ichthys_accent_dim_light">@color/system_secondary_container_light</color>
+
+    <!-- Unsuffixed tokens: the light leaves here, the dark leaves in values-night. -->
+    <color name="ichthys_ink">@color/ichthys_ink_light</color>
+    <color name="ichthys_card">@color/ichthys_card_light</color>
+    <color name="ichthys_raised">@color/ichthys_raised_light</color>
+    <color name="ichthys_tile">@color/ichthys_tile_light</color>
+    <color name="ichthys_hairline">@color/ichthys_hairline_light</color>
+    <color name="ichthys_track">@color/ichthys_track_light</color>
+    <color name="ichthys_outline">@color/ichthys_outline_light</color>
+    <color name="ichthys_text">@color/ichthys_text_light</color>
+    <color name="ichthys_body">@color/ichthys_body_light</color>
+    <color name="ichthys_muted">@color/ichthys_muted_light</color>
+    <color name="ichthys_accent">@color/ichthys_accent_light</color>
+    <color name="ichthys_on_accent">@color/ichthys_on_accent_light</color>
+    <color name="ichthys_accent_tint">@color/ichthys_accent_tint_light</color>
+    <color name="ichthys_accent_fill">@color/ichthys_accent_fill_light</color>
+    <color name="ichthys_accent_dim">@color/ichthys_accent_dim_light</color>
+
+    <!-- 0 = stock (plain Monet), 1 = hairline (outlined panels on the ground), 2 = tonal
+         (filled panels, no stroke). Default matches theme.surface's default. -->
+    <integer name="ichthys_surface_style">1</integer>
+    <!-- Distinct surface elevation levels (theme.surfaces), 2..5. -->
+    <integer name="ichthys_surface_levels">3</integer>
+    <!-- Fingerprint of the applied palette (0 = none applied yet). Internal: lets the theming
+         service tell whether the overlay on screen matches the settings. -->
+    <integer name="ichthys_palette_hash">0</integer>
+
+    <!-- Corner radius of Shoal panels/cards (theme.shape.radius) and of small elements (half of
+         it, at least 4dp). -->
+    <dimen name="ichthys_radius">22dp</dimen>
+    <dimen name="ichthys_radius_small">11dp</dimen>
+    <!-- Stroke width of hairline-outlined panels. -->
+    <dimen name="ichthys_hairline_width">1dp</dimen>
+
+    <!-- Font families (theme.font.*): display (large titles, clock), text (body), mono
+         (numerals). Names are families from fonts_customization.xml, usable with
+         Typeface.create(name, style) or android:fontFamily. -->
+    <string name="ichthys_font_display" translatable="false">syne</string>
+    <string name="ichthys_font_text" translatable="false">instrument-sans</string>
+    <string name="ichthys_font_mono" translatable="false">jetbrains-mono</string>
+</resources>

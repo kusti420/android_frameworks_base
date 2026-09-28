@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Copyright (C) 2026 IchthysOS
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+<!-- IchthysOS "Shoal": night-mode binding of the unsuffixed tokens (see values/ichthys_tokens.xml). -->
+<resources>
+    <color name="ichthys_ink">@color/ichthys_ink_dark</color>
+    <color name="ichthys_card">@color/ichthys_card_dark</color>
+    <color name="ichthys_raised">@color/ichthys_raised_dark</color>
+    <color name="ichthys_tile">@color/ichthys_tile_dark</color>
+    <color name="ichthys_hairline">@color/ichthys_hairline_dark</color>
+    <color name="ichthys_track">@color/ichthys_track_dark</color>
+    <color name="ichthys_outline">@color/ichthys_outline_dark</color>
+    <color name="ichthys_text">@color/ichthys_text_dark</color>
+    <color name="ichthys_body">@color/ichthys_body_dark</color>
+    <color name="ichthys_muted">@color/ichthys_muted_dark</color>
+    <color name="ichthys_accent">@color/ichthys_accent_dark</color>
+    <color name="ichthys_on_accent">@color/ichthys_on_accent_dark</color>
+    <color name="ichthys_accent_tint">@color/ichthys_accent_tint_dark</color>
+    <color name="ichthys_accent_fill">@color/ichthys_accent_fill_dark</color>
+    <color name="ichthys_accent_dim">@color/ichthys_accent_dim_dark</color>
+</resources>
