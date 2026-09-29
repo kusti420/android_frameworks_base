@@ -568,8 +568,10 @@ public final class IchthysGuardService extends SystemService {
         pkg.addAction(Intent.ACTION_PACKAGE_FULLY_REMOVED);
         pkg.addDataScheme("package");
         getContext().registerReceiverForAllUsers(mPackageReceiver, pkg, null, mScanHandler);
+        // Same receiver object, so it must use the same handler: Android refuses a second
+        // registration with a different one (IllegalStateException, which crash-looped boot).
         getContext().registerReceiverForAllUsers(mPackageReceiver,
-                new IntentFilter(Intent.ACTION_UID_REMOVED), null, mHandler);
+                new IntentFilter(Intent.ACTION_UID_REMOVED), null, mScanHandler);
     }
 
     private final BroadcastReceiver mPackageReceiver = new BroadcastReceiver() {
