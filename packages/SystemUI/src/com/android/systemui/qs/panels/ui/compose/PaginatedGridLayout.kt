@@ -233,8 +233,8 @@ private fun FooterBar(
     }
 }
 
-/** Shoal page capacity: up to 4 rows of wide tiles and a 6/5/6 honeycomb per page. */
-private const val SHOAL_WIDE_PER_PAGE = 8
+/** Shoal page capacity: up to 5 rows of wide tiles and a 6/5/6 honeycomb per page. */
+private const val SHOAL_WIDE_PER_PAGE = 10
 private const val SHOAL_SMALL_PER_PAGE = 17
 
 private fun shoalPages(

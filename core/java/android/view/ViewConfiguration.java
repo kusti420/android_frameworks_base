@@ -123,7 +123,9 @@ public class ViewConfiguration {
      * Defines the duration in milliseconds a user needs to hold down the
      * appropriate button to enable the accessibility shortcut once it's configured.
      */
-    private static final int A11Y_SHORTCUT_KEY_TIMEOUT_AFTER_CONFIRMATION = 1000;
+    // IchthysOS: 1000 ms felt sluggish for toggles like Extra Dim; 450 ms still needs a deliberate
+    // hold of both volume keys, so a quick volume tap never triggers it.
+    private static final int A11Y_SHORTCUT_KEY_TIMEOUT_AFTER_CONFIRMATION = 450;
 
     /**
      * Defines the duration in milliseconds we will wait to see if a touch event
