@@ -132,6 +132,13 @@ public final class ColorDisplayService extends SystemService {
     private static final int NOT_SET = -1;
 
     /**
+     * Lowest colour temperature the stock night display quadratic coefficients were fitted for
+     * (the AOSP config_nightDisplayColorTemperatureMin). Warmer temperatures use a Planckian
+     * extrapolation, see NightDisplayTintController#setMatrix.
+     */
+    private static final int QUADRATIC_FIT_MIN_CCT = 2596;
+
+    /**
      * Min and Max values for percentage of RBC setting.
      */
     private static final int PERCENTAGE_MIN = 0;
@@ -1579,6 +1586,10 @@ public final class ColorDisplayService extends SystemService {
 
         private final float[] mMatrix = new float[16];
         private final float[] mColorTempCoefficients = new float[9];
+        private final float[] mScratchRgb = new float[3];
+        private final float[] mScratchRgbFloor = new float[3];
+        /** Whether {@link #mColorTempCoefficients} are the linear-space set. */
+        private boolean mCoefficientsLinear;
 
         private Boolean mIsAvailable;
         private Integer mColorTemp;
@@ -1594,6 +1605,7 @@ public final class ColorDisplayService extends SystemService {
             for (int i = 0; i < 9 && i < coefficients.length; i++) {
                 mColorTempCoefficients[i] = Float.parseFloat(coefficients[i]);
             }
+            mCoefficientsLinear = needsLinear;
         }
 
         @Override
@@ -1605,16 +1617,53 @@ public final class ColorDisplayService extends SystemService {
 
             Matrix.setIdentityM(mMatrix, 0);
 
-            final float squareTemperature = cct * cct;
-            final float red = squareTemperature * mColorTempCoefficients[0]
-                    + cct * mColorTempCoefficients[1] + mColorTempCoefficients[2];
-            final float green = squareTemperature * mColorTempCoefficients[3]
-                    + cct * mColorTempCoefficients[4] + mColorTempCoefficients[5];
-            final float blue = squareTemperature * mColorTempCoefficients[6]
-                    + cct * mColorTempCoefficients[7] + mColorTempCoefficients[8];
-            mMatrix[0] = red;
-            mMatrix[5] = green;
-            mMatrix[10] = blue;
+            float red;
+            float green;
+            float blue;
+            if (cct >= QUADRATIC_FIT_MIN_CCT) {
+                red = quadratic(0, cct);
+                green = quadratic(3, cct);
+                blue = quadratic(6, cct);
+            } else {
+                // IchthysOS: the quadratic coefficients are only fitted down to
+                // QUADRATIC_FIT_MIN_CCT and flatten out below it (at 1200 K they still leave
+                // ~56% green and ~14% blue). For warmer, f.lux-style temperatures follow the
+                // Planckian locus instead: scale the fitted gains at the fit floor by the
+                // blackbody ratio bb(cct) / bb(floor), per channel, in the coefficients' colour
+                // space. This is continuous at the floor and drives blue to 0 below ~1900 K and
+                // green to ~20-40% at 1200 K (deep amber / red).
+                final float r0 = quadratic(0, QUADRATIC_FIT_MIN_CCT);
+                final float g0 = quadratic(3, QUADRATIC_FIT_MIN_CCT);
+                final float b0 = quadratic(6, QUADRATIC_FIT_MIN_CCT);
+                blackbodyRgb(cct, mScratchRgb);
+                blackbodyRgb(QUADRATIC_FIT_MIN_CCT, mScratchRgbFloor);
+                red = r0 * channelRatio(mScratchRgb[0], mScratchRgbFloor[0]);
+                green = g0 * channelRatio(mScratchRgb[1], mScratchRgbFloor[1]);
+                blue = b0 * channelRatio(mScratchRgb[2], mScratchRgbFloor[2]);
+            }
+            // Never emit negative or >1 gains, whatever the coefficients extrapolate to.
+            mMatrix[0] = MathUtils.constrain(red, 0f, 1f);
+            mMatrix[5] = MathUtils.constrain(green, 0f, 1f);
+            mMatrix[10] = MathUtils.constrain(blue, 0f, 1f);
+        }
+
+        /** Evaluates the quadratic a*cct^2 + b*cct + c whose coefficients start at {@code i}. */
+        private float quadratic(int i, int cct) {
+            final float c = cct;
+            return c * c * mColorTempCoefficients[i] + c * mColorTempCoefficients[i + 1]
+                    + mColorTempCoefficients[i + 2];
+        }
+
+        /**
+         * Ratio of two gamma-encoded blackbody channel values, converted to linear light when the
+         * linear coefficient set is in use. Returns 0 when the reference is 0.
+         */
+        private float channelRatio(float value, float reference) {
+            if (mCoefficientsLinear) {
+                value = srgbToLinear(value);
+                reference = srgbToLinear(reference);
+            }
+            return reference > 0f ? value / reference : 0f;
         }
 
         @Override
@@ -1720,6 +1769,33 @@ public final class ColorDisplayService extends SystemService {
                     getContext().getContentResolver(), Secure.NIGHT_DISPLAY_COLOR_TEMPERATURE,
                     NOT_SET,
                     mCurrentUser));
+        }
+
+        /**
+         * Normalised (0..1, sRGB-encoded) white point of a blackbody radiator at {@code kelvin}
+         * (Tanner Helland's fit of the Planckian locus, valid ~1000..40000 K).
+         */
+        private void blackbodyRgb(int kelvin, float[] out) {
+            final double t = kelvin / 100.0;
+            final double r = t <= 66.0 ? 255.0 : 329.698727446 * Math.pow(t - 60.0, -0.1332047592);
+            final double g = t <= 66.0
+                    ? 99.4708025861 * Math.log(t) - 161.1195681661
+                    : 288.1221695283 * Math.pow(t - 60.0, -0.0755148492);
+            final double b;
+            if (t >= 66.0) {
+                b = 255.0;
+            } else if (t <= 19.0) {
+                b = 0.0;
+            } else {
+                b = 138.5177312231 * Math.log(t - 10.0) - 305.0447927307;
+            }
+            out[0] = (float) (Math.max(0.0, Math.min(r, 255.0)) / 255.0);
+            out[1] = (float) (Math.max(0.0, Math.min(g, 255.0)) / 255.0);
+            out[2] = (float) (Math.max(0.0, Math.min(b, 255.0)) / 255.0);
+        }
+
+        private float srgbToLinear(float c) {
+            return c <= 0.04045f ? c / 12.92f : (float) Math.pow((c + 0.055f) / 1.055f, 2.4);
         }
 
         private int clampNightDisplayColorTemperature(int colorTemperature) {

@@ -341,7 +341,7 @@ interface QSAccessibilityModule {
                 tileSpec = TileSpec.create(NIGHT_DISPLAY_TILE_SPEC),
                 uiConfig =
                     QSTileUIConfig.Resource(
-                        iconRes = R.drawable.qs_nightlight_icon_off,
+                        iconRes = R.drawable.ic_qs_ichthys_nightlight_off,
                         labelRes = R.string.quick_settings_night_display_label,
                     ),
                 instanceId = uiEventLogger.getNewInstanceId(),

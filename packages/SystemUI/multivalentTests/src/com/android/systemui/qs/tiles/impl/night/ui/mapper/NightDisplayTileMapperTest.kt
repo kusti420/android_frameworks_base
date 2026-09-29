@@ -54,8 +54,8 @@ class NightDisplayTileMapperTest : SysuiTestCase() {
             NightDisplayTileMapper(
                 context.orCreateTestableResources
                     .apply {
-                        addOverride(R.drawable.qs_nightlight_icon_on, TestStubDrawable())
-                        addOverride(R.drawable.qs_nightlight_icon_off, TestStubDrawable())
+                        addOverride(R.drawable.ic_qs_ichthys_nightlight, TestStubDrawable())
+                        addOverride(R.drawable.ic_qs_ichthys_nightlight_off, TestStubDrawable())
                     }
                     .resources,
                 context.theme,
@@ -266,8 +266,8 @@ class NightDisplayTileMapperTest : SysuiTestCase() {
         val label = context.getString(R.string.quick_settings_night_display_label)
         val iconRes =
             if (activationState == QSTileState.ActivationState.ACTIVE)
-                R.drawable.qs_nightlight_icon_on
-            else R.drawable.qs_nightlight_icon_off
+                R.drawable.ic_qs_ichthys_nightlight
+            else R.drawable.ic_qs_ichthys_nightlight_off
         val contentDescription =
             if (TextUtils.isEmpty(secondaryLabel)) label
             else TextUtils.concat(label, ", ", secondaryLabel)

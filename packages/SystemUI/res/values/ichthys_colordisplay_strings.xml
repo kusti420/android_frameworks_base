@@ -32,6 +32,10 @@
     <string name="ichthys_extra_dim_intensity">Intensity</string>
     <!-- Slider value in the Extra Dim dialog. [CHAR LIMIT=10] -->
     <string name="ichthys_extra_dim_intensity_value"><xliff:g id="percent" example="40">%1$d</xliff:g>%%</string>
+    <!-- Start label under the Extra Dim intensity slider (same as Settings). [CHAR LIMIT=20] -->
+    <string name="ichthys_extra_dim_dimmer">Dimmer</string>
+    <!-- End label under the Extra Dim intensity slider (same as Settings). [CHAR LIMIT=20] -->
+    <string name="ichthys_extra_dim_brighter">Brighter</string>
     <!-- Switch in the Extra Dim dialog: keep Extra Dim on after the device restarts. [CHAR LIMIT=40] -->
     <string name="ichthys_extra_dim_keep_on">Keep on after restart</string>
     <!-- Link from the Extra Dim dialog to the Extra Dim settings page. [CHAR LIMIT=40] -->

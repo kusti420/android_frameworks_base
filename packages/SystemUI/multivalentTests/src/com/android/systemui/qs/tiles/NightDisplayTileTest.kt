@@ -114,7 +114,7 @@ class NightDisplayTileTest : SysuiTestCase() {
         mTile.handleUpdateState(state, /* arg= */ null)
 
         Truth.assertThat(state.icon)
-            .isEqualTo(createExpectedIcon(R.drawable.qs_nightlight_icon_off))
+            .isEqualTo(createExpectedIcon(R.drawable.ic_qs_ichthys_nightlight_off))
     }
 
     @Test
@@ -124,7 +124,7 @@ class NightDisplayTileTest : SysuiTestCase() {
 
         mTile.handleUpdateState(state, /* arg= */ null)
 
-        Truth.assertThat(state.icon).isEqualTo(createExpectedIcon(R.drawable.qs_nightlight_icon_on))
+        Truth.assertThat(state.icon).isEqualTo(createExpectedIcon(R.drawable.ic_qs_ichthys_nightlight))
     }
 
     private fun createExpectedIcon(resId: Int): QSTile.Icon {

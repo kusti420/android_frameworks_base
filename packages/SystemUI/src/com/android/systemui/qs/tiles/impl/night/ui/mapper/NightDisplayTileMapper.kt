@@ -52,8 +52,8 @@ constructor(
             // off (a schedule is armed even while it is currently inactive); the icon shows whether
             // the screen is tinted right now.
             val iconRes =
-                if (data.isActivated) R.drawable.qs_nightlight_icon_on
-                else R.drawable.qs_nightlight_icon_off
+                if (data.isActivated) R.drawable.ic_qs_ichthys_nightlight
+                else R.drawable.ic_qs_ichthys_nightlight_off
             activationState =
                 if (data is NightDisplayTileModel.AutoModeOff && !data.isActivated)
                     QSTileState.ActivationState.INACTIVE

@@ -50,6 +50,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
@@ -83,23 +84,43 @@ import kotlinx.coroutines.CoroutineScope
  * option quickSettings.style): big tiles (the stock large-tiles set, toggled in edit mode) as wide
  * two-column tiles with their subtitle,
  * every other tile as an icon-only circle in an offset honeycomb (rows alternating N / N-1, each
- * lower row rising 8 dp into the one above) - the same lattice motif as the Shoal status bar.
+ * lower row rising [ShoalQs.OVERLAP] into the one above) - the same lattice motif as the Shoal status bar.
  *
  * The tiles are drawn by [ShoalWideTile] / [ShoalCircleTile] rather than the stock [Tile]: the stock
  * tile follows crDroid's qs_panel_style, whose default "card" look has a transparent container, so
  * off tiles had no background at all. Shoal tiles always paint a filled surface.
  */
 internal object ShoalQs {
-    val CELL = 58.dp
-    val GAP = 10.dp
-    val OVERLAP = 8.dp
-    const val MAX_PER_ROW = 5
+    // Honeycomb of icon circles. Rows alternate MAX_PER_ROW / MAX_PER_ROW - 1 (6 / 5): a full row
+    // is 6 * 48 + 5 * 8 = 328 dp, leaving room to spare on the 384 dp panel.
+    /** Circle diameter; also the touch target (>= 44 dp). */
+    val CELL = 48.dp
+    /** Horizontal gap between circles in a row (the half-pitch offset is (CELL + GAP) / 2). */
+    val GAP = 8.dp
+    /** How far each lower row rises into the one above (8 dp at the old 58 dp cell, scaled). */
+    val OVERLAP = 6.5.dp
+    const val MAX_PER_ROW = 6
+    /** Glyph size inside a circle. */
+    val CIRCLE_ICON = 20.dp
 
-    val WIDE_HEIGHT = 64.dp
+    // Wide two-column tiles.
+    val WIDE_HEIGHT = 52.dp
     val WIDE_RADIUS = 22.dp
-    val WIDE_GAP = 10.dp
+    val WIDE_GAP = 8.dp
     val WIDE_PADDING = 14.dp
-    val ICON = 22.dp
+    /** Glyph size in a wide tile. */
+    val WIDE_ICON = 20.dp
+    /** Touch target around the wide tile's icon (the toggle of dual-target tiles). */
+    val WIDE_ICON_TARGET = 36.dp
+    /** Space between the wide tile's icon target and its text. */
+    val WIDE_ICON_TEXT_GAP = 6.dp
+    val WIDE_LABEL_SIZE = 14.sp
+    val WIDE_LABEL_LINE_HEIGHT = 17.sp
+    val WIDE_SUBTITLE_SIZE = 12.sp
+    val WIDE_SUBTITLE_LINE_HEIGHT = 14.sp
+
+    /** Vertical space between the wide tiles and the honeycomb. */
+    val SECTION_GAP = 12.dp
 }
 
 @Composable
@@ -125,7 +146,7 @@ internal fun ContentScope.ShoalTileGrid(
     val accent = rememberShoalAccent()
     val fonts = rememberShoalQsFonts()
 
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(ShoalQs.SECTION_GAP)) {
         if (wide.isNotEmpty()) {
             Column(verticalArrangement = Arrangement.spacedBy(ShoalQs.WIDE_GAP)) {
                 wide.chunked(2).forEach { pair ->
@@ -174,6 +195,10 @@ internal fun ContentScope.ShoalTileGrid(
 }
 
 // region tiles
+
+/** Label / subtitle lines hug their glyphs so both fit a [ShoalQs.WIDE_HEIGHT] tile. */
+private val ShoalTightLineHeight =
+    LineHeightStyle(alignment = LineHeightStyle.Alignment.Center, trim = LineHeightStyle.Trim.Both)
 
 private data class ShoalTileColors(val background: Color, val content: Color)
 
@@ -244,7 +269,10 @@ private fun ShoalTileSurface(
     }
 }
 
-/** Wide two-column tile: 64 dp, radius 22, icon + label + subtitle, always a filled surface. */
+/**
+ * Wide two-column tile ([ShoalQs.WIDE_HEIGHT] tall, [ShoalQs.WIDE_RADIUS] radius): icon + label +
+ * subtitle, always a filled surface.
+ */
 @Composable
 private fun ShoalWideTile(
     tile: TileViewModel,
@@ -310,7 +338,7 @@ private fun ShoalWideTile(
             // the stock large tile; the rest of the tile opens its details / dialog.
             Box(
                 modifier =
-                    Modifier.size(36.dp)
+                    Modifier.size(ShoalQs.WIDE_ICON_TARGET)
                         .clip(CircleShape)
                         .then(
                             if (isDualTarget && uiState.handlesMainClick) {
@@ -338,17 +366,19 @@ private fun ShoalWideTile(
                 SmallTileContent(
                     iconProvider = state.iconProvider,
                     color = content,
-                    size = { ShoalQs.ICON },
+                    size = { ShoalQs.WIDE_ICON },
                 )
             }
-            Spacer(Modifier.width(6.dp))
+            Spacer(Modifier.width(ShoalQs.WIDE_ICON_TEXT_GAP))
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
                 BasicText(
                     text = uiState.label,
                     style =
                         TextStyle(
                             color = content,
-                            fontSize = 14.sp,
+                            fontSize = ShoalQs.WIDE_LABEL_SIZE,
+                            lineHeight = ShoalQs.WIDE_LABEL_LINE_HEIGHT,
+                            lineHeightStyle = ShoalTightLineHeight,
                             fontWeight = FontWeight.SemiBold,
                             fontFamily = fonts.text,
                         ),
@@ -361,7 +391,9 @@ private fun ShoalWideTile(
                         style =
                             TextStyle(
                                 color = content.copy(alpha = content.alpha * 0.8f),
-                                fontSize = 12.sp,
+                                fontSize = ShoalQs.WIDE_SUBTITLE_SIZE,
+                                lineHeight = ShoalQs.WIDE_SUBTITLE_LINE_HEIGHT,
+                                lineHeightStyle = ShoalTightLineHeight,
                                 fontFamily = fonts.text,
                             ),
                         maxLines = 1,
@@ -452,7 +484,7 @@ private fun ShoalCircleTile(
             SmallTileContent(
                 iconProvider = state.iconProvider,
                 color = content,
-                size = { ShoalQs.ICON },
+                size = { ShoalQs.CIRCLE_ICON },
             )
         }
     }
@@ -490,9 +522,9 @@ internal data class HoneycombRow(val size: Int, val halfOffset: Int)
  * Splits [count] circles into honeycomb rows. Adjacent rows must sit half a pitch apart (their
  * half-offsets differ in parity), otherwise the raised lower row would collide with the one above.
  *
- * Preference, in order: fewest rows; rows as even as possible (alternating N / N-1, e.g. 5/4/5,
- * 4/5/4, or 3/4/3 for ten tiles rather than 5/4/1); centred rows (a row is only shifted half a pitch
- * off-centre when two equal rows meet); no lone single circle; larger rows first.
+ * Preference, in order: fewest rows; rows as even as possible (alternating N / N-1, e.g. 6/5/6,
+ * 5/6/5, or 4/5/4 for thirteen tiles rather than 6/6/1); centred rows (a row is only shifted half
+ * a pitch off-centre when two equal rows meet); no lone single circle; larger rows first.
  */
 internal fun honeycombRows(count: Int, max: Int = ShoalQs.MAX_PER_ROW): List<HoneycombRow> {
     if (count <= 0) return emptyList()

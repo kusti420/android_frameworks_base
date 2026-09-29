@@ -1448,7 +1448,7 @@ private val LocalShoalEdit = staticCompositionLocalOf { false }
 
 /**
  * IchthysOS "Shoal" edit-cell shape: a circle (centred, the cell's smaller side) for icon cells and
- * a 22 dp-radius pill for wide cells, mirroring the live honeycomb / wide tiles.
+ * a [ShoalQs.WIDE_RADIUS] pill for wide cells, mirroring the live honeycomb / wide tiles.
  */
 private object ShoalEditShape : Shape {
     override fun createOutline(
@@ -1457,7 +1457,7 @@ private object ShoalEditShape : Shape {
         density: Density,
     ): Outline {
         return if (size.width >= size.height * 1.25f) {
-            val r = minOf(with(density) { 22.dp.toPx() }, size.height / 2f)
+            val r = minOf(with(density) { ShoalQs.WIDE_RADIUS.toPx() }, size.height / 2f)
             Outline.Rounded(RoundRect(0f, 0f, size.width, size.height, CornerRadius(r)))
         } else {
             val d = minOf(size.width, size.height)

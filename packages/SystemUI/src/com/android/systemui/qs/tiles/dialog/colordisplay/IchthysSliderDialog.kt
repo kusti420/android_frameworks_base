@@ -247,6 +247,8 @@ private val TrackPad = 16.dp
  * @param gradient optional colours drawn across the track (start to end); the unfilled part shows
  *   them faintly, the filled part fully.
  * @param step value quantum; a haptic tick plays on quantum changes (thinned for fine ranges).
+ * @param startLabel optional caption under the start end of the track (e.g. "Dimmer").
+ * @param endLabel optional caption under the end of the track (e.g. "Brighter").
  */
 @Composable
 fun IchthysPillSlider(
@@ -262,6 +264,8 @@ fun IchthysPillSlider(
     thumbColor: Color? = null,
     onDragStarted: () -> Unit = {},
     onValueChangeFinished: (Int) -> Unit = {},
+    startLabel: String? = null,
+    endLabel: String? = null,
 ) {
     val tokens = rememberIchthysDialogTokens()
     val view = LocalView.current
@@ -448,6 +452,23 @@ fun IchthysPillSlider(
                         }
                     }
         )
+        if (startLabel != null || endLabel != null) {
+            val captionStyle =
+                TextStyle(color = tokens.muted, fontSize = 12.sp, fontFamily = tokens.textFont)
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = startLabel.orEmpty(),
+                    style = captionStyle,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(text = endLabel.orEmpty(), style = captionStyle, maxLines = 1)
+            }
+        }
     }
 }
 

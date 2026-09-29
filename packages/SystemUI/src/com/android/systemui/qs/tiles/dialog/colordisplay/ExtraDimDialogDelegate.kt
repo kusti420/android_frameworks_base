@@ -41,7 +41,6 @@ import com.android.systemui.statusbar.phone.SystemUIDialog
 import com.android.systemui.statusbar.phone.SystemUIDialogFactory
 import javax.inject.Inject
 import kotlin.coroutines.CoroutineContext
-import kotlin.math.roundToInt
 
 /**
  * IchthysOS Extra Dim dialog (long-press on the "reduce_brightness" tile): on/off, intensity
@@ -71,9 +70,8 @@ constructor(
         val initial = remember { controller.readState() }
         val stateFlow = remember { controller.state() }
         val state by stateFlow.collectAsState(initial = initial)
-        val min = controller.minStrength
-        val max = controller.maxStrength
-        val span = (max - min).coerceAtLeast(1)
+        val min = IchthysExtraDimController.PERCENT_MIN
+        val max = IchthysExtraDimController.PERCENT_MAX
         val res = dialog.context.resources
 
         AlertDialogContent(
@@ -95,18 +93,17 @@ constructor(
                     )
                     IchthysPillSlider(
                         label = stringResource(R.string.ichthys_extra_dim_intensity),
-                        value = state.strength.coerceIn(min, max),
+                        // Same direction, range and number as Settings: 0 % (dimmer) on the start
+                        // side, 100 % (brighter) on the end side.
+                        value = state.intensityPercent.coerceIn(min, max),
                         valueRange = min..max,
-                        valueText = {
-                            res.getString(
-                                R.string.ichthys_extra_dim_intensity_value,
-                                ((it - min) * 100f / span).roundToInt(),
-                            )
-                        },
+                        valueText = { res.getString(R.string.ichthys_extra_dim_intensity_value, it) },
+                        startLabel = stringResource(R.string.ichthys_extra_dim_dimmer),
+                        endLabel = stringResource(R.string.ichthys_extra_dim_brighter),
                         // Adjusting the intensity while off turns Extra Dim on, like the
                         // flashlight dialog.
                         onDragStarted = { if (!state.activated) controller.setActivated(true) },
-                        onValueChange = { controller.setStrength(it) },
+                        onValueChange = { controller.setIntensityPercent(it) },
                     )
                     IchthysSwitchRow(
                         label = stringResource(R.string.ichthys_extra_dim_keep_on),

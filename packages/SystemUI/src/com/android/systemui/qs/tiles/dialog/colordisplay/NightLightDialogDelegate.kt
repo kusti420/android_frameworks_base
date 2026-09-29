@@ -21,6 +21,7 @@ import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -28,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.android.compose.PlatformButton
@@ -89,7 +91,21 @@ constructor(
         // A preview only switches activation, so an otherwise-off Night Light still reads "Off".
         val shownMode = if (previewing && mode == Mode.ON) Mode.OFF else mode
 
+        val tokens = rememberIchthysDialogTokens()
+
         AlertDialogContent(
+            // Same f.lux-style glyph pair as the tile: filled while the screen is tinted.
+            icon = {
+                Icon(
+                    painter =
+                        painterResource(
+                            if (state.activated) R.drawable.ic_qs_ichthys_nightlight
+                            else R.drawable.ic_qs_ichthys_nightlight_off
+                        ),
+                    contentDescription = null,
+                    tint = tokens.accent,
+                )
+            },
             title = { Text(stringResource(R.string.quick_settings_night_display_label)) },
             content = {
                 Column(

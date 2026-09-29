@@ -43,8 +43,15 @@ import kotlinx.coroutines.launch
 
 /**
  * IchthysOS Extra Dim (Reduce Bright Colors) control for the long-press dialog: on/off, intensity
- * ([ColorDisplayManager.setReduceBrightColorsStrength]) and
- * [Settings.Secure.REDUCE_BRIGHT_COLORS_PERSIST_ACROSS_REBOOTS].
+ * and [Settings.Secure.REDUCE_BRIGHT_COLORS_PERSIST_ACROSS_REBOOTS].
+ *
+ * The intensity is exposed exactly like Settings (Accessibility > Extra dim > Intensity, see
+ * Settings' extradim IntensityDataStore): a 0..100 % slider whose value is
+ * `100 - Settings.Secure.REDUCE_BRIGHT_COLORS_LEVEL` (unset level reads as 0), so left = dimmer and
+ * right = brighter. Note [ColorDisplayManager.getReduceBrightColorsStrength] returns the level
+ * already mapped into the device's config_reduceBrightColorsStrengthMin..Max range, so it must
+ * not be used for display; [ColorDisplayManager.setReduceBrightColorsStrength] writes the raw
+ * level.
  */
 @SysUISingleton
 class IchthysExtraDimController
@@ -57,14 +64,12 @@ constructor(
 ) {
     data class State(
         val activated: Boolean = false,
-        val strength: Int = 0,
+        /** Settings-identical intensity percent (0 = dimmest, 100 = brightest). */
+        val intensityPercent: Int = PERCENT_MAX,
         val persist: Boolean = false,
     )
 
     private val cdm: ColorDisplayManager? = context.getSystemService(ColorDisplayManager::class.java)
-
-    val minStrength: Int = ColorDisplayManager.getMinimumReduceBrightColorsStrength(context)
-    val maxStrength: Int = ColorDisplayManager.getMaximumReduceBrightColorsStrength(context)
 
     private val strengthRequests =
         MutableSharedFlow<Int>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
@@ -86,7 +91,15 @@ constructor(
         val m = cdm ?: return State()
         return State(
             activated = m.isReduceBrightColorsActivated,
-            strength = m.reduceBrightColorsStrength,
+            intensityPercent =
+                PERCENT_MAX -
+                    Settings.Secure.getIntForUser(
+                            context.contentResolver,
+                            Settings.Secure.REDUCE_BRIGHT_COLORS_LEVEL,
+                            0,
+                            userTracker.userId,
+                        )
+                        .coerceIn(PERCENT_MIN, PERCENT_MAX),
             persist =
                 Settings.Secure.getIntForUser(
                     context.contentResolver,
@@ -126,9 +139,12 @@ constructor(
         scope.launch(bgContext) { cdm?.setReduceBrightColorsActivated(activated) }
     }
 
-    /** Sets the intensity (clamped to the device range); applied asynchronously. */
-    fun setStrength(strength: Int) {
-        strengthRequests.tryEmit(strength.coerceIn(minStrength, maxStrength))
+    /**
+     * Sets the intensity as the Settings slider does (percent 0..100, higher = brighter); applied
+     * asynchronously.
+     */
+    fun setIntensityPercent(percent: Int) {
+        strengthRequests.tryEmit(PERCENT_MAX - percent.coerceIn(PERCENT_MIN, PERCENT_MAX))
     }
 
     fun setPersist(persist: Boolean) {
@@ -142,9 +158,12 @@ constructor(
         }
     }
 
-    private companion object {
-        const val TAG = "IchthysExtraDim"
-        val OBSERVED_KEYS =
+    companion object {
+        /** Slider range, identical to Settings' extradim IntensityDataStore MIN/MAX_VALUE. */
+        const val PERCENT_MIN = 0
+        const val PERCENT_MAX = 100
+        private const val TAG = "IchthysExtraDim"
+        private val OBSERVED_KEYS =
             arrayOf(
                 Settings.Secure.REDUCE_BRIGHT_COLORS_ACTIVATED,
                 Settings.Secure.REDUCE_BRIGHT_COLORS_LEVEL,
