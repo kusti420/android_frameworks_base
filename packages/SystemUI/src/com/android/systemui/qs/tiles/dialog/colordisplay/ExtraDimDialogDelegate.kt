@@ -110,6 +110,11 @@ constructor(
                         checked = state.persist,
                         onCheckedChange = { controller.setPersist(it) },
                     )
+                    IchthysSwitchRow(
+                        label = stringResource(R.string.ichthys_extra_dim_volume_shortcut),
+                        checked = state.volumeShortcut,
+                        onCheckedChange = { controller.setVolumeShortcut(it) },
+                    )
                     IchthysLinkRow(
                         label = stringResource(R.string.ichthys_extra_dim_settings),
                         onClick = {

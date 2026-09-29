@@ -16,6 +16,9 @@
 
 package com.android.systemui.qs.tiles.dialog.colordisplay
 
+import android.view.accessibility.AccessibilityManager
+import com.android.internal.accessibility.AccessibilityShortcutController
+import com.android.internal.accessibility.common.ShortcutConstants
 import android.content.Context
 import android.database.ContentObserver
 import android.hardware.display.ColorDisplayManager
@@ -67,6 +70,8 @@ constructor(
         /** Settings-identical intensity percent (0 = dimmest, 100 = brightest). */
         val intensityPercent: Int = PERCENT_MAX,
         val persist: Boolean = false,
+        /** Accessibility hardware shortcut (hold both volume keys) toggles Extra Dim. */
+        val volumeShortcut: Boolean = false,
     )
 
     private val cdm: ColorDisplayManager? = context.getSystemService(ColorDisplayManager::class.java)
@@ -107,6 +112,14 @@ constructor(
                     0,
                     userTracker.userId,
                 ) != 0,
+            volumeShortcut =
+                Settings.Secure.getStringForUser(
+                        context.contentResolver,
+                        Settings.Secure.ACCESSIBILITY_SHORTCUT_TARGET_SERVICE,
+                        userTracker.userId,
+                    )
+                    ?.split(':')
+                    ?.contains(SHORTCUT_TARGET) == true,
         )
     }
 
@@ -158,7 +171,38 @@ constructor(
         }
     }
 
+    /**
+     * Assigns (or removes) Extra Dim on the accessibility volume-keys shortcut, exactly what
+     * Settings' "Hold volume keys" option for Extra Dim does. Other shortcut targets are kept.
+     */
+    fun setVolumeShortcut(enabled: Boolean) {
+        scope.launch(bgContext) {
+            try {
+                val am = context.getSystemService(AccessibilityManager::class.java) ?: return@launch
+                am.enableShortcutsForTargets(
+                    enabled,
+                    ShortcutConstants.UserShortcutType.HARDWARE,
+                    setOf(SHORTCUT_TARGET),
+                    userTracker.userId,
+                )
+                if (enabled) {
+                    // The owner chose it here, so skip the one-time "use shortcut?" confirmation.
+                    Settings.Secure.putIntForUser(
+                        context.contentResolver,
+                        Settings.Secure.ACCESSIBILITY_SHORTCUT_DIALOG_SHOWN,
+                        1,
+                        userTracker.userId,
+                    )
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "volume shortcut update failed", e)
+            }
+        }
+    }
+
     companion object {
+        private val SHORTCUT_TARGET: String =
+            AccessibilityShortcutController.REDUCE_BRIGHT_COLORS_COMPONENT_NAME.flattenToString()
         /** Slider range, identical to Settings' extradim IntensityDataStore MIN/MAX_VALUE. */
         const val PERCENT_MIN = 0
         const val PERCENT_MAX = 100
@@ -168,6 +212,7 @@ constructor(
                 Settings.Secure.REDUCE_BRIGHT_COLORS_ACTIVATED,
                 Settings.Secure.REDUCE_BRIGHT_COLORS_LEVEL,
                 Settings.Secure.REDUCE_BRIGHT_COLORS_PERSIST_ACROSS_REBOOTS,
+                Settings.Secure.ACCESSIBILITY_SHORTCUT_TARGET_SERVICE,
             )
     }
 }

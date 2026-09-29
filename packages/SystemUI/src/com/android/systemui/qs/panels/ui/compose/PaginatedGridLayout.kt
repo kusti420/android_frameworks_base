@@ -82,9 +82,22 @@ constructor(
         // IchthysOS: crDroid `qs_tiles_rows` / `qs_tiles_rows_landscape`, falling back to
         // R.integer.quick_settings_paginated_grid_num_rows when unset. See QSRowsRepository.
         val rows = viewModel.rows
+        // IchthysOS "Shoal": pages are filled by the Shoal layout's own capacity (wide tiles two
+        // per row, a denser honeycomb), not by the stock grid's row count, which split a half-empty
+        // panel onto a second page.
+        val shoalPaging = rememberShoalQsEnabled()
+        val shoalLarge =
+            (delegateGridViewModel as? com.android.systemui.qs.panels.ui.viewmodel.InfiniteGridViewModel)
+                ?.iconTilesViewModel
+                ?.largeTilesState
+                ?.value
         val pages =
-            remember(tiles, rows, *delegateGridViewModel.pageKeys) {
-                delegateGridViewModel.splitIntoPages(tiles, rows)
+            remember(tiles, rows, shoalPaging, shoalLarge, *delegateGridViewModel.pageKeys) {
+                if (shoalPaging && shoalLarge != null) {
+                    shoalPages(tiles) { it.spec in shoalLarge }
+                } else {
+                    delegateGridViewModel.splitIntoPages(tiles, rows)
+                }
             }
 
         val pagerState = rememberPagerState(0) { pages.size }
@@ -218,4 +231,29 @@ private fun FooterBar(
             EditModeButton(viewModel = editButtonViewModel, isVisible = isVisible())
         }
     }
+}
+
+/** Shoal page capacity: up to 4 rows of wide tiles and a 6/5/6 honeycomb per page. */
+private const val SHOAL_WIDE_PER_PAGE = 8
+private const val SHOAL_SMALL_PER_PAGE = 17
+
+private fun shoalPages(
+    tiles: List<TileViewModel>,
+    isLarge: (TileViewModel) -> Boolean,
+): List<List<TileViewModel>> {
+    val pages = mutableListOf<MutableList<TileViewModel>>()
+    var wide = 0
+    var small = 0
+    for (tile in tiles) {
+        val large = isLarge(tile)
+        val full = if (large) wide >= SHOAL_WIDE_PER_PAGE else small >= SHOAL_SMALL_PER_PAGE
+        if (pages.isEmpty() || full) {
+            pages.add(mutableListOf())
+            wide = 0
+            small = 0
+        }
+        pages.last().add(tile)
+        if (large) wide++ else small++
+    }
+    return pages
 }

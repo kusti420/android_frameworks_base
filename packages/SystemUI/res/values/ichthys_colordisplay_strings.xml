@@ -40,4 +40,6 @@
     <string name="ichthys_extra_dim_keep_on">Keep on after restart</string>
     <!-- Link from the Extra Dim dialog to the Extra Dim settings page. [CHAR LIMIT=40] -->
     <string name="ichthys_extra_dim_settings">Extra dim settings</string>
+    <!-- Extra Dim dialog: accessibility hardware shortcut (hold both volume keys) -->
+    <string name="ichthys_extra_dim_volume_shortcut">Hold volume keys to toggle</string>
 </resources>
