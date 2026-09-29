@@ -112,6 +112,9 @@ fun SystemStatusIconsLegacy(
                 }
 
                 iconManager.setTint(foregroundColor, backgroundColor)
+                // IchthysOS "Shoal": dark icons mean a light background behind the zig-zag
+                // lattice, which picks its neutral disc colour from that.
+                container.setZigzagLightBar(android.graphics.Color.luminance(foregroundColor) < 0.5f)
             }
         }
 

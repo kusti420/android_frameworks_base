@@ -529,6 +529,8 @@ public class KeyguardStatusBarViewController extends ViewController<KeyguardStat
                 mBatteryComposeView = createAndBindComposeBattery();
             }
             mSystemIconsContainer.addView(mBatteryComposeView, -1);
+            // IchthysOS "Shoal": the zig-zag battery stands in for this one in that layout.
+            mView.attachShoalBattery(mBatteryComposeView);
             // Set the margins for the system icons appropriately
             AlphaOptimizedLinearLayout systemIcons =
                     mSystemIconsContainer.findViewById(R.id.statusIcons);

@@ -160,6 +160,7 @@ public class StatusBarIconView extends AnimatedImageView implements StatusIconDi
     private Configuration mConfiguration;
     private boolean mNightMode;
     private float mIconScale = 1.0f;
+    private boolean mPivotOverridden;
     private final Paint mDotPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private float mDotRadius;
     private int mStaticDotRadius;
@@ -1147,7 +1148,25 @@ public class StatusBarIconView extends AnimatedImageView implements StatusIconDi
         updatePivot();
     }
 
+    /**
+     * IchthysOS "Shoal": lets the containing icon container own the pivot while it lays icons out
+     * as a zig-zag lattice of discs (it scales each icon about its glyph centre). Passing false
+     * restores the stock pivot.
+     */
+    public void setPivotOverridden(boolean overridden) {
+        if (mPivotOverridden == overridden) {
+            return;
+        }
+        mPivotOverridden = overridden;
+        if (!overridden) {
+            updatePivot();
+        }
+    }
+
     private void updatePivot() {
+        if (mPivotOverridden) {
+            return;
+        }
         if (isLayoutRtl()) {
             setPivotX((1 + mIconScale) / 2.0f * getWidth());
         } else {

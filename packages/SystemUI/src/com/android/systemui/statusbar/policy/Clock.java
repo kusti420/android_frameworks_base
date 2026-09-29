@@ -796,8 +796,10 @@ public class Clock extends TextView implements
         final int style = getTypeface() != null ? getTypeface().getStyle() : Typeface.NORMAL;
         final Typeface base;
         if (mShoalLayout) {
+            // Unset means the Shoal default (ShoalShade), JetBrains Mono, like the rest of the
+            // Shoal numerals.
             final String family = mShoalMonoFamily == null || mShoalMonoFamily.isEmpty()
-                    ? "monospace" : mShoalMonoFamily;
+                    ? "jetbrains-mono" : mShoalMonoFamily;
             final Typeface named = Typeface.create(family, Typeface.NORMAL);
             // An unknown family resolves to the default sans face; keep the numerals monospaced.
             base = named == null || named.equals(Typeface.DEFAULT) ? Typeface.MONOSPACE : named;

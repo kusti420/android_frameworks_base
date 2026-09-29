@@ -17,9 +17,11 @@
 package com.android.systemui.statusbar;
 
 import android.content.Context;
+import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.PorterDuff;
 import android.graphics.Rect;
+import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.provider.Settings;
 import android.text.TextUtils;
@@ -34,6 +36,7 @@ import com.android.systemui.Dependency;
 import com.android.systemui.plugins.DarkIconDispatcher;
 import com.android.systemui.plugins.DarkIconDispatcher.DarkReceiver;
 import com.android.systemui.res.R;
+import com.android.systemui.shade.ui.ShoalShade;
 import com.android.systemui.tuner.TunerService;
 
 import java.util.ArrayList;
@@ -74,6 +77,7 @@ public class StatusBarWeather extends TextView implements TunerService.Tunable,
     private int mTint = Color.WHITE;
     private boolean mAttached;
     private OmniJawsClient.WeatherInfo mWeatherInfo;
+    private Typeface mStockTypeface;
 
     public StatusBarWeather(Context context) {
         this(context, null);
@@ -95,10 +99,29 @@ public class StatusBarWeather extends TextView implements TunerService.Tunable,
     @Override
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
+        applyShoalFace();
         if (!mAttached) {
             mAttached = true;
             Dependency.get(TunerService.class).addTunable(this, STATUS_BAR_WEATHER);
         }
+    }
+
+    @Override
+    protected void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        applyShoalFace();
+    }
+
+    /**
+     * IchthysOS "Shoal": the temperature is a numeric readout, so it uses the mono face (weight
+     * 500) like the status bar clock; the stock face otherwise.
+     */
+    private void applyShoalFace() {
+        if (mStockTypeface == null) {
+            mStockTypeface = getTypeface() != null ? getTypeface() : Typeface.DEFAULT;
+        }
+        setTypeface(ShoalShade.isActive(getContext())
+                ? ShoalShade.mono(getContext(), 600) : mStockTypeface);
     }
 
     @Override
@@ -161,7 +184,11 @@ public class StatusBarWeather extends TextView implements TunerService.Tunable,
             return;
         }
 
-        final String temp = mWeatherInfo.temp + mWeatherInfo.tempUnits;
+        final boolean compact = ShoalShade.isActive(getContext());
+        applyCompactMetrics(compact);
+        // Shoal: "13°" (the unit letter adds width, not information).
+        final String temp = compact ? mWeatherInfo.temp + "\u00B0"
+                : mWeatherInfo.temp + mWeatherInfo.tempUnits;
         if (!TextUtils.equals(temp, getText())) {
             setText(temp);
         }
@@ -169,16 +196,49 @@ public class StatusBarWeather extends TextView implements TunerService.Tunable,
         if (mStyle == STYLE_TEMP_AND_ICON) {
             Drawable icon = mWeatherClient.getWeatherConditionImage(
                     getContext(), mWeatherInfo.conditionCode);
+            final int size = compact ? dp(COMPACT_GLYPH_DP) : mIconSizePx;
             if (icon != null) {
                 icon = icon.mutate();
-                icon.setBounds(0, 0, mIconSizePx, mIconSizePx);
+                icon.setBounds(0, 0, size, size);
                 icon.setColorFilter(mTint, PorterDuff.Mode.SRC_IN);
             }
-            setCompoundDrawablePadding(mIconSizePx / 4);
-            setCompoundDrawables(icon, null, null, null);
+            if (compact) {
+                // Shoal: glyph above the temperature, two rows like the icon lattice.
+                setCompoundDrawablePadding(0);
+                setCompoundDrawables(null, icon, null, null);
+            } else {
+                setCompoundDrawablePadding(mIconSizePx / 4);
+                setCompoundDrawables(icon, null, null, null);
+            }
         } else {
             setCompoundDrawables(null, null, null, null);
         }
+    }
+
+    private static final float COMPACT_GLYPH_DP = 11f;
+    private static final float COMPACT_TEXT_SP = 9.5f;
+    private float mStockTextSizePx = -1f;
+
+    /** Shoal: small two-row readout; stock size and spacing otherwise. */
+    private void applyCompactMetrics(boolean compact) {
+        if (mStockTextSizePx < 0) {
+            mStockTextSizePx = getTextSize();
+        }
+        if (compact) {
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, COMPACT_TEXT_SP);
+            setIncludeFontPadding(false);
+            setLineSpacing(0f, 0.9f);
+            setGravity(Gravity.CENTER);
+        } else {
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, mStockTextSizePx);
+            setIncludeFontPadding(true);
+            setLineSpacing(0f, 1f);
+            setGravity(Gravity.CENTER_VERTICAL);
+        }
+    }
+
+    private int dp(float v) {
+        return Math.round(v * getResources().getDisplayMetrics().density);
     }
 
     private void updateVisibility() {

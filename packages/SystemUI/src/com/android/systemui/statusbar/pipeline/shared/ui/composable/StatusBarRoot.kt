@@ -94,6 +94,7 @@ import com.android.systemui.shade.ui.composable.VariableDayDate
 import com.android.systemui.statusbar.BatteryBarView
 import com.android.systemui.statusbar.CutoutRingView
 import com.android.systemui.statusbar.IchthysBtBatteryView
+import com.android.systemui.statusbar.IchthysShoalBatteryView
 import com.android.systemui.statusbar.NetworkTraffic
 import com.android.systemui.statusbar.StatusBarWeather
 import com.android.systemui.statusbar.StatusBarAlwaysUseRegionSampling
@@ -303,6 +304,8 @@ fun StatusBarRoot(
                     phoneStatusBarView.requireViewById<NotificationIconContainer>(
                         R.id.notificationIcons
                     )
+                // IchthysOS "Shoal": the status bar notification icons follow the zig-zag layout.
+                notificationIconContainer.setIchthysZigzagCapable(true)
 
                 // If the flag is enabled, create and add a compose section to the end
                 // of the system_icons container
@@ -650,9 +653,15 @@ private fun addCrDroidStatusBarViews(
                         LinearLayout.LayoutParams.WRAP_CONTENT,
                         LinearLayout.LayoutParams.MATCH_PARENT,
                     )
-                    .apply { gravity = android.view.Gravity.CENTER_VERTICAL }
+                    .apply {
+                        gravity = android.view.Gravity.CENTER_VERTICAL
+                        marginEnd = (6 * context.resources.displayMetrics.density).toInt()
+                    }
         }
-    startContainer.addView(weather)
+    // IchthysOS: the zig-zag lattice frees room on the end side, so the weather sits there, first
+    // on the end side (right of the camera cutout, before the icons), leaving the start side to the
+    // clock and notification icons.
+    endContainer.addView(weather, 0)
     darkIconDispatcher.addDarkReceiver(weather)
 
     // IchthysOS "Shoal": connected Bluetooth device battery pill, right after the status icon
@@ -671,6 +680,38 @@ private fun addCrDroidStatusBarViews(
         systemIcons.addView(btBattery, minOf(1, systemIcons.childCount))
         darkIconDispatcher.addDarkReceiver(btBattery)
     }
+
+    // IchthysOS "Shoal": upright battery cell + mono percentage for the zig-zag layout, at the end
+    // of system_icons (after the BT pill). It hides the stock battery while the layout is on; the
+    // stock battery is handed to it in addBatteryComposable.
+    val shoalBattery =
+        IchthysShoalBatteryView(context).apply {
+            layoutParams =
+                LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                    )
+                    .apply { gravity = android.view.Gravity.CENTER_VERTICAL }
+        }
+    phoneStatusBarView.findViewById<ViewGroup>(R.id.system_icons)?.let { systemIcons ->
+        systemIcons.addView(shoalBattery)
+        darkIconDispatcher.addDarkReceiver(shoalBattery)
+    }
+
+    // IchthysOS "Shoal": the zig-zag lattices pick their neutral disc colour from whether the bar
+    // behind them is light or dark. The notification icon container is inflated after this runs,
+    // so both are looked up on each change.
+    val latticeDarkReceiver =
+        DarkIconDispatcher.DarkReceiver { _, darkIntensity, _ ->
+            val lightBar = darkIntensity > 0.5f
+            phoneStatusBarView
+                .findViewById<StatusIconContainer>(R.id.statusIcons)
+                ?.setZigzagLightBar(lightBar)
+            phoneStatusBarView
+                .findViewById<NotificationIconContainer>(R.id.notificationIcons)
+                ?.setZigzagLightBar(lightBar)
+        }
+    darkIconDispatcher.addDarkReceiver(latticeDarkReceiver)
 
     // Battery bar: a full-width bar along the bottom edge of the status bar. Added directly to the
     // PhoneStatusBarView (a FrameLayout) so it spans the whole width and sits below the icon row,
@@ -705,6 +746,8 @@ private fun addCrDroidStatusBarViews(
         darkIconDispatcher.removeDarkReceiver(networkTraffic)
         darkIconDispatcher.removeDarkReceiver(weather)
         darkIconDispatcher.removeDarkReceiver(btBattery)
+        darkIconDispatcher.removeDarkReceiver(shoalBattery)
+        darkIconDispatcher.removeDarkReceiver(latticeDarkReceiver)
     }
 }
 
@@ -766,6 +809,10 @@ private fun addBatteryComposable(
         }
     phoneStatusBarView.findViewById<ViewGroup>(R.id.system_icons).apply {
         addView(batteryComposeView, -1)
+        // IchthysOS "Shoal": the zig-zag battery stands in for this one while that layout is on.
+        for (i in 0 until childCount) {
+            (getChildAt(i) as? IchthysShoalBatteryView)?.setStockBattery(batteryComposeView)
+        }
     }
 }
 

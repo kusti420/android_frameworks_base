@@ -156,13 +156,33 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
         if (getVisibility() != visibility) {
             setVisibility(visibility);
         }
+        // The pill replaces the stock Bluetooth-with-battery icon in the lattice.
+        if (sShowing != show) {
+            sShowing = show;
+            if (getParent() instanceof android.view.ViewGroup) {
+                final android.view.ViewGroup parent = (android.view.ViewGroup) getParent();
+                for (int i = 0; i < parent.getChildCount(); i++) {
+                    parent.getChildAt(i).requestLayout();
+                }
+            }
+        }
     }
+
+    /** Whether a pill is showing a device level; the lattice then hides the "bluetooth" slot. */
+    private static volatile boolean sShowing;
+
+    public static boolean isShowing() {
+        return sShowing;
+    }
+
+    /** Glyph + level follow the bar's icon tint (white on dark, dark on light); the ring is accent. */
+    private int mContentTint = 0xFFFFFFFF;
 
     private void updateColors() {
         final int accent = getContext().getColor(android.R.color.system_accent1_400);
         mRingPaint.setColor(accent);
-        mGlyphPaint.setColor(accent);
-        mTextPaint.setColor(accent);
+        mGlyphPaint.setColor(mContentTint);
+        mTextPaint.setColor(mContentTint);
     }
 
     @Override
@@ -177,7 +197,15 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
 
     @Override
     public void onDarkChanged(ArrayList<Rect> areas, float darkIntensity, int tint) {
-        // The pill stays in the accent colour on light and dark bars alike.
+        // Adaptive: level text and glyph use the same tint as the other status bar icons for
+        // this area, so they read on light and dark backgrounds; the ring keeps the accent.
+        final int contentTint = com.android.systemui.plugins.DarkIconDispatcher.getTint(
+                areas, this, tint);
+        if (contentTint != mContentTint) {
+            mContentTint = contentTint;
+            updateColors();
+            invalidate();
+        }
     }
 
     @Override

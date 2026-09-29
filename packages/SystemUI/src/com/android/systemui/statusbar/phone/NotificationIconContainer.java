@@ -22,7 +22,13 @@ import android.content.res.Configuration;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.RectF;
 import android.graphics.drawable.Icon;
+import android.database.ContentObserver;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.UserHandle;
+import android.provider.Settings;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.util.Property;
@@ -43,6 +49,7 @@ import com.android.systemui.statusbar.notification.stack.AnimationFilter;
 import com.android.systemui.statusbar.notification.stack.AnimationProperties;
 import com.android.systemui.statusbar.notification.stack.ViewState;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.function.Consumer;
 
@@ -130,10 +137,133 @@ public class NotificationIconContainer extends ViewGroup {
     private boolean mUseIncreasedIconScale;
     private String mLogTag = "none";
 
+    // IchthysOS "Shoal": zig-zag lattice for the status bar notification icons (Settings.Secure
+    // ichthys_statusbar_layout = "zigzag"), the mirror image of the system icon lattice in
+    // StatusIconContainer: glyphs on 11 dp discs in two rows, the lower row half a pitch further
+    // along. Only the status bar instance opts in (setIchthysZigzagCapable); the shelf and AOD
+    // containers never change.
+    private static final int ZZ_MAX_ICONS = 12;
+    private boolean mZzCapable;
+    private boolean mZigzag;
+    private boolean mZzApplied;
+    private boolean mZzLightBar;
+    private boolean mZzObserving;
+    private float mZzCell;
+    private final ArrayList<View> mZzShown = new ArrayList<>();
+    private final RectF mZzGlyph = new RectF();
+    private final RectF mZzLayerBounds = new RectF();
+    private final Paint mZzDiscPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint mZzRingPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint mZzGlyphPaint = new Paint();
+    private final ContentObserver mZzObserver =
+            new ContentObserver(new Handler(Looper.getMainLooper())) {
+                @Override
+                public void onChange(boolean selfChange) {
+                    updateZigzag();
+                }
+            };
+
     public NotificationIconContainer(Context context, AttributeSet attrs) {
         super(context, attrs);
         initResources();
         setWillNotDraw(!(DEBUG || DEBUG_OVERFLOW));
+        mZzRingPaint.setStyle(Paint.Style.STROKE);
+        mZzRingPaint.setStrokeWidth(
+                Math.max(1f, 0.75f * getResources().getDisplayMetrics().density));
+        IchthysZigzag.tintPaint(mZzGlyphPaint, IchthysZigzag.NOTIF_GLYPH_ON_DARK);
+    }
+
+    /**
+     * IchthysOS: marks this as the status bar notification icon container, which follows the
+     * zig-zag layout setting. Other instances (shelf, AOD) keep the stock layout.
+     */
+    public void setIchthysZigzagCapable(boolean capable) {
+        if (mZzCapable == capable) {
+            return;
+        }
+        mZzCapable = capable;
+        if (capable && isAttachedToWindow()) {
+            startObservingZigzag();
+        } else if (!capable) {
+            stopObservingZigzag();
+        }
+        updateZigzag();
+    }
+
+    /** Whether the bar behind the icons is light (dark icons); picks the neutral disc colour. */
+    public void setZigzagLightBar(boolean lightBar) {
+        if (mZzLightBar != lightBar) {
+            mZzLightBar = lightBar;
+            invalidate();
+        }
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        if (mZzCapable) {
+            startObservingZigzag();
+            updateZigzag();
+        }
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        stopObservingZigzag();
+        super.onDetachedFromWindow();
+    }
+
+    private void startObservingZigzag() {
+        if (!mZzObserving) {
+            mZzObserving = true;
+            getContext().getContentResolver().registerContentObserver(
+                    Settings.Secure.getUriFor(IchthysZigzag.LAYOUT_SETTING), false, mZzObserver,
+                    UserHandle.USER_ALL);
+        }
+    }
+
+    private void stopObservingZigzag() {
+        if (mZzObserving) {
+            mZzObserving = false;
+            getContext().getContentResolver().unregisterContentObserver(mZzObserver);
+        }
+    }
+
+    private void updateZigzag() {
+        final boolean zigzag = mZzCapable && IchthysZigzag.isEnabled(getContext());
+        if (zigzag != mZigzag) {
+            mZigzag = zigzag;
+            requestLayout();
+            invalidate();
+        }
+    }
+
+    @Override
+    protected void dispatchDraw(Canvas canvas) {
+        if (mZigzag) {
+            final int accent = IchthysZigzag.accent(getContext());
+            for (int i = 0; i < mZzShown.size(); i++) {
+                final View child = mZzShown.get(i);
+                if (child.getParent() == this) {
+                    IchthysZigzag.drawDisc(canvas, child, mZzCell, false, mZzLightBar,
+                            mZzDiscPaint, mZzRingPaint, accent);
+                }
+            }
+        }
+        super.dispatchDraw(canvas);
+    }
+
+    @Override
+    protected boolean drawChild(Canvas canvas, View child, long drawingTime) {
+        if (mZigzag && !mZzLightBar && mZzShown.contains(child)) {
+            // Muted grey glyphs on the dark neutral discs, whatever the app's icon colour.
+            IchthysZigzag.discBounds(child, mZzCell, mZzLayerBounds);
+            final int save = canvas.saveLayer(mZzLayerBounds, mZzGlyphPaint);
+            final boolean more = super.drawChild(canvas, child, drawingTime);
+            canvas.restoreToCount(save);
+            return more;
+        }
+        return super.drawChild(canvas, child, drawingTime);
     }
 
     private void initResources() {
@@ -197,6 +327,10 @@ public class NotificationIconContainer extends ViewGroup {
 
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+        if (mZigzag) {
+            measureZigzag(widthMeasureSpec, heightMeasureSpec);
+            return;
+        }
         final int childCount = getChildCount();
         final int maxVisibleIcons = mMaxIcons;
         final int width = MeasureSpec.getSize(widthMeasureSpec);
@@ -212,6 +346,89 @@ public class NotificationIconContainer extends ViewGroup {
         final int measuredWidth = resolveSize(totalWidth, widthMeasureSpec);
         final int measuredHeight = MeasureSpec.getSize(heightMeasureSpec);
         setMeasuredDimension(measuredWidth, measuredHeight);
+    }
+
+    /** Zig-zag measure: icon i sits half a pitch after icon i - 1, alternating rows. */
+    private void measureZigzag(int widthMeasureSpec, int heightMeasureSpec) {
+        final int width = MeasureSpec.getSize(widthMeasureSpec);
+        final int childWidthSpec = MeasureSpec.makeMeasureSpec(width, MeasureSpec.UNSPECIFIED);
+        int count = 0;
+        for (int i = 0; i < getChildCount(); i++) {
+            final View child = getChildAt(i);
+            measureChild(child, childWidthSpec, heightMeasureSpec);
+            if (child.getVisibility() == VISIBLE && IchthysZigzag.hasGlyph(child)) {
+                count++;
+            }
+        }
+        final int measuredHeight = MeasureSpec.getSize(heightMeasureSpec);
+        final float cell = IchthysZigzag.cellFor(this,
+                measuredHeight - getPaddingTop() - getPaddingBottom());
+        count = Math.min(count, ZZ_MAX_ICONS);
+        int totalWidth = (int) (getActualPaddingStart() + getActualPaddingEnd());
+        if (count > 0) {
+            totalWidth += (int) Math.ceil(cell + (count - 1) * IchthysZigzag.halfPitch(cell));
+        }
+        setMeasuredDimension(resolveSize(totalWidth, widthMeasureSpec), measuredHeight);
+    }
+
+    /**
+     * Places the icons left to right on the lattice, glyph centred on its disc and scaled to fill
+     * it. Icons without a glyph, past {@link #ZZ_MAX_ICONS} or past the end are hidden.
+     */
+    private void calculateZigzagTranslations() {
+        mFirstOverflowIndex = -1;
+        mIsShowingOverflowDot = false;
+        mWasOverflowForced = false;
+        mVisualOverflowStart = 0;
+        mFirstVisibleIconState = null;
+        mLastVisibleIconState = null;
+        mZzShown.clear();
+        mZzApplied = true;
+        final float cell = IchthysZigzag.cellFor(this,
+                getHeight() - getPaddingTop() - getPaddingBottom());
+        mZzCell = cell;
+        final float halfPitch = IchthysZigzag.halfPitch(cell);
+        final float rowGap = IchthysZigzag.rowGap(this);
+        final float midY = getPaddingTop()
+                + (getHeight() - getPaddingTop() - getPaddingBottom()) / 2f;
+        final float topCy = midY - (cell + rowGap) / 2f;
+        final float bottomCy = midY + (cell + rowGap) / 2f;
+        final float left = getLeftBound();
+        final float right = getRightBound();
+        final boolean rtl = isLayoutRtl();
+        int shown = 0;
+        for (int i = 0; i < getChildCount(); i++) {
+            final View view = getChildAt(i);
+            final IconState iconState = mIconStates.get(view);
+            if (iconState == null) {
+                continue;
+            }
+            // Discs are drawn by this container and would not follow a child's animation.
+            iconState.noAnimations = true;
+            final float cx = left + cell / 2f + shown * halfPitch;
+            if (!(view instanceof StatusBarIconView) || view.getVisibility() != VISIBLE
+                    || shown >= ZZ_MAX_ICONS || cx + cell / 2f > right
+                    || !IchthysZigzag.glyphRect(view, mZzGlyph)) {
+                iconState.visibleState = StatusBarIconView.STATE_HIDDEN;
+                continue;
+            }
+            final float cy = (shown % 2 == 0) ? topCy : bottomCy;
+            final float scale = IchthysZigzag.glyphScale(cell, mZzGlyph);
+            final float drawCx = rtl ? getWidth() - cx : cx;
+            final float[] t = IchthysZigzag.placeOnDisc(view, mZzGlyph, drawCx, cy, scale);
+            iconState.setXTranslation(t[0]);
+            iconState.setYTranslation(t[1], "notifIconContainer zigzag");
+            iconState.setScaleX(scale);
+            iconState.setScaleY(scale);
+            iconState.visibleState = StatusBarIconView.STATE_ICON;
+            if (mFirstVisibleIconState == null) {
+                mFirstVisibleIconState = iconState;
+            }
+            mLastVisibleIconState = iconState;
+            mZzShown.add(view);
+            shown++;
+        }
+        invalidate();
     }
 
     @Override
@@ -334,6 +551,12 @@ public class NotificationIconContainer extends ViewGroup {
     @Override
     public void onViewRemoved(View child) {
         super.onViewRemoved(child);
+        if (mZzShown.remove(child) || mZzApplied) {
+            IchthysZigzag.restore(child);
+            child.setScaleX(1f);
+            child.setScaleY(1f);
+            child.setTranslationY(0f);
+        }
 
         if (child instanceof StatusBarIconView) {
             boolean isReplacingIcon = isReplacingIcon(child);
@@ -392,6 +615,11 @@ public class NotificationIconContainer extends ViewGroup {
     }
 
     public void resetViewStates() {
+        final boolean restoreLattice = mZzApplied && !mZigzag;
+        if (restoreLattice) {
+            mZzApplied = false;
+            mZzShown.clear();
+        }
         for (int i = 0; i < getChildCount(); i++) {
             View view = getChildAt(i);
             ViewState iconState = mIconStates.get(view);
@@ -400,6 +628,15 @@ public class NotificationIconContainer extends ViewGroup {
                 throw new IllegalStateException(
                         "resetViewStates: iconState is null.\n"
                                 + "Container tag = " + mLogTag + ", view =" + view);
+            }
+            if (restoreLattice) {
+                IchthysZigzag.restore(view);
+                view.setScaleX(1f);
+                view.setScaleY(1f);
+                view.setTranslationY(0f);
+                if (iconState instanceof IconState) {
+                    ((IconState) iconState).noAnimations = false;
+                }
             }
             iconState.initFrom(view);
             iconState.setAlpha(1.0f, "notifIconContainer reset");
@@ -446,6 +683,10 @@ public class NotificationIconContainer extends ViewGroup {
      * If this is not a whole number, the fraction means by how much the icon is appearing.
      */
     public void calculateIconXTranslations() {
+        if (mZigzag) {
+            calculateZigzagTranslations();
+            return;
+        }
         float translationX = getLeftBound();
         mFirstOverflowIndex = -1;
         mIsShowingOverflowDot = false;

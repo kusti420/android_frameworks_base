@@ -46,6 +46,7 @@ import androidx.annotation.VisibleForTesting;
 import com.android.settingslib.Utils;
 import com.android.systemui.plugins.DarkIconDispatcher.DarkReceiver;
 import com.android.systemui.res.R;
+import com.android.systemui.statusbar.IchthysShoalBatteryView;
 import com.android.systemui.statusbar.layout.StatusBarContentInsetsProvider;
 import com.android.systemui.statusbar.phone.SysuiDarkIconDispatcher.DarkChange;
 import com.android.systemui.statusbar.phone.ui.TintedIconManager;
@@ -72,6 +73,14 @@ public class KeyguardStatusBarView extends RelativeLayout {
     private static final int LAYOUT_NO_CUTOUT = 2;
 
     private final ArrayList<Rect> mEmptyTintRect = new ArrayList<>();
+
+    // IchthysOS "Shoal": the zig-zag battery (upright cell + mono percentage) standing in for the
+    // stock battery while ichthys_statusbar_layout = "zigzag", and the last icon tint applied.
+    @Nullable
+    private IchthysShoalBatteryView mShoalBattery;
+    private float mLastDarkIntensity;
+    @ColorInt
+    private int mLastIconColor = Color.WHITE;
 
     private TextView mCarrierLabel;
     private ImageView mMultiUserAvatar;
@@ -131,6 +140,47 @@ public class KeyguardStatusBarView extends RelativeLayout {
         mUserSwitcherContainer = findViewById(R.id.user_switcher_container);
         mIsPrivacyDotEnabled = mContext.getResources().getBoolean(R.bool.config_enablePrivacyDot);
         loadDimens();
+        // IchthysOS "Shoal": nothing of the zig-zag lattice (scaled glyphs, discs) may be clipped
+        // by the containers around the status icons.
+        unclip(mStatusIconArea);
+        unclip(mSystemIconsContainer);
+        unclip(mSystemIcons);
+        unclip(mStatusIconContainer);
+    }
+
+    private static void unclip(@Nullable View view) {
+        if (view instanceof ViewGroup) {
+            ((ViewGroup) view).setClipChildren(false);
+            ((ViewGroup) view).setClipToPadding(false);
+        }
+    }
+
+    /**
+     * IchthysOS "Shoal": adds the zig-zag battery at the end of the system icons (once) and hands
+     * it the stock battery, which it hides while the zig-zag layout is on. Should only be called
+     * from {@link KeyguardStatusBarViewController}.
+     */
+    void attachShoalBattery(@Nullable View stockBattery) {
+        if (!(mSystemIcons instanceof ViewGroup)) {
+            return;
+        }
+        final ViewGroup systemIcons = (ViewGroup) mSystemIcons;
+        if (mShoalBattery == null) {
+            mShoalBattery = new IchthysShoalBatteryView(mContext);
+            final LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.MATCH_PARENT);
+            lp.gravity = Gravity.CENTER_VERTICAL;
+            mShoalBattery.setLayoutParams(lp);
+        }
+        if (mShoalBattery.getParent() != systemIcons) {
+            if (mShoalBattery.getParent() instanceof ViewGroup) {
+                ((ViewGroup) mShoalBattery.getParent()).removeView(mShoalBattery);
+            }
+            systemIcons.addView(mShoalBattery);
+        }
+        mShoalBattery.setStockBattery(stockBattery);
+        mShoalBattery.onDarkChanged(mEmptyTintRect, mLastDarkIntensity, mLastIconColor);
     }
 
     /**
@@ -464,6 +514,16 @@ public class KeyguardStatusBarView extends RelativeLayout {
 
         mDarkChange.setValue(new DarkChange(mEmptyTintRect, intensity, iconColor));
         applyDarkness(R.id.clock, mEmptyTintRect, intensity, iconColor);
+
+        // IchthysOS "Shoal": zig-zag battery tint and the lattice's light/dark disc colour.
+        mLastDarkIntensity = intensity;
+        mLastIconColor = iconColor;
+        if (mShoalBattery != null) {
+            mShoalBattery.onDarkChanged(mEmptyTintRect, intensity, iconColor);
+        }
+        if (mStatusIconContainer != null) {
+            mStatusIconContainer.setZigzagLightBar(luminance < 0.5);
+        }
     }
 
     private void applyDarkness(int id, ArrayList<Rect> tintAreas, float intensity, int color) {
