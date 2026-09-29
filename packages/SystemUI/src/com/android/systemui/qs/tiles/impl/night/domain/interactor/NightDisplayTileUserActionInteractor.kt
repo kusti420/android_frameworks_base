@@ -16,44 +16,42 @@
 
 package com.android.systemui.qs.tiles.impl.night.domain.interactor
 
-import android.content.Intent
-import android.hardware.display.ColorDisplayManager.AUTO_MODE_CUSTOM_TIME
-import android.provider.Settings
-import com.android.systemui.accessibility.data.repository.NightDisplayRepository
 import com.android.systemui.accessibility.qs.QSAccessibilityModule
 import com.android.systemui.qs.pipeline.shared.TileSpec
-import com.android.systemui.qs.tiles.base.domain.actions.QSTileIntentUserInputHandler
 import com.android.systemui.qs.tiles.base.domain.interactor.QSTileUserActionInteractor
 import com.android.systemui.qs.tiles.base.domain.model.QSTileInput
 import com.android.systemui.qs.tiles.base.shared.logging.QSTileLogger
 import com.android.systemui.qs.tiles.base.shared.model.QSTileUserAction
+import com.android.systemui.qs.tiles.dialog.colordisplay.IchthysNightLightController
+import com.android.systemui.qs.tiles.dialog.colordisplay.NightLightDialogDelegate
 import com.android.systemui.qs.tiles.impl.night.domain.model.NightDisplayTileModel
+import dagger.Lazy
 import javax.inject.Inject
 
-/** Handles night display tile clicks. */
+/**
+ * Handles night display tile clicks.
+ *
+ * IchthysOS: a tap cycles Off -> On -> Scheduled -> Off (see [IchthysNightLightController]); a long
+ * press opens the Night Light slider dialog instead of the Settings page (which the dialog links
+ * to).
+ */
 class NightDisplayTileUserActionInteractor
 @Inject
 constructor(
-    private val nightDisplayRepository: NightDisplayRepository,
-    private val qsTileIntentUserActionHandler: QSTileIntentUserInputHandler,
+    private val nightLightController: IchthysNightLightController,
+    private val nightLightDialogDelegate: Lazy<NightLightDialogDelegate>,
     private val qsLogger: QSTileLogger,
 ) : QSTileUserActionInteractor<NightDisplayTileModel> {
     override suspend fun handleInput(input: QSTileInput<NightDisplayTileModel>): Unit =
         with(input) {
             when (action) {
                 is QSTileUserAction.Click -> {
-                    // Enroll in forced auto mode if eligible.
-                    if (data.isEnrolledInForcedNightDisplayAutoMode) {
-                        nightDisplayRepository.setNightDisplayAutoMode(AUTO_MODE_CUSTOM_TIME, user)
-                        qsLogger.logInfo(spec, "Enrolled in forced night display auto mode")
-                    }
-                    nightDisplayRepository.setNightDisplayActivated(!data.isActivated, user)
+                    val current = data.ichthysMode()
+                    qsLogger.logInfo(spec, "Night Light: cycling from $current")
+                    nightLightController.cycle(current)
                 }
                 is QSTileUserAction.LongClick -> {
-                    qsTileIntentUserActionHandler.handle(
-                        action.expandable,
-                        Intent(Settings.ACTION_NIGHT_DISPLAY_SETTINGS),
-                    )
+                    nightLightDialogDelegate.get().showDialog(action.expandable)
                 }
                 is QSTileUserAction.ToggleClick -> {}
             }
@@ -61,5 +59,16 @@ constructor(
 
     companion object {
         val spec = TileSpec.create(QSAccessibilityModule.NIGHT_DISPLAY_TILE_SPEC)
+
+        /** The IchthysOS three-state mode of a tile model. */
+        fun NightDisplayTileModel.ichthysMode(): IchthysNightLightController.Mode =
+            when (this) {
+                is NightDisplayTileModel.AutoModeOff ->
+                    if (isActivated) IchthysNightLightController.Mode.ON
+                    else IchthysNightLightController.Mode.OFF
+                is NightDisplayTileModel.AutoModeCustom,
+                is NightDisplayTileModel.AutoModeTwilight ->
+                    IchthysNightLightController.Mode.SCHEDULED
+            }
     }
 }

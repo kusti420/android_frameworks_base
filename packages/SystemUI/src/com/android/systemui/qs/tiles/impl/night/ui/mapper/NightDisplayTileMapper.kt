@@ -48,14 +48,16 @@ constructor(
             supportedActions =
                 setOf(QSTileState.UserAction.CLICK, QSTileState.UserAction.LONG_CLICK)
             sideViewIcon = QSTileState.SideViewIcon.None
-            val iconRes: Int
-            if (data.isActivated) {
-                activationState = QSTileState.ActivationState.ACTIVE
-                iconRes = R.drawable.qs_nightlight_icon_on
-            } else {
-                activationState = QSTileState.ActivationState.INACTIVE
-                iconRes = R.drawable.qs_nightlight_icon_off
-            }
+            // IchthysOS: Off / On / Scheduled. The tile reads as active whenever Night Light is not
+            // off (a schedule is armed even while it is currently inactive); the icon shows whether
+            // the screen is tinted right now.
+            val iconRes =
+                if (data.isActivated) R.drawable.qs_nightlight_icon_on
+                else R.drawable.qs_nightlight_icon_off
+            activationState =
+                if (data is NightDisplayTileModel.AutoModeOff && !data.isActivated)
+                    QSTileState.ActivationState.INACTIVE
+                else QSTileState.ActivationState.ACTIVE
 
             icon = Icon.Loaded(resources.getDrawable(iconRes, theme), null, iconRes)
 
@@ -73,29 +75,32 @@ constructor(
         when (data) {
             is NightDisplayTileModel.AutoModeTwilight -> {
                 if (!data.isLocationEnabled) {
-                    return null
-                } else {
-                    return resources.getString(
-                        if (data.isActivated)
-                            R.string.quick_settings_night_secondary_label_until_sunrise
-                        else R.string.quick_settings_night_secondary_label_on_at_sunset
-                    )
+                    // No location, no sunset/sunrise times: just the mode.
+                    return resources.getString(R.string.ichthys_night_light_mode_scheduled)
                 }
+                return resources.getString(
+                    if (data.isActivated) R.string.ichthys_night_light_scheduled_until_sunrise
+                    else R.string.ichthys_night_light_scheduled_from_sunset
+                )
             }
             is NightDisplayTileModel.AutoModeOff -> {
-                return null
+                return resources.getString(
+                    if (data.isActivated) R.string.ichthys_night_light_mode_on
+                    else R.string.ichthys_night_light_mode_off
+                )
             }
             is NightDisplayTileModel.AutoModeCustom -> {
-                // User-specified time, approximated to the nearest hour.
                 @StringRes val toggleTimeStringRes: Int
-                val toggleTime: LocalTime
+                val toggleTime: LocalTime?
                 if (data.isActivated) {
-                    toggleTime = data.endTime ?: return null
-                    toggleTimeStringRes = R.string.quick_settings_secondary_label_until
+                    toggleTime = data.endTime
+                    toggleTimeStringRes = R.string.ichthys_night_light_scheduled_until
                 } else {
-                    toggleTime = data.startTime ?: return null
-                    toggleTimeStringRes = R.string.quick_settings_night_secondary_label_on_at
+                    toggleTime = data.startTime
+                    toggleTimeStringRes = R.string.ichthys_night_light_scheduled_from
                 }
+                val scheduled = resources.getString(R.string.ichthys_night_light_mode_scheduled)
+                if (toggleTime == null) return scheduled
 
                 try {
                     val formatter = if (data.is24HourFormat) formatter24Hour else formatter12Hour
@@ -103,7 +108,7 @@ constructor(
                     return resources.getString(toggleTimeStringRes, formatArg)
                 } catch (exception: DateTimeException) {
                     logger.logWarning(spec, exception.message.toString())
-                    return null
+                    return scheduled
                 }
             }
         }

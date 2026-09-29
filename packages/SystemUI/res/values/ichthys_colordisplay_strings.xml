@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    IchthysOS: strings for the Night Light / Extra Dim QS tiles and their long-press slider dialogs.
+    Kept in their own file so the feature can be lifted out (or rebased over an AOSP strings.xml)
+    without a merge conflict.
+-->
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+    <!-- Night Light mode: off. Tile secondary label and segmented-control option. [CHAR LIMIT=20] -->
+    <string name="ichthys_night_light_mode_off">Off</string>
+    <!-- Night Light mode: on until turned off. [CHAR LIMIT=20] -->
+    <string name="ichthys_night_light_mode_on">On</string>
+    <!-- Night Light mode: follows the schedule set in Settings. [CHAR LIMIT=20] -->
+    <string name="ichthys_night_light_mode_scheduled">Scheduled</string>
+    <!-- Tile secondary label: scheduled and currently on until the given time. [CHAR LIMIT=30] -->
+    <string name="ichthys_night_light_scheduled_until">Scheduled · until <xliff:g id="time" example="07:00">%1$s</xliff:g></string>
+    <!-- Tile secondary label: scheduled and currently off, turns on at the given time. [CHAR LIMIT=30] -->
+    <string name="ichthys_night_light_scheduled_from">Scheduled · from <xliff:g id="time" example="20:12">%1$s</xliff:g></string>
+    <!-- Tile secondary label: sunset-to-sunrise schedule, currently on. [CHAR LIMIT=30] -->
+    <string name="ichthys_night_light_scheduled_until_sunrise">Scheduled · until sunrise</string>
+    <!-- Tile secondary label: sunset-to-sunrise schedule, currently off. [CHAR LIMIT=30] -->
+    <string name="ichthys_night_light_scheduled_from_sunset">Scheduled · from sunset</string>
+    <!-- Slider label in the Night Light dialog. [CHAR LIMIT=30] -->
+    <string name="ichthys_night_light_temperature">Color temperature</string>
+    <!-- Slider value in the Night Light dialog, in kelvin. [CHAR LIMIT=10] -->
+    <string name="ichthys_night_light_temperature_value"><xliff:g id="kelvin" example="3200">%1$d</xliff:g> K</string>
+    <!-- Note shown while Night Light was turned on only to preview the colour temperature. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_night_light_preview">Preview · turns off again when you close this</string>
+    <!-- Link from the Night Light dialog to the Night Light settings page. [CHAR LIMIT=40] -->
+    <string name="ichthys_night_light_schedule_settings">Schedule settings</string>
+
+    <!-- Slider label in the Extra Dim dialog. [CHAR LIMIT=30] -->
+    <string name="ichthys_extra_dim_intensity">Intensity</string>
+    <!-- Slider value in the Extra Dim dialog. [CHAR LIMIT=10] -->
+    <string name="ichthys_extra_dim_intensity_value"><xliff:g id="percent" example="40">%1$d</xliff:g>%%</string>
+    <!-- Switch in the Extra Dim dialog: keep Extra Dim on after the device restarts. [CHAR LIMIT=40] -->
+    <string name="ichthys_extra_dim_keep_on">Keep on after restart</string>
+    <!-- Link from the Extra Dim dialog to the Extra Dim settings page. [CHAR LIMIT=40] -->
+    <string name="ichthys_extra_dim_settings">Extra dim settings</string>
+</resources>

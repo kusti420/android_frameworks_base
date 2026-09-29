@@ -16,27 +16,31 @@
 
 package com.android.systemui.qs.tiles.impl.reducebrightness.domain.interactor
 
-import android.content.Intent
 import android.content.res.Resources
-import android.provider.Settings
 import com.android.systemui.accessibility.extradim.ExtraDimDialogManager
 import com.android.systemui.qs.ReduceBrightColorsController
-import com.android.systemui.qs.tiles.base.domain.actions.QSTileIntentUserInputHandler
 import com.android.systemui.qs.tiles.base.domain.interactor.QSTileUserActionInteractor
 import com.android.systemui.qs.tiles.base.domain.model.QSTileInput
 import com.android.systemui.qs.tiles.base.shared.model.QSTileUserAction
+import com.android.systemui.qs.tiles.dialog.colordisplay.ExtraDimDialogDelegate
 import com.android.systemui.qs.tiles.impl.reducebrightness.domain.model.ReduceBrightColorsTileModel
 import com.android.systemui.shade.ShadeDisplayAware
+import dagger.Lazy
 import javax.inject.Inject
 
-/** Handles reduce bright colors tile clicks. */
+/**
+ * Handles reduce bright colors tile clicks.
+ *
+ * IchthysOS: a long press opens the Extra Dim slider dialog (intensity, keep-on-after-restart)
+ * instead of the Settings page, which the dialog links to.
+ */
 class ReduceBrightColorsTileUserActionInteractor
 @Inject
 constructor(
     @ShadeDisplayAware private val resources: Resources,
-    private val qsTileIntentUserActionHandler: QSTileIntentUserInputHandler,
     private val reduceBrightColorsController: ReduceBrightColorsController,
     private val extraDimDialogManager: ExtraDimDialogManager,
+    private val extraDimDialogDelegate: Lazy<ExtraDimDialogDelegate>,
 ) : QSTileUserActionInteractor<ReduceBrightColorsTileModel> {
 
     val isInUpgradeMode: Boolean = reduceBrightColorsController.isInUpgradeMode(resources)
@@ -62,10 +66,7 @@ constructor(
                         )
                         return@with
                     }
-                    qsTileIntentUserActionHandler.handle(
-                        action.expandable,
-                        Intent(Settings.ACTION_REDUCE_BRIGHT_COLORS_SETTINGS),
-                    )
+                    extraDimDialogDelegate.get().showDialog(action.expandable)
                 }
                 is QSTileUserAction.ToggleClick -> {}
             }
