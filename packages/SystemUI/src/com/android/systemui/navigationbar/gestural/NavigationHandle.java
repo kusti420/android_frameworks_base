@@ -23,6 +23,7 @@ import android.content.Context;
 import android.content.res.Resources;
 import android.database.ContentObserver;
 import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
@@ -39,7 +40,9 @@ import android.view.animation.Interpolator;
 import com.android.app.animation.Interpolators;
 import com.android.settingslib.Utils;
 import com.android.systemui.navigationbar.views.buttons.ButtonInterface;
+import com.android.systemui.navigationbar.views.buttons.IchthysNavStyle;
 import com.android.systemui.res.R;
+import com.android.systemui.shade.ui.ShoalShade;
 
 public class NavigationHandle extends View implements ButtonInterface {
 
@@ -63,6 +66,11 @@ public class NavigationHandle extends View implements ButtonInterface {
     private float mStyleWidthScale = 1f;
     private float mStyleThicknessScale = 1f;
     private float mStyleOpacity = 1f;
+    // IchthysOS navBar.style = "gestures": a track with an accent segment in the centre.
+    private boolean mIchthysGestures;
+    private int mIchthysAccent;
+    private float mIchthysDarkIntensity;
+    private final Paint mIchthysPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final ContentObserver mStyleObserver =
             new ContentObserver(new Handler(Looper.getMainLooper())) {
                 @Override
@@ -122,6 +130,10 @@ public class NavigationHandle extends View implements ButtonInterface {
             getContext().getContentResolver().registerContentObserver(
                     Settings.System.getUriFor(key), false, mStyleObserver, UserHandle.USER_ALL);
         }
+        for (Uri uri : IchthysNavStyle.observedUris()) {
+            getContext().getContentResolver().registerContentObserver(uri, false, mStyleObserver,
+                    UserHandle.USER_ALL);
+        }
         readStyle();
     }
 
@@ -141,6 +153,10 @@ public class NavigationHandle extends View implements ButtonInterface {
                 KEY_HANDLE_THICKNESS, 100, UserHandle.USER_CURRENT))) / 100f;
         mStyleOpacity = Math.max(10, Math.min(100, Settings.System.getIntForUser(cr,
                 KEY_HANDLE_OPACITY, 100, UserHandle.USER_CURRENT))) / 100f;
+        mIchthysGestures = IchthysNavStyle.read(getContext()) == IchthysNavStyle.GESTURES;
+        if (mIchthysGestures) {
+            mIchthysAccent = ShoalShade.accent(getContext());
+        }
     }
 
     @Override
@@ -180,6 +196,26 @@ public class NavigationHandle extends View implements ButtonInterface {
         float width = x + styledWidth;
         float y = navHeight - mBottom - height + (additionalHeight / 2);
         float adjustedRadius = height / 2;
+        if (mIchthysGestures) {
+            // 108 x 5 dp track with a 22 dp accent segment in the centre.
+            final float dp = getResources().getDisplayMetrics().density;
+            final float ichHeight = 5 * dp * mStyleThicknessScale + additionalHeight;
+            final float ichY = navHeight - mBottom - ichHeight + (additionalHeight / 2);
+            final float ichRadius = ichHeight / 2;
+            final int alpha = Math.round(255 * mStyleOpacity);
+            mIchthysPaint.setColor(IchthysNavStyle.mix(IchthysNavStyle.D_TRACK,
+                    IchthysNavStyle.L_TRACK, mIchthysDarkIntensity));
+            mIchthysPaint.setAlpha(alpha);
+            canvas.drawRoundRect(x, ichY, width, ichY + ichHeight, ichRadius, ichRadius,
+                    mIchthysPaint);
+            final float cx = (x + width) / 2f;
+            final float half = Math.min(11 * dp, (width - x) / 2f);
+            mIchthysPaint.setColor(mIchthysAccent);
+            mIchthysPaint.setAlpha(Math.round(Color.alpha(mIchthysAccent) * mStyleOpacity));
+            canvas.drawRoundRect(cx - half, ichY, cx + half, ichY + ichHeight, ichRadius,
+                    ichRadius, mIchthysPaint);
+            return;
+        }
         final int baseAlpha = mPaint.getAlpha();
         mPaint.setAlpha(Math.round(baseAlpha * mStyleOpacity));
         canvas.drawRoundRect(x, y, width, y + height, adjustedRadius, adjustedRadius, mPaint);
@@ -197,6 +233,16 @@ public class NavigationHandle extends View implements ButtonInterface {
 
     @Override
     public void setDarkIntensity(float intensity) {
+        if (mIchthysDarkIntensity != intensity) {
+            mIchthysDarkIntensity = intensity;
+            if (mIchthysGestures) {
+                if (getVisibility() == VISIBLE && getAlpha() > 0) {
+                    invalidate();
+                } else {
+                    mRequiresInvalidate = true;
+                }
+            }
+        }
         int color = (int) ArgbEvaluator.getInstance().evaluate(intensity, mLightColor, mDarkColor);
         if (mPaint.getColor() != color) {
             mPaint.setColor(color);

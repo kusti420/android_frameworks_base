@@ -83,6 +83,8 @@ import com.android.systemui.navigationbar.views.buttons.ButtonDispatcher;
 import com.android.systemui.navigationbar.views.buttons.ContextualButton;
 import com.android.systemui.navigationbar.views.buttons.ContextualButtonGroup;
 import com.android.systemui.navigationbar.views.buttons.DeadZone;
+import com.android.systemui.navigationbar.views.buttons.IchthysKeyDrawable;
+import com.android.systemui.navigationbar.views.buttons.IchthysNavStyle;
 import com.android.systemui.navigationbar.views.buttons.KeyButtonDrawable;
 import com.android.systemui.navigationbar.views.buttons.NearestTouchFrame;
 import com.android.systemui.recents.Recents;
@@ -90,6 +92,7 @@ import com.android.systemui.res.R;
 import com.android.systemui.rotation.RotationPolicyWrapper;
 import com.android.systemui.settings.DisplayTracker;
 import com.android.systemui.shade.ShadeViewController;
+import com.android.systemui.shade.ui.ShoalShade;
 import com.android.systemui.shade.domain.interactor.PanelExpansionInteractor;
 import com.android.systemui.shared.rotation.FloatingRotationButton;
 import com.android.systemui.shared.rotation.RotationButton.RotationButtonUpdatesCallback;
@@ -177,6 +180,20 @@ public class NavigationBarView extends FrameLayout {
         @Override
         public void onChange(boolean selfChange, Uri uri) {
             updateInvertNavLayout();
+        }
+    };
+    // IchthysOS navBar.style (Settings.Secure ichthys_navbar_style): code-drawn 3-button keys.
+    // Null when the style is stock/gestures, in which case the stock (or RRO-styled) icons are
+    // used unchanged.
+    private int mIchthysStyle = IchthysNavStyle.DEFAULT;
+    @Nullable private KeyButtonDrawable mIchthysBack;
+    @Nullable private KeyButtonDrawable mIchthysHome;
+    @Nullable private KeyButtonDrawable mIchthysRecent;
+    private final ContentObserver mIchthysStyleObserver = new ContentObserver(
+            new Handler(Looper.getMainLooper())) {
+        @Override
+        public void onChange(boolean selfChange, Uri uri) {
+            refreshIchthysStyle();
         }
     };
     private Configuration mConfiguration;
@@ -738,16 +755,24 @@ public class NavigationBarView extends FrameLayout {
         Log.i(TAG, "navbar dbg: updateNavButtonIcons mBackIcon="
                 + (mBackIcon == null ? "null" : "set") + " mHome="
                 + (mHomeDefaultIcon == null ? "null" : "set"));
-        final Drawable styledBack = getNavbarStyleIcon(R.drawable.ic_sysbar_back);
+        final boolean ichthysKeys = mIchthysBack != null && mIchthysHome != null
+                && !mUseCarModeUi;
+        final Drawable styledBack = ichthysKeys ? null
+                : getNavbarStyleIcon(R.drawable.ic_sysbar_back);
         if (styledBack != null) {
             backIcon = KeyButtonDrawable.create(mLightContext, mLightIconColor, mDarkIconColor,
                     styledBack, true /* hasShadow */, null /* ovalBackgroundColor */);
         }
-        final Drawable styledHome = getNavbarStyleIcon(mShowSwipeUpUi
+        final Drawable styledHome = ichthysKeys ? null : getNavbarStyleIcon(mShowSwipeUpUi
                 ? R.drawable.ic_sysbar_home_quick_step : R.drawable.ic_sysbar_home);
         if (styledHome != null) {
             homeIcon = KeyButtonDrawable.create(mLightContext, mLightIconColor, mDarkIconColor,
                     styledHome, true /* hasShadow */, null /* ovalBackgroundColor */);
+        }
+        // IchthysOS navBar.style: code-drawn keys win over stock and RRO glyphs.
+        if (ichthysKeys) {
+            backIcon = mIchthysBack;
+            homeIcon = mIchthysHome;
         }
         orientBackButton(backIcon);
         if (!mUseCarModeUi) {
@@ -757,7 +782,8 @@ public class NavigationBarView extends FrameLayout {
         getBackButton().setImageDrawable(backIcon);
 
         updateRecentsIcon();
-        final Drawable styledRecent = getNavbarStyleIcon(R.drawable.ic_sysbar_recent);
+        final Drawable styledRecent = mIchthysRecent != null ? null
+                : getNavbarStyleIcon(R.drawable.ic_sysbar_recent);
         if (styledRecent != null) {
             getRecentsButton().setImageDrawable(KeyButtonDrawable.create(mLightContext,
                     mLightIconColor, mDarkIconColor, styledRecent, true /* hasShadow */,
@@ -983,6 +1009,7 @@ public class NavigationBarView extends FrameLayout {
         mNavBarMode = mode;
         mImeDrawsImeNavBar = imeDrawsImeNavBar;
         mBarTransitions.onNavigationModeChanged(mNavBarMode);
+        updateIchthysInk();
         mEdgeBackGestureHandler.onNavigationModeChanged(mNavBarMode);
         if (mRotationButtonController != null) {
             mRotationButtonController.onNavigationModeChanged(mNavBarMode);
@@ -1092,8 +1119,48 @@ public class NavigationBarView extends FrameLayout {
 
     private void updateRecentsIcon() {
         mDockedIcon.setRotation(mDockedStackExists && mIsVertical ? 90 : 0);
-        getRecentsButton().setImageDrawable(mDockedStackExists ? mDockedIcon : mRecentIcon);
+        if (mIchthysRecent != null && !mDockedStackExists) {
+            getRecentsButton().setImageDrawable(mIchthysRecent);
+        } else {
+            getRecentsButton().setImageDrawable(mDockedStackExists ? mDockedIcon : mRecentIcon);
+        }
         mBarTransitions.reapplyDarkIntensity();
+    }
+
+    /**
+     * IchthysOS: (re)build the navBar.style key drawables from the current setting, accent, font
+     * and dark theme, then push them to the buttons. Called on attach, on setting changes and on
+     * night-mode / density / direction changes.
+     */
+    private void refreshIchthysStyle() {
+        final Context ctx = getContext();
+        mIchthysStyle = IchthysNavStyle.read(ctx);
+        if (IchthysNavStyle.isKeyStyle(mIchthysStyle)) {
+            final int accent = ShoalShade.accent(ctx);
+            final android.graphics.Typeface mono = mIchthysStyle == IchthysNavStyle.MONO
+                    ? IchthysNavStyle.monoTypeface(ctx) : null;
+            mIchthysBack = new IchthysKeyDrawable(ctx, mIchthysStyle,
+                    IchthysKeyDrawable.KEY_BACK, accent, mono);
+            mIchthysHome = new IchthysKeyDrawable(ctx, mIchthysStyle,
+                    IchthysKeyDrawable.KEY_HOME, accent, mono);
+            mIchthysRecent = new IchthysKeyDrawable(ctx, mIchthysStyle,
+                    IchthysKeyDrawable.KEY_RECENTS, accent, mono);
+        } else {
+            mIchthysBack = null;
+            mIchthysHome = null;
+            mIchthysRecent = null;
+        }
+        updateIchthysInk();
+        if (mBarTransitions != null && mEdgeBackGestureHandler != null) {
+            updateNavButtonIcons();
+        }
+    }
+
+    /** Opaque ink bar + light keys: key styles, 3-button mode, dark theme. */
+    private void updateIchthysInk() {
+        if (mBarTransitions == null) return;
+        // Stock see-through bar behind the styled keys (owner preference); no forced ink.
+        mBarTransitions.setIchthysInk(false);
     }
 
     public void showPinningEnterExitToast(boolean entering) {
@@ -1189,6 +1256,17 @@ public class NavigationBarView extends FrameLayout {
 
         boolean uiCarModeChanged = updateCarMode();
         updateIcons(mTmpLastConfiguration);
+        final boolean ichthysRestyle = ((mTmpLastConfiguration.uiMode ^ mConfiguration.uiMode)
+                & Configuration.UI_MODE_NIGHT_MASK) != 0
+                || mTmpLastConfiguration.densityDpi != mConfiguration.densityDpi
+                || mTmpLastConfiguration.fontScale != mConfiguration.fontScale
+                || mTmpLastConfiguration.getLayoutDirection()
+                        != mConfiguration.getLayoutDirection();
+        if (ichthysRestyle) {
+            // IchthysOS navBar.style: rebuild the code-drawn keys (palette / size / mirroring)
+            // before the recents icon is re-applied below.
+            refreshIchthysStyle();
+        }
         updateRecentsIcon();
         updateCurrentRotation();
         if (uiCarModeChanged || mTmpLastConfiguration.densityDpi != mConfiguration.densityDpi
@@ -1253,11 +1331,17 @@ public class NavigationBarView extends FrameLayout {
                 Settings.Secure.getUriFor(Settings.Secure.NAVIGATIONBAR_KEY_ORDER),
                 false, mNavKeyOrderObserver, UserHandle.USER_ALL);
         updateInvertNavLayout();
+        for (Uri uri : IchthysNavStyle.observedUris()) {
+            getContext().getContentResolver().registerContentObserver(uri, false,
+                    mIchthysStyleObserver, UserHandle.USER_ALL);
+        }
         reorient();
         if (mRotationButtonController != null) {
             mRotationButtonController.registerListeners(false /* registerRotationWatcher */);
         }
 
+        // Builds the IchthysOS navBar.style keys and ends in updateNavButtonIcons().
+        refreshIchthysStyle();
         updateNavButtonIcons();
     }
 
@@ -1265,6 +1349,7 @@ public class NavigationBarView extends FrameLayout {
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
         getContext().getContentResolver().unregisterContentObserver(mNavKeyOrderObserver);
+        getContext().getContentResolver().unregisterContentObserver(mIchthysStyleObserver);
         for (int i = 0; i < mButtonDispatchers.size(); ++i) {
             mButtonDispatchers.valueAt(i).onDestroy();
         }

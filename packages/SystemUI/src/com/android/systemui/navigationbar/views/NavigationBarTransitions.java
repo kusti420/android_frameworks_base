@@ -20,12 +20,14 @@ import static android.view.WindowManagerPolicyConstants.NAV_BAR_MODE_3BUTTON;
 
 import static com.android.systemui.util.Utils.isGesturalModeOnDefaultDisplay;
 
+import android.graphics.PorterDuff;
 import android.graphics.Rect;
 import android.util.SparseArray;
 import android.view.View;
 
 import com.android.systemui.navigationbar.NavigationBarComponent.NavigationBarScope;
 import com.android.systemui.navigationbar.views.buttons.ButtonDispatcher;
+import com.android.systemui.navigationbar.views.buttons.IchthysNavStyle;
 import com.android.systemui.res.R;
 import com.android.systemui.settings.DisplayTracker;
 import android.provider.Settings;
@@ -70,6 +72,8 @@ public final class NavigationBarTransitions extends BarTransitions implements
     private View mNavButtons;
     private int mNavBarMode = NAV_BAR_MODE_3BUTTON;
     private List<DarkIntensityListener> mDarkIntensityListeners;
+    private boolean mIchthysInk;
+    private boolean mIchthysTinted;
 
     @Inject
     public NavigationBarTransitions(
@@ -108,13 +112,35 @@ public final class NavigationBarTransitions extends BarTransitions implements
     protected void applyModeBackground(int oldMode, int newMode, boolean animate) {
         // Custom Options "pitch black": keep the nav bar background opaque black at all times.
         // IchthysOS: gate on the Abyss palette rather than custom_pitch_black.
-        if (Settings.Secure.getInt(
+        if (mIchthysInk || Settings.Secure.getInt(
                 mView.getContext().getContentResolver(), "theme_engine_style_mode", 0) == 1) {
             oldMode = MODE_OPAQUE_DARK;
             newMode = MODE_OPAQUE_DARK;
             animate = false;
         }
+        // IchthysOS navBar.style (shoal/lattice/mono) in dark mode: the opaque bar is ink, not
+        // black. The tint filter can't be removed once set, so "untint" with DST (keeps the
+        // bar's own colour).
+        if (mIchthysInk) {
+            mBarBackground.setTint(IchthysNavStyle.INK);
+            mBarBackground.setTintMode(PorterDuff.Mode.SRC_IN);
+            mIchthysTinted = true;
+        } else if (mIchthysTinted) {
+            mBarBackground.setTintMode(PorterDuff.Mode.DST);
+            mIchthysTinted = false;
+        }
         super.applyModeBackground(oldMode, newMode, animate);
+    }
+
+    /**
+     * IchthysOS: force the opaque ink bar with light-on-dark keys (navBar.style key styles while
+     * the dark theme is on).
+     */
+    void setIchthysInk(boolean ink) {
+        if (mIchthysInk == ink) return;
+        mIchthysInk = ink;
+        applyModeBackground(-1, getMode(), false /* animate */);
+        reapplyDarkIntensity();
     }
 
     @Override
@@ -201,6 +227,10 @@ public final class NavigationBarTransitions extends BarTransitions implements
 
     @Override
     public void applyDarkIntensity(float darkIntensity) {
+        if (mIchthysInk) {
+            // The bar is forced to opaque ink: keys stay light regardless of the app's request.
+            darkIntensity = 0f;
+        }
         SparseArray<ButtonDispatcher> buttonDispatchers = mView.getButtonDispatchers();
         for (int i = buttonDispatchers.size() - 1; i >= 0; i--) {
             buttonDispatchers.valueAt(i).setDarkIntensity(darkIntensity);
@@ -252,6 +282,7 @@ public final class NavigationBarTransitions extends BarTransitions implements
         pw.println("  mWallpaperVisible: " + mWallpaperVisible);
         pw.println("  mLightsOut: " + mLightsOut);
         pw.println("  mAutoDim: " + mAutoDim);
+        pw.println("  mIchthysInk: " + mIchthysInk);
         pw.println("  bg overrideAlpha: " + mBarBackground.getOverrideAlpha());
         pw.println("  bg color: " + mBarBackground.getColor());
         pw.println("  bg frame: " + mBarBackground.getFrame());
