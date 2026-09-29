@@ -142,7 +142,9 @@ private fun ItemPreview(
         } else {
             Text(
                 text = text,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                // IchthysOS: the tile is surfaceVariant, not primaryContainer - OnPrimaryContainer
+                // was black-on-black under the old all-black palette.
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.labelMedium.copy(textAlign = TextAlign.Center),
                 modifier = Modifier.padding(horizontal = 52.dp),
             )

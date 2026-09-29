@@ -587,7 +587,9 @@ public class InternetDialogDelegateLegacy implements
                         .getDrawable(internetContent.mCurrentSatelliteState > SATELLITE_STARTED
                                 ? R.drawable.ic_satellite_connected_2
                                 : R.drawable.ic_satellite_not_connected);
-                drawable.setTint(context.getColor(R.color.connected_network_primary_color));
+                // IchthysOS: the satellite row never gets the active (PrimaryContainer)
+                // background, so OnPrimaryContainer here was black-on-black under the old all-black palette.
+                drawable.setTint(context.getColor(com.android.internal.R.color.materialColorOnSurface));
                 mSignalIcon.setImageDrawable(drawable);
             } else {
                 mMobileDataToggle.setChecked(

@@ -142,11 +142,14 @@ private fun Item(
     modifier: Modifier = Modifier,
 ) {
     val selectedBackgroundColor = MaterialTheme.colorScheme.secondaryContainer
+    // IchthysOS: only the selected row sits on secondaryContainer; unselected rows sit on the
+    // surfaceContainerHigh menu. Upstream had the two content colours the wrong way round, which
+    // turned unselected rows black-on-black under the old all-black palette.
     val contentColor =
         if (selected) {
-            MaterialTheme.colorScheme.onSurface
-        } else {
             MaterialTheme.colorScheme.onSecondaryContainer
+        } else {
+            MaterialTheme.colorScheme.onSurface
         }
     DropdownMenuItem(
         text = {
