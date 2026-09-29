@@ -147,7 +147,10 @@ fun OneUiVolumeSlider(
 
     // "Squish" feedback on the host view (so the blur, shadow and pill scale together, like One UI
     // scaling the window decor): 1.07 while touched, 0.95 pulse on key-driven level changes.
-    val host = view.parent as? View ?: view
+    // LocalView is the AndroidComposeView inside the ComposeView, so its parent is only the
+    // content layer. Scale the main slider container, which owns the pill's blur, tint and shadow;
+    // floating rows (no such ancestor) keep scaling the ComposeView.
+    val host = remember(view) { findSquishHost(view) }
     val squish = remember { Animatable(1f) }
     var touched by remember { mutableStateOf(false) }
     LaunchedEffect(touched) {
@@ -499,4 +502,13 @@ object OneUiVolumeSpecs {
     val dotSpacing = 3.dp
     val swipeDistance = 30.dp
     const val disabledAlpha = 0.7f
+}
+
+private fun findSquishHost(view: View): View {
+    var v: View? = view
+    while (v != null) {
+        if (v.id == R.id.volume_dialog_main_slider_container) return v
+        v = v.parent as? View
+    }
+    return view.parent as? View ?: view
 }
