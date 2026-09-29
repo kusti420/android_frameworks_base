@@ -95,6 +95,15 @@ public abstract class NetworkPolicyManagerInternal {
     public abstract void setMeteredRestrictedPackagesAsync(
             Set<String> packageNames, int userId);
 
+    /**
+     * IchthysOS: replaces the set of uids Ichthys Guard restricts to unmetered networks ("Wi-Fi
+     * only", kusti420/ichthysos-tracker#27). They are treated like admin-restricted uids: no
+     * metered network even in the foreground (FIREWALL_CHAIN_METERED_DENY_ADMIN). System uids
+     * keep their exemption.
+     */
+    public void setIchthysMeteredDeniedUids(int[] uids) {
+    }
+
     /** Informs that Low Power Standby has become active */
     public abstract void setLowPowerStandbyActive(boolean active);
 

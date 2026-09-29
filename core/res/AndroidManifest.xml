@@ -3273,6 +3273,13 @@
     <permission android:name="android.permission.MANAGE_ICHTHYS_CONFIG"
         android:protectionLevel="signature|privileged" />
 
+    <!-- IchthysOS: allows an application to set per-app network policy, read the network
+         monitor and the tracker scans of IchthysGuardService ("ichthys_guard", tracker#27).
+         Platform certificate only (not privileged): only the Guard app may hold it.
+         @hide -->
+    <permission android:name="org.ichthys.permission.MANAGE_ICHTHYS_GUARD"
+        android:protectionLevel="signature" />
+
     <!-- @SystemApi Allows an application to access the MTP USB kernel driver.
          For use only by the device side MTP implementation.
          @hide -->

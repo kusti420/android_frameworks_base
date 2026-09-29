@@ -23,6 +23,9 @@ oneway interface INetdEventCallback {
     const int CALLBACK_CALLER_CONNECTIVITY_SERVICE = 0;
     const int CALLBACK_CALLER_DEVICE_POLICY = 1;
     const int CALLBACK_CALLER_NETWORK_WATCHLIST = 2;
+    // IchthysOS: IchthysGuardService's monitor (kusti420/ichthysos-tracker#27). Must equal its
+    // index in NetdEventListenerService.ALLOWED_CALLBACK_TYPES.
+    const int CALLBACK_CALLER_ICHTHYS_GUARD = 3;
 
     /**
      * Reports a single DNS lookup function call.

@@ -117,12 +117,16 @@ public class NetdEventListenerService extends BaseNetdEventListener {
      *
      * mNetdEventCallbackList[CALLBACK_CALLER_NETWORK_WATCHLIST]
      * Callback registered/unregistered by NetworkWatchlistService.
+     *
+     * mNetdEventCallbackList[CALLBACK_CALLER_ICHTHYS_GUARD]
+     * IchthysOS: callback registered by IchthysGuardService (per-app network monitor).
      */
     @GuardedBy("this")
     private static final int[] ALLOWED_CALLBACK_TYPES = {
         INetdEventCallback.CALLBACK_CALLER_CONNECTIVITY_SERVICE,
         INetdEventCallback.CALLBACK_CALLER_DEVICE_POLICY,
-        INetdEventCallback.CALLBACK_CALLER_NETWORK_WATCHLIST
+        INetdEventCallback.CALLBACK_CALLER_NETWORK_WATCHLIST,
+        INetdEventCallback.CALLBACK_CALLER_ICHTHYS_GUARD
     };
 
     @GuardedBy("this")

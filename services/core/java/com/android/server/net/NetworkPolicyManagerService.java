@@ -755,6 +755,9 @@ public class NetworkPolicyManagerService extends INetworkPolicyManager.Stub {
      */
     @GuardedBy("mUidRulesFirstLock")
     private final SparseArray<Set<Integer>> mMeteredRestrictedUids = new SparseArray<>();
+    /** IchthysOS: uids Ichthys Guard restricts to unmetered networks (tracker#27). */
+    @GuardedBy("mUidRulesFirstLock")
+    private final SparseBooleanArray mIchthysMeteredDeniedUids = new SparseBooleanArray();
 
     private final RemoteCallbackList<INetworkPolicyListener>
             mListeners = new RemoteCallbackList<>();
@@ -6876,6 +6879,32 @@ public class NetworkPolicyManagerService extends INetworkPolicyManager.Stub {
         }
 
         @Override
+        public void setIchthysMeteredDeniedUids(int[] uids) {
+            synchronized (mUidRulesFirstLock) {
+                final SparseBooleanArray old = mIchthysMeteredDeniedUids.clone();
+                mIchthysMeteredDeniedUids.clear();
+                if (uids != null) {
+                    for (int uid : uids) {
+                        mIchthysMeteredDeniedUids.put(uid, true);
+                    }
+                }
+                if (!mNetworkManagerReady) {
+                    return;
+                }
+                for (int i = 0; i < old.size(); i++) {
+                    if (!mIchthysMeteredDeniedUids.get(old.keyAt(i))) {
+                        updateRulesForDataUsageRestrictionsUL(old.keyAt(i));
+                    }
+                }
+                for (int i = 0; i < mIchthysMeteredDeniedUids.size(); i++) {
+                    if (!old.get(mIchthysMeteredDeniedUids.keyAt(i))) {
+                        updateRulesForDataUsageRestrictionsUL(mIchthysMeteredDeniedUids.keyAt(i));
+                    }
+                }
+            }
+        }
+
+        @Override
         public void setMeteredRestrictedPackagesAsync(Set<String> packageNames, int userId) {
             mHandler.obtainMessage(MSG_METERED_RESTRICTED_PACKAGES_CHANGED,
                     userId, 0, packageNames).sendToTarget();
@@ -7028,6 +7057,9 @@ public class NetworkPolicyManagerService extends INetworkPolicyManager.Stub {
 
     @GuardedBy("mUidRulesFirstLock")
     private boolean isRestrictedByAdminUL(int uid) {
+        if (mIchthysMeteredDeniedUids.get(uid)) {
+            return true;
+        }
         final Set<Integer> restrictedUids = mMeteredRestrictedUids.get(
                 UserHandle.getUserId(uid));
         return restrictedUids != null && restrictedUids.contains(uid);
