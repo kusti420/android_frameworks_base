@@ -516,6 +516,25 @@
                   android:label="@string/screenshot_scroll_label"
                   android:finishOnTaskLaunch="true" />
 
+        <!-- IchthysOS: in-SystemUI screenshot editor (draw / crop / rotate). Target of
+             config_screenshotEditor; started with an explicit component, so not exported.
+             Lives in the :screenshot process so a large bitmap can never take down SystemUI. -->
+        <activity android:name=".screenshot.ichthys.ShotEditorActivity"
+                  android:theme="@style/Theme.Ichthys.ShotEditor"
+                  android:process=":screenshot"
+                  android:exported="false"
+                  android:excludeFromRecents="true"
+                  android:taskAffinity="com.android.systemui.screenshot.editor"
+                  android:label="@string/ichthys_shot_editor_title"
+                  android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode"
+                  android:windowSoftInputMode="adjustNothing">
+            <intent-filter>
+                <action android:name="android.intent.action.EDIT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+        </activity>
+
         <!-- Android 7.1.1-style vertical card-stack recents (LegacyRecentsImpl). Exported so the
              launcher's Quickstep can launch it in place of the stock overview. -->
         <activity android:name=".recents.LegacyRecentsActivity"

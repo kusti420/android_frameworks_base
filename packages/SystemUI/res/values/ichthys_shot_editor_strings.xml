@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- IchthysOS: in-SystemUI screenshot editor (screenshot/ichthys/ShotEditorActivity). -->
+<resources>
+    <string name="ichthys_shot_editor_title">Edit screenshot</string>
+    <string name="ichthys_shot_editor_close">Discard</string>
+    <string name="ichthys_shot_editor_undo">Undo</string>
+    <string name="ichthys_shot_editor_redo">Redo</string>
+    <string name="ichthys_shot_editor_save">Save</string>
+    <string name="ichthys_shot_editor_save_copy">Save copy</string>
+    <string name="ichthys_shot_editor_tool_draw">Draw</string>
+    <string name="ichthys_shot_editor_tool_crop">Crop</string>
+    <string name="ichthys_shot_editor_tool_rotate">Rotate</string>
+    <string name="ichthys_shot_editor_pen">Pen</string>
+    <string name="ichthys_shot_editor_highlighter">Marker</string>
+    <string name="ichthys_shot_editor_crop_free">Free</string>
+    <string name="ichthys_shot_editor_crop_reset">Reset</string>
+    <string name="ichthys_shot_editor_crop_apply">Apply</string>
+    <string name="ichthys_shot_editor_rotate_left">Left</string>
+    <string name="ichthys_shot_editor_rotate_right">Right</string>
+    <string name="ichthys_shot_editor_flip">Flip</string>
+    <string name="ichthys_shot_editor_saved">Screenshot saved</string>
+    <string name="ichthys_shot_editor_copy_saved">Copy saved</string>
+    <string name="ichthys_shot_editor_failed">Couldn\'t save screenshot</string>
+    <string name="ichthys_shot_editor_load_failed">Couldn\'t open screenshot</string>
+</resources>

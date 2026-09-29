@@ -57,6 +57,7 @@ import com.android.systemui.screenshot.ActionIntentExecutor;
 import com.android.systemui.screenshot.ImageExporter;
 import com.android.systemui.screenshot.LogConfig;
 import com.android.systemui.screenshot.ScreenshotEvent;
+import com.android.systemui.screenshot.ichthys.ShotEditorActivity;
 import com.android.systemui.screenshot.scroll.CropView.CropBoundary;
 import com.android.systemui.screenshot.scroll.ScrollCaptureController.LongScreenshot;
 
@@ -365,6 +366,15 @@ public class LongScreenshotActivity extends Activity {
         } else {
             mActionIntentCreator.createEdit(uri, intent -> {
                 Bundle options = null;
+
+                // IchthysOS: our in-SystemUI editor opens in its own task; no shared-element
+                // transition (it does not participate in one) and this activity is done.
+                if (intent.getComponent() != null && ShotEditorActivity.class.getName().equals(
+                        intent.getComponent().getClassName())) {
+                    startActivity(intent);
+                    finishAndRemoveTask();
+                    return;
+                }
 
                 if (intent.getComponent() != null) {
                     // Modify intent for shared transition if we're opening a specific editor.

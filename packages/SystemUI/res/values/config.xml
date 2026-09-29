@@ -524,7 +524,7 @@
      Must handle ACTION_EDIT image/png intents.
          Blank sends the user to the Chooser first.
          This name is in the ComponentName flattened format (package/class)  -->
-    <string name="config_screenshotEditor" translatable="false">com.android.gallery3d/com.android.gallery3d.filtershow.FilterShowActivity</string>
+    <string name="config_screenshotEditor" translatable="false">com.android.systemui/com.android.systemui.screenshot.ichthys.ShotEditorActivity</string>
 
     <!-- ComponentName for the file browsing app that the system would expect to be used for
          screenshots. The icon for this app will be shown to the user when informing them that a

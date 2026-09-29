@@ -1033,13 +1033,24 @@
     </style>
 
     <style name="LongScreenshotActivity" parent="@android:style/Theme.DeviceDefault.DayNight">
-        <item name="android:colorBackground">@color/materialColorSurfaceContainer</item>
+        <!-- IchthysOS: ink surface -->
+        <item name="android:colorBackground">@*android:color/ichthys_ink</item>
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
-        <item name="android:statusBarColor">@color/materialColorSurfaceContainer</item>
-        <item name="android:navigationBarColor">@color/materialColorSurfaceContainerHighest</item>
+        <item name="android:statusBarColor">@*android:color/ichthys_ink</item>
+        <item name="android:navigationBarColor">@*android:color/ichthys_ink</item>
         <item name="android:windowActivityTransitions">true</item>
+    </style>
+
+    <!-- IchthysOS: screenshot editor (ShotEditorActivity). Window background = ink token so the
+         first frame is already the editor surface. -->
+    <style name="Theme.Ichthys.ShotEditor" parent="@android:style/Theme.DeviceDefault.DayNight">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowBackground">@*android:color/ichthys_ink</item>
+        <item name="android:colorBackground">@*android:color/ichthys_ink</item>
+        <item name="android:windowAnimationStyle">@android:style/Animation.Activity</item>
     </style>
 
     <style name="EditTextActivityButton" parent="@android:style/Widget.DeviceDefault.Button.Colored">
