@@ -51,8 +51,8 @@ final class PitchBlackTheme {
      * the stock look.
      */
     static boolean hairlineEnabled(Context context) {
-        return "hairline".equals(Settings.Secure.getString(context.getContentResolver(),
-                "ichthys_theme_surface"));
+        // Shared rule (hairline set, or unset with the rest of the Shoal theme on).
+        return com.android.systemui.shade.ui.ShoalShade.isActive(context);
     }
 
     static boolean borderEnabled(Context context) {

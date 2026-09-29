@@ -237,6 +237,9 @@ public abstract class ExpandableOutlineView extends ExpandableView {
         Resources res = getResources();
         if (mAlwaysRoundBothCorners) {
             return res.getDimension(R.dimen.notification_shadow_radius);
+        } else if (com.android.systemui.shade.ui.ShoalShade.isActive(getContext())) {
+            // IchthysOS "Shoal": 22 dp card corners.
+            return com.android.systemui.shade.ui.ShoalShade.dp(getContext(), 22);
         } else {
             return res.getDimensionPixelSize(R.dimen.notification_corner_radius);
         }

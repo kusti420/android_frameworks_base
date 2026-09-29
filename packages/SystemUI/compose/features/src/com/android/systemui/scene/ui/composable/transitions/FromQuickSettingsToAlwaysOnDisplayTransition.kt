@@ -36,6 +36,9 @@ fun TransitionBuilder.quickSettingsToAlwaysOnDisplayTransition() {
         fade(ShadeHeader.Elements.ExpandedContent)
         fade(ShadeHeader.Elements.Clock)
         fade(ShadeHeader.Elements.ShadeCarrierGroup)
+        // IchthysOS "Shoal": the Shoal header's date and icons.
+        fade(ShadeHeader.Elements.CollapsedContentStart)
+        fade(ShadeHeader.Elements.CollapsedContentEnd)
         fade(QuickSettings.Elements.BrightnessSlider)
         fade(QuickSettings.Elements.QuickSettingsContent)
         fade(QuickSettings.Elements.FooterActions)

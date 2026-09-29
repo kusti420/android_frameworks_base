@@ -38,6 +38,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Color
 import com.android.compose.modifiers.clickableWithoutFocus
 import com.android.compose.modifiers.thenIf
@@ -127,6 +128,9 @@ fun ShadeHighlightChip(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
+    // IchthysOS "Shoal": the zig-zag status icon lattice must never be clipped, so in that layout
+    // the chip does not clip its content; its highlight is drawn as a pill instead.
+    val noClip = rememberIchthysZigzag()
 
     // Note: Intentionally assigning here instead of using `by`, which would unwrap the value and
     // cause recomposition.
@@ -153,7 +157,7 @@ fun ShadeHighlightChip(
             modifier =
                 modifier
                     .align(Alignment.CenterStart)
-                    .clip(CircleShape)
+                    .then(if (noClip) Modifier else Modifier.clip(CircleShape))
                     .indication(
                         interactionSource = interactionSource,
                         indication = ripple(color = rippleColor),
@@ -161,7 +165,14 @@ fun ShadeHighlightChip(
                     .drawBehind {
                         val bgColor = animatedBackgroundColor.value
                         if (bgColor != Color.Unspecified) {
-                            drawRoundRect(color = bgColor)
+                            if (noClip) {
+                                drawRoundRect(
+                                    color = bgColor,
+                                    cornerRadius = CornerRadius(size.height / 2f),
+                                )
+                            } else {
+                                drawRoundRect(color = bgColor)
+                            }
                         }
                     }
                     .thenIf(backgroundColor != Color.Unspecified && includePadding) {

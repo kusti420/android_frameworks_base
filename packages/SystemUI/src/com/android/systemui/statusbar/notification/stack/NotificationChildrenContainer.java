@@ -187,6 +187,10 @@ public class NotificationChildrenContainer extends ViewGroup
         mDividerHeight = res.getDimensionPixelOffset(
                 R.dimen.notification_children_container_divider_height);
         mDividerAlpha = res.getFloat(R.dimen.notification_divider_alpha);
+        // IchthysOS "Shoal": opaque #161c20 hairline dividers (see inflateDivider()).
+        if (com.android.systemui.shade.ui.ShoalShade.isInk(getContext())) {
+            mDividerAlpha = 1f;
+        }
         mHeaderHeight = res.getDimensionPixelSize(R.dimen.notification_2025_header_height);
         mCollapsedHeaderMargin = Notification.Builder.getContentMarginTop(getContext(),
                 R.dimen.notification_2025_children_container_margin_top);
@@ -656,6 +660,14 @@ public class NotificationChildrenContainer extends ViewGroup
     private View inflateDivider() {
         View divider = LayoutInflater.from(mContext).inflate(
                 R.layout.notification_children_divider, this, false);
+        if (com.android.systemui.shade.ui.ShoalShade.isInk(mContext)) {
+            // IchthysOS "Shoal": 1 dp #161c20 dividers inset 14 dp from the card's sides.
+            final int inset = com.android.systemui.shade.ui.ShoalShade.dp(mContext, 14);
+            divider.setBackground(new android.graphics.drawable.InsetDrawable(
+                    new android.graphics.drawable.ColorDrawable(
+                            com.android.systemui.shade.ui.ShoalShade.DIVIDER),
+                    inset, 0, inset, 0));
+        }
         divider.setAlpha(0f);
         return divider;
     }

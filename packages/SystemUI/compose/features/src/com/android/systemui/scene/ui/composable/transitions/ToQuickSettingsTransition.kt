@@ -43,6 +43,9 @@ fun TransitionBuilder.toQuickSettingsSceneTransition(durationScale: Double = 1.0
         fade(ShadeHeader.Elements.ExpandedContent)
         fade(ShadeHeader.Elements.Clock)
         fade(ShadeHeader.Elements.ShadeCarrierGroup)
+        // IchthysOS "Shoal": the Shoal header's date and icons (shared with the Shade scene).
+        fade(ShadeHeader.Elements.CollapsedContentStart)
+        fade(ShadeHeader.Elements.CollapsedContentEnd)
         fade(Elements.BrightnessSlider)
     }
 

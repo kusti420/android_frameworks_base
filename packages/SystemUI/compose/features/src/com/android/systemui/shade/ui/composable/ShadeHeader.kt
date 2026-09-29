@@ -75,6 +75,7 @@ import androidx.compose.ui.text.font.DeviceFontFamilyName
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.LayoutDirection
@@ -121,12 +122,17 @@ import com.android.systemui.statusbar.pipeline.mobile.ui.viewmodel.MobileIconsVi
 import com.android.systemui.statusbar.pipeline.mobile.ui.viewmodel.ShadeCarrierGroupMobileIconViewModel
 import com.android.systemui.statusbar.pipeline.mobile.ui.viewmodel.ShadeCarrierGroupMobileIconViewModelKairos
 import com.android.systemui.statusbar.pipeline.mobile.ui.viewmodel.composeWrapper
+import com.android.systemui.shade.ui.ShoalShade
+import com.android.systemui.statusbar.IchthysShoalBatteryView
 import com.android.systemui.statusbar.policy.IchthysHeaderClock
 import com.android.systemui.statusbar.systemstatusicons.SystemStatusIconsInCompose
 import com.android.systemui.statusbar.systemstatusicons.ui.compose.SystemStatusIcons
 import com.android.systemui.statusbar.systemstatusicons.ui.compose.SystemStatusIconsLegacy
 import com.android.systemui.util.composable.kairos.ActivatedKairosSpec
 import com.android.systemui.util.kotlin.toDp
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
@@ -200,6 +206,16 @@ fun ContentScope.CollapsedShadeHeader(
         }
 
     val textColor = ShadeHeader.Colors.textColor
+
+    // IchthysOS "Shoal": the one header shared with the Quick Settings scene (see ShoalShadeHeader).
+    if (!isSplitShade && ShoalShade.isActive(LocalContext.current)) {
+        ShoalShadeHeader(
+            viewModel = viewModel,
+            horizontalPadding = ShoalHeaderHorizontalPadding,
+            modifier = modifier,
+        )
+        return
+    }
 
     // This layout assumes it is globally positioned at (0, 0) and is the same size as the screen.
     CutoutAwareShadeHeader(
@@ -290,6 +306,18 @@ fun ContentScope.ExpandedShadeHeader(
     viewModel: ShadeHeaderViewModel,
     modifier: Modifier = Modifier,
 ) {
+    // IchthysOS "Shoal": the same header as the Shade scene's, at the same place, so nothing moves
+    // during Shade <-> Quick Settings. QuickSettingsScene already pads this header by
+    // QsSceneHeaderPadding on each side; only the rest is added here.
+    if (ShoalShade.isActive(LocalContext.current)) {
+        ShoalShadeHeader(
+            viewModel = viewModel,
+            horizontalPadding = ShoalHeaderHorizontalPadding - QsSceneHeaderPadding,
+            modifier = modifier,
+        )
+        return
+    }
+
     val useExpandedFormat by remember { derivedStateOf { shouldUseExpandedFormat(layoutState) } }
 
     val textColor = ShadeHeader.Colors.textColor
@@ -378,6 +406,110 @@ fun ContentScope.ExpandedShadeHeader(
         }
     }
 }
+
+/** IchthysOS "Shoal": the header's side margin from the screen edge (design: 20 dp). */
+private val ShoalHeaderHorizontalPadding = 20.dp
+
+/** The horizontal padding QuickSettingsScene puts around [ExpandedShadeHeader]. */
+private val QsSceneHeaderPadding = 16.dp
+
+/**
+ * IchthysOS "Shoal": the one shade header, used by both the Shade scene ([CollapsedShadeHeader])
+ * and the Quick Settings scene ([ExpandedShadeHeader]) at the same size and position, so the
+ * Shade -> Quick Settings transition leaves it in place: the clock ([ShadeHeader.Elements.Clock]),
+ * the date ([ShadeHeader.Elements.CollapsedContentStart]) and the icons
+ * ([ShadeHeader.Elements.CollapsedContentEnd]) are shared elements of the two scenes.
+ *
+ * "20:14" in the mono face at 30 sp with ":37" small in the accent, the date below in the text
+ * face at 13 sp, muted; the status icon lattice and the Shoal battery on the right.
+ */
+@Composable
+private fun ContentScope.ShoalShadeHeader(
+    viewModel: ShadeHeaderViewModel,
+    horizontalPadding: Dp,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val ink = ShoalShade.isNight(context)
+    val textColor = if (ink) Color(ShoalShade.TEXT) else ShadeHeader.Colors.textColor
+    val mutedColor =
+        if (ink) Color(ShoalShade.MUTED) else ShadeHeader.Colors.textColor.copy(alpha = 0.7f)
+    val textFamily =
+        remember(context) {
+            FontFamily(Font(DeviceFontFamilyName(ShoalShade.textFamily(context))))
+        }
+    // "Mon, 28 September". Re-formatted whenever the view model's date text changes (a new day,
+    // a locale or time zone change).
+    val longDate =
+        remember(viewModel.longerDateText) {
+            SimpleDateFormat(ShoalDatePattern, Locale.getDefault()).format(Date())
+        }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier =
+            modifier
+                .sysuiResTag(ShadeHeader.TestTags.Root)
+                .fillMaxWidth()
+                .padding(
+                    start = horizontalPadding,
+                    end = horizontalPadding,
+                    top = ShoalHeaderPaddingTop,
+                    bottom = ShoalHeaderPaddingBottom,
+                ),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Clock(
+                onClick = viewModel::onClockClicked,
+                textColor = textColor,
+                shoalHeader = true,
+                modifier = Modifier.sysuiResTag("expanded_header_clock"),
+            )
+            VariableDayDate(
+                longerDateText = longDate,
+                shorterDateText = viewModel.shorterDateText,
+                textColor = mutedColor,
+                textStyle = TextStyle(fontFamily = textFamily, fontSize = 13.sp),
+                modifier =
+                    Modifier.element(ShadeHeader.Elements.CollapsedContentStart)
+                        .sysuiResTag("expanded_shade_header_day_date"),
+            )
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.element(ShadeHeader.Elements.CollapsedContentEnd),
+        ) {
+            if (viewModel.isPrivacyChipVisible) {
+                PrivacyChip(
+                    privacyList = viewModel.privacyItems,
+                    onClick = viewModel::onPrivacyChipClicked,
+                )
+            }
+            ShadeHighlightChip(isClickable = false) {
+                val paddingEnd = with(LocalDensity.current) { 3.sp.toDp() }
+                // One format in both scenes, so the icons keep their size during the transition.
+                StatusIcons(
+                    viewModel = viewModel,
+                    useExpandedFormat = false,
+                    foregroundColor = textColor.toArgb(),
+                    backgroundColor = ShadeHeader.Colors.inverseTextColor.toArgb(),
+                    modifier = Modifier.padding(end = paddingEnd).weight(1f, fill = false),
+                )
+                BatteryInfo(
+                    viewModel = viewModel,
+                    showIcon = true,
+                    useExpandedFormat = false,
+                    textColor = textColor,
+                )
+            }
+        }
+    }
+}
+
+private val ShoalHeaderPaddingTop = 10.dp
+private val ShoalHeaderPaddingBottom = 8.dp
+private const val ShoalDatePattern = "EEE, d MMMM"
 
 /**
  * The status bar that appears above both the Notifications and Quick Settings shade overlays when
@@ -604,6 +736,7 @@ private fun ContentScope.Clock(
     onClick: (() -> Unit)? = null,
     scale: Float = 1f,
     textColor: Color? = null,
+    shoalHeader: Boolean = false,
 ) {
     val layoutDirection = LocalLayoutDirection.current
 
@@ -654,7 +787,11 @@ private fun ContentScope.Clock(
                             }
                         }
                 },
-                update = { view -> textColor?.let { view.setTextColor(it.toArgb()) } },
+                update = { view ->
+                    textColor?.let { view.setTextColor(it.toArgb()) }
+                    // IchthysOS "Shoal": the shared Shade / QS header's 30 sp mono clock.
+                    view.header = shoalHeader
+                },
                 modifier =
                     modifier
                         .wrapContentWidth(unbounded = true)
@@ -687,6 +824,19 @@ private fun BatteryInfo(
     textColor: Color = MaterialTheme.colorScheme.onSurface,
     chipHighlightModel: ChipHighlightModel? = null,
 ) {
+    // IchthysOS "Shoal": in the zig-zag layout the header shows the same upright accent cell +
+    // mono percentage as the status bar, instead of the stock battery.
+    if (rememberIchthysZigzag()) {
+        if (showIcon) {
+            val tint = (chipHighlightModel?.foregroundColor ?: textColor).toArgb()
+            AndroidView(
+                factory = { context -> IchthysShoalBatteryView(context) },
+                update = { view -> view.onDarkChanged(ArrayList(), 0f, tint) },
+                modifier = modifier.sysuiResTag(ShadeHeader.TestTags.BatteryTestTag),
+            )
+        }
+        return
+    }
     val isQuickSettingsDarkTheme = isSystemInDarkTheme()
     // `viewModel.isShadeAreaDark` does not account for when the shade is pulled down and scrim is
     // applied behind the battery. Use `isSystemInDarkTheme` for sufficient contrast against the
@@ -758,6 +908,10 @@ private fun CarrierTextNoSubscriptionId(viewModel: ShadeHeaderViewModel) {
 
 @Composable
 private fun ShadeCarrierGroup(viewModel: ShadeHeaderViewModel, modifier: Modifier = Modifier) {
+    // IchthysOS "Shoal": no carrier name / "Emergency calls only" text in the header.
+    if (ShoalShade.isActive(LocalContext.current)) {
+        return
+    }
     if (StatusBarMobileIconKairos.isEnabled) {
         ShadeCarrierGroupKairos(viewModel, modifier)
         return

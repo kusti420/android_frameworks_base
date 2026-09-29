@@ -224,6 +224,9 @@ public class NotificationHeaderViewWrapper extends NotificationViewWrapper imple
                 mTransformationHelper.resetTransformedView(view);
             }
         }
+
+        // IchthysOS "Shoal": type, colours, icon disc and action pills (dark theme only).
+        ShoalNotificationStyle.apply(mView, row);
     }
 
     /**

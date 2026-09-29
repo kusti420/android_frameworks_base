@@ -27,6 +27,7 @@ import com.android.internal.widget.NotificationRowIconView.ICON_TYPE_SMALL_ICON
 import com.android.internal.widget.NotificationRowIconView.IconType
 import com.android.internal.widget.NotificationRowIconView.NotificationIconProvider
 import com.android.systemui.notifications.content.icon.AppIconProvider
+import com.android.systemui.shade.ui.ShoalShade
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow
 import com.android.systemui.statusbar.notification.row.NotifRemoteViewsFactory
 import com.android.systemui.statusbar.notification.row.NotificationRowContentBinder
@@ -85,8 +86,13 @@ constructor(
         return object : NotificationIconProvider {
             @IconType
             override fun getIconType(): Int {
+                // IchthysOS "Shoal": every row draws the small-icon glyph on the accent-tinted
+                // disc (ShoalNotificationStyle), so never swap in the launcher icon there.
                 var iconType =
-                    if (iconStyleProvider.shouldShowAppIcon(sbn, context)) {
+                    if (
+                        !ShoalShade.isInk(context) &&
+                            iconStyleProvider.shouldShowAppIcon(sbn, context)
+                    ) {
                         ICON_TYPE_LAUNCHER_ICON
                     } else {
                         ICON_TYPE_SMALL_ICON

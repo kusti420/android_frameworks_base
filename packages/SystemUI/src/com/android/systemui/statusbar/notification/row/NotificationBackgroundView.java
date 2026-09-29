@@ -45,6 +45,7 @@ import com.android.internal.util.ContrastColorUtil;
 import com.android.systemui.Dumpable;
 import com.android.systemui.common.shared.colors.SurfaceEffectColors;
 import com.android.systemui.res.R;
+import com.android.systemui.shade.ui.ShoalShade;
 import com.android.systemui.statusbar.notification.shared.NotificationAddXOnHoverToDismiss;
 import com.android.systemui.util.Assert;
 import com.android.systemui.util.DrawableDumpKt;
@@ -80,8 +81,11 @@ public class NotificationBackgroundView extends View implements Dumpable,
     }
 
     private void drawPitchBlackBorder(Canvas canvas) {
-        final boolean accentBorder = PitchBlackTheme.borderEnabled(getContext());
-        if (!accentBorder && !PitchBlackTheme.hairlineEnabled(getContext())) {
+        // IchthysOS "Shoal": the hairline takes precedence over the Abyss accent border, so a
+        // Shoal theme never shows the thick accent outline.
+        final boolean hairline = PitchBlackTheme.hairlineEnabled(getContext());
+        final boolean accentBorder = !hairline && PitchBlackTheme.borderEnabled(getContext());
+        if (!accentBorder && !hairline) {
             return;
         }
         // Stroke EXACTLY the drawn background drawable's bounds (the rounded, inset notification
@@ -107,7 +111,7 @@ public class NotificationBackgroundView extends View implements Dumpable,
                     & android.content.res.Configuration.UI_MODE_NIGHT_MASK)
                     == android.content.res.Configuration.UI_MODE_NIGHT_YES;
             mPitchBlackBorderPaint.setStrokeWidth(getResources().getDisplayMetrics().density);
-            mPitchBlackBorderPaint.setColor(night ? 0x26FFFFFF : 0x1F000000);
+            mPitchBlackBorderPaint.setColor(night ? ShoalShade.HAIRLINE : 0x1F000000);
         }
         float sw = mPitchBlackBorderPaint.getStrokeWidth() / 2f;
         mPitchBlackBorderRect.set(b.left + sw, b.top + sw, b.right - sw, b.bottom - sw);

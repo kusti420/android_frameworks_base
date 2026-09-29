@@ -73,6 +73,7 @@ public class SectionHeaderView extends StackScrollerDecorView {
             mLabelView.setText(mLabelTextId);
         }
         mLabelView.setAccessibilityHeading(true);
+        applyShoalStyle();
         ViewCompat.replaceAccessibilityAction(
                 mLabelView,
                 ACTION_CLICK,
@@ -147,5 +148,53 @@ public class SectionHeaderView extends StackScrollerDecorView {
     void setForegroundColors(@ColorInt int onSurface, @ColorInt int onSurfaceVariant) {
         mLabelView.setTextColor(onSurface);
         mClearAllButton.setImageTintList(ColorStateList.valueOf(onSurfaceVariant));
+        applyShoalStyle();
+    }
+
+    // Stock label look, captured before the first Shoal restyle so it can be put back.
+    private boolean mStockCaptured;
+    private float mStockTextSizePx;
+    private float mStockLetterSpacing;
+    private android.graphics.Typeface mStockTypeface;
+    private int mStockPaddingStart;
+    private boolean mShoalApplied;
+
+    /**
+     * IchthysOS "Shoal": section headers are small uppercase labels in the text face (12 sp
+     * semibold, 0.09 em tracking, muted colour), 20 dp in from the screen edge. Stock otherwise.
+     */
+    private void applyShoalStyle() {
+        if (mLabelView == null) {
+            return;
+        }
+        final Context context = getContext();
+        if (!mStockCaptured) {
+            mStockCaptured = true;
+            mStockTextSizePx = mLabelView.getTextSize();
+            mStockLetterSpacing = mLabelView.getLetterSpacing();
+            mStockTypeface = mLabelView.getTypeface();
+            mStockPaddingStart = getPaddingStart();
+        }
+        if (com.android.systemui.shade.ui.ShoalShade.isActive(context)) {
+            mShoalApplied = true;
+            mLabelView.setAllCaps(true);
+            mLabelView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 12f);
+            mLabelView.setLetterSpacing(0.09f);
+            mLabelView.setTypeface(com.android.systemui.shade.ui.ShoalShade.text(context, 600));
+            if (com.android.systemui.shade.ui.ShoalShade.isInk(context)) {
+                mLabelView.setTextColor(com.android.systemui.shade.ui.ShoalShade.MUTED);
+            }
+            // The stack already insets this view by its 12 dp side padding.
+            setPaddingRelative(com.android.systemui.shade.ui.ShoalShade.dp(context, 8),
+                    getPaddingTop(), getPaddingEnd(), getPaddingBottom());
+        } else if (mShoalApplied) {
+            mShoalApplied = false;
+            mLabelView.setAllCaps(false);
+            mLabelView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, mStockTextSizePx);
+            mLabelView.setLetterSpacing(mStockLetterSpacing);
+            mLabelView.setTypeface(mStockTypeface);
+            setPaddingRelative(mStockPaddingStart, getPaddingTop(), getPaddingEnd(),
+                    getPaddingBottom());
+        }
     }
 }

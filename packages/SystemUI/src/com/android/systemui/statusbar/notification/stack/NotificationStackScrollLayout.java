@@ -995,6 +995,12 @@ public class NotificationStackScrollLayout
     void updateSidePadding(int viewWidth) {
         if (SceneContainerFlag.isEnabled()) {
             mSidePaddings = mScrollViewFields.baseSidePadding;
+            // IchthysOS "Shoal": 12 dp side margin around the cards (portrait / unaligned only).
+            if (!mScrollViewFields.alignToInnerQqsTiles
+                    && com.android.systemui.shade.ui.ShoalShade.isActive(mContext)) {
+                mSidePaddings = Math.min(mSidePaddings,
+                        com.android.systemui.shade.ui.ShoalShade.dp(mContext, 12));
+            }
             mLastUpdateSidePaddingDumpStringSupplier = () -> "viewWidth=" + viewWidth
                     + " baseSidePadding=" + mSidePaddings
                     + " alignToInnerQqsTiles=" + mScrollViewFields.alignToInnerQqsTiles;

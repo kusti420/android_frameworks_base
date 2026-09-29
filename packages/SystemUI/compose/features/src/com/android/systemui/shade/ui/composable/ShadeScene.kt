@@ -117,6 +117,7 @@ import com.android.systemui.shade.ui.viewmodel.ShadeSceneContentViewModel
 import com.android.systemui.shade.ui.viewmodel.ShadeUserActionsViewModel
 import com.android.systemui.statusbar.notification.stack.ui.view.NotificationScrollView
 import com.android.systemui.statusbar.notification.stack.ui.viewmodel.NotificationsPlaceholderViewModel
+import com.android.systemui.keyguard.ui.composable.elements.NotificationStackElementProvider
 import dagger.Lazy
 import javax.inject.Inject
 import kotlin.math.roundToInt
@@ -146,6 +147,7 @@ constructor(
     private val notificationsPlaceholderViewModelFactory: NotificationsPlaceholderViewModel.Factory,
     private val notificationRulesParentViewModelFactory: NotificationRulesParentViewModel.Factory,
     private val jankMonitor: InteractionJankMonitor,
+    private val notificationStackElementProvider: Lazy<NotificationStackElementProvider>,
 ) : ExclusiveActivatable(), Scene {
 
     override val key = Scenes.Shade
@@ -155,6 +157,14 @@ constructor(
     }
 
     override suspend fun onActivated() {
+        // IchthysOS: the NSSL <-> SharedNotificationContainer binding (and with it the
+        // NotificationScrollViewBinder that feeds stack bounds / scroll top into the NSSL) is
+        // only set up in NotificationStackElementProvider's init, which otherwise runs the first
+        // time the Lockscreen scene composes its elements. With screen lock set to "None" the
+        // device boots straight to Gone, the lockscreen never composes, and the shade shows no
+        // notification rows (AmbientState stack bounds stay 0). Force it here; the Shade scene is
+        // alwaysCompose, so this runs at startup. The provider is a singleton, so binding once.
+        notificationStackElementProvider.get()
         actionsViewModel.activate()
     }
 

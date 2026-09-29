@@ -108,6 +108,9 @@ class ShadeSceneTest : SysuiTestCase() {
                         notificationRulesParentViewModelFactory =
                             kosmos.notificationRulesParentViewModelFactory,
                         jankMonitor = interactionJankMonitor,
+                        notificationStackElementProvider = {
+                            org.mockito.kotlin.mock<com.android.systemui.keyguard.ui.composable.elements.NotificationStackElementProvider>()
+                        },
                     )
 
                 // Set the single shade content.
@@ -163,6 +166,9 @@ class ShadeSceneTest : SysuiTestCase() {
                     notificationRulesParentViewModelFactory =
                         kosmos.notificationRulesParentViewModelFactory,
                     jankMonitor = interactionJankMonitor,
+                    notificationStackElementProvider = {
+                        org.mockito.kotlin.mock<com.android.systemui.keyguard.ui.composable.elements.NotificationStackElementProvider>()
+                    },
                 )
 
             // Set the shade content.

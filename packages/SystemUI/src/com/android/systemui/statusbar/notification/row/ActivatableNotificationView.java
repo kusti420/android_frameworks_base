@@ -166,6 +166,11 @@ public abstract class ActivatableNotificationView extends ExpandableOutlineView 
             mNormalColor = Color.BLACK;
             mOpaqueColor = Color.BLACK;
         }
+        // IchthysOS "Shoal" (dark theme): cards are the raised ink surface under a hairline.
+        if (com.android.systemui.shade.ui.ShoalShade.isInk(mContext)) {
+            mNormalColor = com.android.systemui.shade.ui.ShoalShade.CARD;
+            mOpaqueColor = com.android.systemui.shade.ui.ShoalShade.CARD;
+        }
         mTintedRippleColor = mContext.getColor(
                 R.color.notification_ripple_tinted_color);
         mNormalRippleColor = mContext.getColor(

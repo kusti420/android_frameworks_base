@@ -45,6 +45,7 @@ public class EmptyShadeView extends StackScrollerDecorView implements Launchable
     private static final String TAG = "EmptyShadeView";
 
     private TextView mEmptyText;
+    private android.graphics.Typeface mStockTypeface;
     private TextView mEmptyFooterText;
 
     private String mTextString;
@@ -102,6 +103,13 @@ public class EmptyShadeView extends StackScrollerDecorView implements Launchable
     /** Update view colors. */
     public void setTextColors(@ColorInt int onSurface, @ColorInt int onSurfaceVariant) {
         mEmptyText.setTextColor(onSurfaceVariant);
+        // IchthysOS "Shoal": "No notifications" in the theme's text face.
+        if (mStockTypeface == null) {
+            mStockTypeface = mEmptyText.getTypeface();
+        }
+        mEmptyText.setTypeface(com.android.systemui.shade.ui.ShoalShade.isActive(mContext)
+                ? com.android.systemui.shade.ui.ShoalShade.text(mContext, 400)
+                : mStockTypeface);
         mEmptyFooterText.setTextColor(onSurface);
         mEmptyFooterText.setCompoundDrawableTintList(ColorStateList.valueOf(onSurface));
     }
