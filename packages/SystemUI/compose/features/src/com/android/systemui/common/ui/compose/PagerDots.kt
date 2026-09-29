@@ -75,10 +75,11 @@ fun PagerDots(
     showArrows: Boolean = false,
     /** Whether to cycle through pages on click on the pager dots */
     clickToCyclePages: Boolean = false,
+    /** IchthysOS: width of the active dot (the Shoal footer uses a longer 18 dp pill). */
+    activeDotWidth: Dp = dotSize * 2,
 ) {
     if (pagerState.pageCount < 2) return
 
-    val activeDotWidth = dotSize * 2
     // Active dot + inactive dots + spacing
     val totalWidth =
         activeDotWidth +
@@ -167,8 +168,10 @@ fun PagerDots(
                 repeat(pagerState.pageCount) { page ->
                     val width =
                         when (page) {
-                            impactedIndex -> dotSizePx + dotSizePx * offsetFraction
-                            pagerState.currentPage -> activeDotWidthPx - dotSizePx * offsetFraction
+                            impactedIndex ->
+                                dotSizePx + (activeDotWidthPx - dotSizePx) * offsetFraction
+                            pagerState.currentPage ->
+                                activeDotWidthPx - (activeDotWidthPx - dotSizePx) * offsetFraction
                             else -> dotSizePx
                         }
 

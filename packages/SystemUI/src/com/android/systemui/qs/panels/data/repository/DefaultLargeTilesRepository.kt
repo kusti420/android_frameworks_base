@@ -41,11 +41,8 @@ class DefaultLargeTilesRepositoryImpl @Inject constructor(@Main resources: Resou
                 .map(TileSpec::create)
                 .toSet()
         } else {
-            setOf(
-                TileSpec.create("internet"),
-                TileSpec.create("bt"),
-                TileSpec.create("dnd"),
-                TileSpec.create("cast"),
-            )
+            // IchthysOS: the wide tiles are the connectivity ones (internet, Bluetooth, mobile
+            // data). This tree has no VPN tile; add its spec here if one appears.
+            setOf(TileSpec.create("internet"), TileSpec.create("bt"), TileSpec.create("cell"))
         }
 }

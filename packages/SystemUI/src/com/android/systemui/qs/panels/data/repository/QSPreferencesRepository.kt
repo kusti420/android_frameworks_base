@@ -24,6 +24,7 @@ import com.android.systemui.backup.BackupHelper
 import com.android.systemui.backup.BackupHelper.Companion.ACTION_RESTORE_FINISHED
 import com.android.systemui.broadcast.BroadcastDispatcher
 import com.android.systemui.dagger.SysUISingleton
+import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.dagger.qualifiers.Background
 import com.android.systemui.log.LogBuffer
 import com.android.systemui.log.core.Logger
@@ -33,6 +34,7 @@ import com.android.systemui.qs.pipeline.shared.InternetTileMigration.migrateInte
 import com.android.systemui.qs.pipeline.shared.TileSpec
 import com.android.systemui.qs.pipeline.shared.TilesUpgradePath
 import com.android.systemui.settings.UserFileManager
+import com.android.systemui.shade.ui.ShoalShade
 import com.android.systemui.user.data.repository.UserRepository
 import com.android.systemui.util.kotlin.SharedPreferencesExt.observe
 import com.android.systemui.util.kotlin.emitOnStart
@@ -58,6 +60,7 @@ constructor(
     @Background private val backgroundDispatcher: CoroutineDispatcher,
     @PanelsLog private val logBuffer: LogBuffer,
     broadcastDispatcher: BroadcastDispatcher,
+    @Application private val context: Context,
 ) {
     private val logger by lazy { Logger(logBuffer, TAG) }
 
@@ -78,12 +81,16 @@ constructor(
                 val prefs = getSharedPrefs(userInfo.id)
                 prefs.observe().emitOnStart().map {
                     val loaded = prefs.getLargeTilesSpecs()
-                    loaded.migrateInternetTile().also {
-                        if (loaded != it) {
-                            logger.logMigration()
-                            writeLargeTileSpecs(it, changeDefault = false)
+                    loaded
+                        .migrateInternetTile()
+                        .also {
+                            if (loaded != it) {
+                                logger.logMigration()
+                                writeLargeTileSpecs(it, changeDefault = false)
+                            }
                         }
-                    }
+                        .let { prefs.migrateIchthysLargeDefaults(it) }
+                        .let { prefs.migrateShoalWideInternet(it) }
                 }
             }
             .flowOn(backgroundDispatcher)
@@ -203,6 +210,54 @@ constructor(
         }
     }
 
+    /**
+     * IchthysOS: one-time move to this ROM's default large tiles (Wi-Fi / internet, Bluetooth,
+     * mobile data). A stored set that is still an AOSP / device default, or that was written as
+     * the default on init, was never customised by the user, so it is replaced by the current
+     * default; anything else is kept. Runs once per user (marker key).
+     */
+    private fun SharedPreferences.migrateIchthysLargeDefaults(
+        loaded: Set<TileSpec>
+    ): Set<TileSpec> {
+        if (getBoolean(ICHTHYS_LARGE_DEFAULTS_KEY, false)) return loaded
+        val specs = loaded.map { it.spec }.toSet()
+        val untouched =
+            !contains(LARGE_TILES_SPECS_KEY) ||
+                getBoolean(LARGE_TILES_DEFAULT_KEY, false) ||
+                specs in STOCK_LARGE_DEFAULTS
+        val result = if (untouched) defaultLargeTilesRepository.defaultLargeTiles else loaded
+        val editor = edit().putBoolean(ICHTHYS_LARGE_DEFAULTS_KEY, true)
+        if (result != loaded) {
+            editor.putStringSet(LARGE_TILES_SPECS_KEY, result.map { it.spec }.toSet())
+            logger.i("Large tiles moved to the IchthysOS default: $result")
+        }
+        editor.apply()
+        return result
+    }
+
+    /**
+     * IchthysOS "Shoal": one-time (per user) — Wi-Fi / internet is a wide tile in the Shoal
+     * layout. Adds it to the stored large set if it is missing; the user's other wide tiles are
+     * kept. Only runs (and only sets the marker) while Shoal is on, so a user who turns Shoal on
+     * later still gets it once. Removing it afterwards in edit mode sticks.
+     */
+    private fun SharedPreferences.migrateShoalWideInternet(
+        loaded: Set<TileSpec>
+    ): Set<TileSpec> {
+        if (getBoolean(SHOAL_WIDE_INTERNET_KEY, false)) return loaded
+        if (!ShoalShade.isActive(context)) return loaded
+        // "internet", or "wifi" when the internet tile is split.
+        val internet = setOf(TileSpec.create("internet")).migrateInternetTile()
+        val result = loaded + internet
+        val editor = edit().putBoolean(SHOAL_WIDE_INTERNET_KEY, true)
+        if (result != loaded) {
+            editor.putStringSet(LARGE_TILES_SPECS_KEY, result.map { it.spec }.toSet())
+            logger.i("Shoal: internet tile made large: $result")
+        }
+        editor.apply()
+        return result
+    }
+
     private fun SharedPreferences.setLargeTilesDefault(value: Boolean) {
         edit().putBoolean(LARGE_TILES_DEFAULT_KEY, value).apply()
     }
@@ -216,6 +271,15 @@ constructor(
         private const val LARGE_TILES_SPECS_KEY = "large_tiles_specs"
         private const val LARGE_TILES_DEFAULT_KEY = "large_tiles_default"
         private const val EDIT_TOOLTIP_SHOWN_KEY = "edit_tooltip_shown"
+        private const val ICHTHYS_LARGE_DEFAULTS_KEY = "ichthys_large_tiles_defaults_v1"
+        private const val SHOAL_WIDE_INTERNET_KEY = "ichthys_shoal_wide_internet_v1"
+        /** Stock default large tile sets (AOSP, AOSP split, a52sxq overlay split). */
+        private val STOCK_LARGE_DEFAULTS =
+            setOf(
+                setOf("internet", "bt", "dnd", "cast"),
+                setOf("wifi", "bt", "cell", "cast", "dnd", "wallet"),
+                setOf("wifi", "bt", "cell", "dnd"),
+            )
         const val FILE_NAME = "quick_settings_prefs"
     }
 }

@@ -16,7 +16,11 @@
 
 package com.android.systemui.qs.panels.ui.compose.toolbar
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -37,6 +41,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
@@ -58,8 +63,11 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.PopupPositionProvider
 import com.android.compose.lifecycle.DisposableEffectWithLifecycle
+import com.android.compose.modifiers.thenIf
 import com.android.systemui.common.ui.icons.Edit
 import com.android.systemui.compose.modifiers.sysuiResTag
+import com.android.systemui.qs.panels.ui.compose.infinitegrid.ShoalQsColors
+import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalQsEnabled
 import com.android.systemui.qs.panels.ui.compose.toolbar.EditModeButtonDefaults.SpacingBetweenTooltipAndAnchor
 import com.android.systemui.qs.panels.ui.compose.toolbar.EditModeButtonDefaults.TooltipMaxWidth
 import com.android.systemui.qs.panels.ui.viewmodel.toolbar.EditModeButtonViewModel
@@ -152,11 +160,19 @@ fun EditModeButton(
                 }
             },
         ) {
+            // IchthysOS "Shoal": a 44 dp hairline circle (#0c1013 + 1 dp #20282d).
+            val shoal = rememberShoalQsEnabled()
             IconButton(
                 onClick = viewModel::onButtonClick,
-                shape = RoundedCornerShape(CornerSize(28.dp)),
+                shape = if (shoal) CircleShape else RoundedCornerShape(CornerSize(28.dp)),
                 modifier =
                     Modifier.sysuiResTag("qs_edit_mode_button")
+                        .thenIf(shoal) {
+                            Modifier.size(44.dp)
+                                .clip(CircleShape)
+                                .background(ShoalQsColors.Track, CircleShape)
+                                .border(1.dp, ShoalQsColors.Hairline, CircleShape)
+                        }
                         .borderOnFocus(
                             color = MaterialTheme.colorScheme.secondary,
                             cornerSize = CornerSize(24.dp),
@@ -166,6 +182,8 @@ fun EditModeButton(
                     imageVector = Edit,
                     contentDescription =
                         stringResource(id = R.string.accessibility_quick_settings_edit),
+                    tint = if (shoal) ShoalQsColors.OnTileOff else LocalContentColor.current,
+                    modifier = if (shoal) Modifier.size(20.dp) else Modifier,
                 )
             }
         }

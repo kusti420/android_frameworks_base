@@ -102,6 +102,7 @@ constructor(
         if (rememberShoalQsEnabled()) {
             ShoalTileGrid(
                 tiles = tiles,
+                largeTiles = largeTiles,
                 squishiness = { squishiness },
                 coroutineScope = scope,
                 tileHapticsViewModelFactory = tileHapticsViewModelFactory,
@@ -202,11 +203,23 @@ constructor(
             remember(topBarActionsViewModel, showDualShadeSetting) {
                 topBarActionsViewModel.actions(showDualShadeSetting).toMutableStateList()
             }
-        val columns = columnsViewModel.columns
-        val largeTilesSpan = columnsViewModel.largeSpan
+        // IchthysOS "Shoal": the live grid is two wide tiles per row over a honeycomb of circles,
+        // so edit it as a 4-column grid where big (large) tiles span 2 and small ones 1, with the
+        // big tiles first - the order the live grid shows them in. Big vs small is the stock
+        // large-tiles set (resize handle / tap on the selected tile), persisted per user.
+        val shoal = rememberShoalQsEnabled()
+        val columns = if (shoal) 4 else columnsViewModel.columns
+        val largeTilesSpan = if (shoal) 2 else columnsViewModel.largeSpan
         val largeTiles by viewModel.iconTilesViewModel.largeTilesState
 
-        val currentTiles by rememberUpdatedState(tiles.filter { it.isCurrent })
+        val currentTiles by
+            rememberUpdatedState(
+                tiles
+                    .filter { it.isCurrent }
+                    .let { current ->
+                        if (shoal) current.sortedBy { it.tileSpec !in largeTiles } else current
+                    }
+            )
         val listState =
             remember(columns, largeTilesSpan) {
                 EditTileListState(

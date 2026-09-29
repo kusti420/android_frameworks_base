@@ -48,6 +48,9 @@ import com.android.systemui.lifecycle.rememberViewModel
 import com.android.systemui.qs.panels.dagger.PaginatedBaseLayoutType
 import com.android.systemui.qs.panels.ui.compose.Dimensions.FooterHeight
 import com.android.systemui.qs.panels.ui.compose.Dimensions.InterPageSpacing
+import com.android.systemui.qs.panels.ui.compose.infinitegrid.ShoalQsColors
+import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalAccent
+import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalQsEnabled
 import com.android.systemui.qs.panels.ui.compose.toolbar.EditModeButton
 import com.android.systemui.qs.panels.ui.viewmodel.PaginatedGridViewModel
 import com.android.systemui.qs.panels.ui.viewmodel.TileViewModel
@@ -194,13 +197,21 @@ private fun FooterBar(
             BuildNumber(viewModelFactory = buildNumberViewModelFactory)
             Spacer(modifier = Modifier.weight(1f))
         }
+        // IchthysOS "Shoal": an 18x6 accent pill for the current page, 6 dp #2a3136 dots.
+        val shoal = rememberShoalQsEnabled()
+        val shoalAccent = rememberShoalAccent()
         PagerDots(
             pagerState = pagerState,
-            activeColor = MaterialTheme.colorScheme.onSurfaceVariant,
-            nonActiveColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .5f),
+            activeColor =
+                if (shoal) shoalAccent else MaterialTheme.colorScheme.onSurfaceVariant,
+            nonActiveColor =
+                if (shoal) ShoalQsColors.DotInactive
+                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .5f),
             modifier = Modifier.wrapContentWidth(),
             showArrows = showArrowsInPager,
             clickToCyclePages = !showArrowsInPager,
+            spaceSize = if (shoal) 6.dp else 4.dp,
+            activeDotWidth = if (shoal) 18.dp else 12.dp,
         )
         Row(Modifier.weight(1f)) {
             Spacer(modifier = Modifier.weight(1f))

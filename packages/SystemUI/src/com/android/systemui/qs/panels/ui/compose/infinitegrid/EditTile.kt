@@ -110,14 +110,20 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.snapshots.SnapshotStateList
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
@@ -150,8 +156,10 @@ import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.style.Hyphens
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -250,6 +258,34 @@ fun DefaultEditTileGrid(
     onEditAction: (EditAction) -> Unit = {},
 ) {
     val selectionState = rememberSelectionState()
+    // IchthysOS "Shoal": circles / wide pills in the edit grid, plus a "Replace" mode that swaps
+    // the selected tile for the next available tile tapped (keeping its big/small size).
+    val shoal = rememberShoalQsEnabled()
+    var replaceArmed by remember { mutableStateOf(false) }
+    var pendingLargeSpec by remember { mutableStateOf<TileSpec?>(null) }
+    val currentSpecs = listState.tileSpecs()
+    LaunchedEffect(currentSpecs, pendingLargeSpec) {
+        val pending = pendingLargeSpec ?: return@LaunchedEffect
+        if (pending in currentSpecs) {
+            pendingLargeSpec = null
+            if (pending !in listState.largeTilesSpecs) {
+                onEditAction(EditAction.ResizeTile(pending, toIcon = false))
+            }
+        }
+    }
+    LaunchedEffect(selectionState.selection) {
+        if (selectionState.selection == null) replaceArmed = false
+    }
+    val replaceWith: (TileSpec) -> Boolean = replace@{ newSpec ->
+        val old = selectionState.selection
+        if (!shoal || !replaceArmed || old == null) return@replace false
+        replaceArmed = false
+        val specs = listState.tileSpecs()
+        if (old !in specs || newSpec in specs) return@replace false
+        if (old in listState.largeTilesSpecs) pendingLargeSpec = newSpec
+        onEditAction(EditAction.SetTiles(specs.map { if (it == old) newSpec else it }))
+        true
+    }
 
     AutoSelectTiles(listState, selectionState)
 
@@ -312,6 +348,14 @@ fun DefaultEditTileGrid(
                 actions = {
                     undoAction()
 
+                    if (shoal) {
+                        ShoalReplaceButton(
+                            enabled = selectionState.selection != null,
+                            armed = replaceArmed,
+                            onClick = { replaceArmed = !replaceArmed },
+                        )
+                    }
+
                     RemoveButton(
                         enabled = selectionState.selection?.let { isTileRemovable(it) } ?: false
                     ) {
@@ -329,7 +373,8 @@ fun DefaultEditTileGrid(
         },
     ) { innerPadding ->
         CompositionLocalProvider(
-            LocalOverscrollFactory provides rememberOffsetOverscrollEffectFactory()
+            LocalOverscrollFactory provides rememberOffsetOverscrollEffectFactory(),
+            LocalShoalEdit provides shoal,
         ) {
             AutoScrollGrid(listState, scrollState, innerPadding)
 
@@ -363,6 +408,7 @@ fun DefaultEditTileGrid(
                         listState = listState,
                         selectionState = selectionState,
                         onEditAction = onEditAction,
+                        replaceWith = replaceWith,
                         canLayoutTile = true,
                         showAvailableTiles =
                             !(listState.dragInProgress || selectionState.placementEnabled) ||
@@ -614,7 +660,10 @@ private fun CurrentTilesGrid(
     var gridContentOffset by remember { mutableStateOf(Offset(0f, 0f)) }
     val coroutineScope = rememberCoroutineScope()
 
-    val primaryColor = MaterialTheme.colorScheme.primary
+    val shoal = LocalShoalEdit.current
+    val primaryColor = if (shoal) ShoalQsColors.Hairline else MaterialTheme.colorScheme.primary
+    val gridFillColor = if (shoal) ShoalQsColors.Track else primaryColor
+    val gridFillAlpha = if (shoal) 1f else .15f
     TileLazyGrid(
         state = gridState,
         columns = GridCells.Fixed(listState.columns),
@@ -623,7 +672,7 @@ private fun CurrentTilesGrid(
             Modifier.fillMaxWidth()
                 .height { totalHeight.roundToPx() }
                 .border(
-                    width = 2.dp,
+                    width = if (shoal) 1.dp else 2.dp,
                     color = primaryColor,
                     shape = RoundedCornerShape(GridBackgroundCornerRadius),
                 )
@@ -636,9 +685,9 @@ private fun CurrentTilesGrid(
                 }
                 .drawBehind {
                     drawRoundRect(
-                        primaryColor,
+                        gridFillColor,
                         cornerRadius = CornerRadius(GridBackgroundCornerRadius.toPx()),
-                        alpha = .15f,
+                        alpha = gridFillAlpha,
                     )
                 }
                 .sysuiResTag(CURRENT_TILES_GRID_TEST_TAG),
@@ -698,6 +747,7 @@ private fun AnimatedAvailableTilesGrid(
     canLayoutTile: Boolean,
     onEditAction: (EditAction) -> Unit,
     modifier: Modifier = Modifier,
+    replaceWith: (TileSpec) -> Boolean = { false },
 ) {
     // Sets a minimum height to be used when available tiles are hidden
     Box(
@@ -723,7 +773,10 @@ private fun AnimatedAvailableTilesGrid(
                     selectionState,
                     listState.columns,
                     canLayoutTile = canLayoutTile,
-                    { onEditAction(EditAction.AddTile(it)) }, // Add to the end
+                    {
+                        // IchthysOS "Shoal": swap for the selected tile while Replace is armed.
+                        if (!replaceWith(it)) onEditAction(EditAction.AddTile(it))
+                    }, // Add to the end
                     listState,
                 )
 
@@ -972,7 +1025,10 @@ private fun LazyGridItemScope.TileGridCell(
             .collect { anchorsData = it }
     }
 
-    val colors = EditModeTileDefaults.editTileColors()
+    val shoal = LocalShoalEdit.current
+    val colors =
+        if (shoal) EditModeTileDefaults.shoalEditTileColors()
+        else EditModeTileDefaults.editTileColors()
     val toggleSizeLabel = stringResource(R.string.accessibility_qs_edit_toggle_tile_size_action)
     val togglePlacementModeLabel =
         stringResource(R.string.accessibility_qs_edit_toggle_placement_mode)
@@ -1080,17 +1136,34 @@ private fun LazyGridItemScope.TileGridCell(
                     CornerSize(InactiveTileCornerRadius),
                 )
                 .thenIf(isSelectable) { draggableModifier }
-                .tileBackground(
-                    cornerRadius = InactiveTileCornerRadius,
-                    alpha = { containerAlpha },
-                    color = { colors.background },
+                .then(
+                    if (!shoal) {
+                        Modifier.tileBackground(
+                            cornerRadius = InactiveTileCornerRadius,
+                            alpha = { containerAlpha },
+                            color = { colors.background },
+                        )
+                    } else {
+                        Modifier
+                    }
                 )
+                .thenIf(shoal) {
+                    Modifier.shoalTileBackground(
+                        alpha = { containerAlpha },
+                        color = { colors.background },
+                    )
+                }
                 .keyboardShortcuts(cell.tile.tileSpec, selectionState) {
                     onResize(FinalResizeOperation(cell.tile.tileSpec, !cell.isIcon))
                 }
                 .thenIf(isSelectable) { selectableModifier }
         ) {
-            EditTile(tile = cell.tile, state = resizingState, progress = resizingState::progress)
+            EditTile(
+                tile = cell.tile,
+                state = resizingState,
+                progress = resizingState::progress,
+                colors = colors,
+            )
         }
     }
 }
@@ -1130,7 +1203,10 @@ private fun AvailableTileGridCell(
         else null
 
     val alpha by animateFloatAsState(if (cell.isCurrent) .38f else 1f)
-    val colors = EditModeTileDefaults.editTileColors()
+    val shoal = LocalShoalEdit.current
+    val colors =
+        if (shoal) EditModeTileDefaults.shoalEditTileColors()
+        else EditModeTileDefaults.editTileColors()
     val onClick: () -> Unit = {
         onAddTile(cell.tileSpec)
         if (canLayoutTile) {
@@ -1181,7 +1257,16 @@ private fun AvailableTileGridCell(
                         MaterialTheme.colorScheme.secondary,
                         CornerSize(InactiveTileCornerRadius),
                     )
-                    .tileBackground(cornerRadius = InactiveTileCornerRadius) { colors.background }
+                    .then(
+                        if (!shoal) {
+                            Modifier.tileBackground(cornerRadius = InactiveTileCornerRadius) {
+                                colors.background
+                            }
+                        } else {
+                            Modifier
+                        }
+                    )
+                    .thenIf(shoal) { Modifier.shoalTileBackground { colors.background } }
                     .clickable(
                         enabled = !cell.isCurrent,
                         onClick = onClick,
@@ -1358,6 +1443,82 @@ private fun MeasureScope.iconHorizontalCenter(
     return (containerSize - toggleTargetSize.roundToPx()) / 2f - padding.toPx()
 }
 
+/** IchthysOS "Shoal": whether the edit grid is drawn in the Shoal style. */
+private val LocalShoalEdit = staticCompositionLocalOf { false }
+
+/**
+ * IchthysOS "Shoal" edit-cell shape: a circle (centred, the cell's smaller side) for icon cells and
+ * a 22 dp-radius pill for wide cells, mirroring the live honeycomb / wide tiles.
+ */
+private object ShoalEditShape : Shape {
+    override fun createOutline(
+        size: Size,
+        layoutDirection: LayoutDirection,
+        density: Density,
+    ): Outline {
+        return if (size.width >= size.height * 1.25f) {
+            val r = minOf(with(density) { 22.dp.toPx() }, size.height / 2f)
+            Outline.Rounded(RoundRect(0f, 0f, size.width, size.height, CornerRadius(r)))
+        } else {
+            val d = minOf(size.width, size.height)
+            val left = (size.width - d) / 2f
+            val top = (size.height - d) / 2f
+            Outline.Rounded(RoundRect(left, top, left + d, top + d, CornerRadius(d / 2f)))
+        }
+    }
+}
+
+private fun Modifier.shoalTileBackground(
+    alpha: () -> Float = { 1f },
+    color: () -> Color,
+): Modifier {
+    return clip(ShoalEditShape).drawBehind {
+        drawOutline(
+            ShoalEditShape.createOutline(size, layoutDirection, this),
+            color(),
+            alpha = alpha(),
+        )
+    }
+}
+
+/** IchthysOS "Shoal": arms / disarms Replace (tap an available tile to swap the selection). */
+@Composable
+private fun ShoalReplaceButton(
+    enabled: Boolean,
+    armed: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val accent = rememberShoalAccent()
+    val background =
+        when {
+            !enabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = .1f)
+            armed -> accent
+            else -> ShoalQsColors.TileOff
+        }
+    val content =
+        when {
+            !enabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = .38f)
+            armed -> ShoalQsColors.Ink
+            else -> ShoalQsColors.OnTileOff
+        }
+    Box(
+        modifier
+            .padding(end = 8.dp)
+            .drawBehind {
+                drawRoundRect(color = background, cornerRadius = CornerRadius(size.height / 2f))
+            }
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(10.dp)
+    ) {
+        BasicText(
+            text = if (armed) "Tap a tile below" else "Replace",
+            color = { content },
+            style = MaterialTheme.typography.labelLarge,
+        )
+    }
+}
+
 private fun Modifier.tileBackground(
     cornerRadius: Dp,
     alpha: () -> Float = { 1f },
@@ -1409,6 +1570,16 @@ private object EditModeTileDefaults {
             stiffness = Spring.StiffnessMediumLow,
             dampingRatio = Spring.DampingRatioLowBouncy,
             visibilityThreshold = IntOffset.VisibilityThreshold,
+        )
+
+    /** IchthysOS "Shoal": filled #172125 surfaces with light glyphs, as in the live grid. */
+    fun shoalEditTileColors(): TileColors =
+        TileColors(
+            background = ShoalQsColors.TileOff,
+            iconBackground = ShoalQsColors.Track,
+            label = ShoalQsColors.OnTileOff,
+            secondaryLabel = ShoalQsColors.Muted,
+            icon = ShoalQsColors.OnTileOff,
         )
 
     @Composable

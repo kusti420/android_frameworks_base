@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.onLongClick
@@ -39,6 +40,7 @@ import com.android.systemui.development.ui.viewmodel.BuildNumberViewModel
 import com.android.systemui.lifecycle.rememberViewModel
 import com.android.systemui.qs.ui.compose.borderOnFocus
 import com.android.systemui.res.R
+import com.android.systemui.shade.ui.ShoalShade
 
 @Composable
 fun BuildNumber(
@@ -58,8 +60,10 @@ fun BuildNumber(
     textColor: Color = MaterialTheme.colorScheme.onSurface,
 ) {
     val buildNumber = viewModel.buildNumber
+    // IchthysOS "Shoal": no build number text in the QS footer.
+    val shoal = ShoalShade.isActive(LocalContext.current)
 
-    if (buildNumber != null) {
+    if (buildNumber != null && !shoal) {
         val haptics = LocalHapticFeedback.current
         val copyToClipboardActionLabel = stringResource(id = R.string.copy_to_clipboard_a11y_action)
 

@@ -72,6 +72,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.constrainHeight
 import androidx.compose.ui.unit.constrainWidth
@@ -79,11 +80,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
-import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.android.compose.animation.Expandable
 import com.android.compose.animation.scene.ContentScope
-import com.android.compose.lifecycle.LaunchedEffectWithLifecycle
 import com.android.compose.modifiers.animatedBackground
 import com.android.compose.theme.LocalAndroidColorScheme
 import com.android.compose.theme.colorAttr
@@ -94,6 +93,7 @@ import com.android.systemui.common.ui.compose.Icon
 import com.android.systemui.common.ui.compose.load
 import com.android.systemui.compose.modifiers.sysuiResTag
 import com.android.systemui.qs.footer.domain.model.FooterTextButtonModel
+import com.android.systemui.shade.ui.ShoalShade
 import com.android.systemui.qs.footer.ui.compose.FooterActionsDefaults.FOOTER_TEXT_FADE_DURATION_MILLIS
 import com.android.systemui.qs.footer.ui.compose.FooterActionsDefaults.FOOTER_TEXT_MINIMUM_SCALE_Y
 import com.android.systemui.qs.footer.ui.compose.FooterActionsDefaults.FooterButtonHeight
@@ -102,6 +102,9 @@ import com.android.systemui.qs.footer.ui.viewmodel.FooterActionsForegroundServic
 import com.android.systemui.qs.footer.ui.viewmodel.FooterActionsSecurityButtonViewModel
 import com.android.systemui.qs.footer.ui.viewmodel.FooterActionsViewModel
 import com.android.systemui.qs.footer.ui.viewmodel.FooterTextButtonViewModel
+import com.android.systemui.qs.panels.ui.compose.infinitegrid.ShoalQsColors
+import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalQsEnabled
+import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalQsFonts
 import com.android.systemui.qs.panels.ui.viewmodel.TextFeedbackViewModel
 import com.android.systemui.qs.shared.ui.QuickSettings
 import com.android.systemui.qs.ui.composable.QuickSettingsTheme
@@ -168,14 +171,15 @@ fun FooterActions(viewModel: FooterActionsViewModel, modifier: Modifier = Modifi
         }
     }
 
-    // Listen for model changes only when QS are visible.
-    LaunchedEffectWithLifecycle(
+    // IchthysOS: collect the footer models as soon as we are composed (like the alphas above),
+    // not only once QS is RESUMED. Otherwise the "N apps are active" pill and friends are null
+    // when the panel opens and pop in a beat later.
+    LaunchedEffect(
         viewModel.security,
         viewModel.foregroundServices,
         viewModel.userSwitcher,
         viewModel.textFeedback,
         viewModel.settings,
-        minActiveState = Lifecycle.State.RESUMED,
     ) {
         launch { viewModel.security.collect { security = it } }
         launch { viewModel.foregroundServices.collect { foregroundServices = it } }
@@ -184,8 +188,14 @@ fun FooterActions(viewModel: FooterActionsViewModel, modifier: Modifier = Modifi
         launch { viewModel.settings.collect { settings = it } }
     }
 
+    // IchthysOS "Shoal": ink ground, hairline-circle buttons (settings, power, user switcher).
+    val shoal = rememberShoalQsEnabled()
     val backgroundColor =
-        if (!notificationShadeBlur()) colorAttr(R.attr.underSurface) else Color.Transparent
+        if (!notificationShadeBlur()) {
+            if (shoal) ShoalQsColors.Ink else colorAttr(R.attr.underSurface)
+        } else {
+            Color.Transparent
+        }
     val backgroundAlphaValue = if (!notificationShadeBlur()) backgroundAlpha::value else ({ 0f })
     val contentColor = MaterialTheme.colorScheme.onSurface
     val backgroundTopRadius = dimensionResource(R.dimen.qs_corner_radius)
@@ -253,16 +263,19 @@ fun FooterActions(viewModel: FooterActionsViewModel, modifier: Modifier = Modifi
                 { userSwitcher },
                 useModifierBasedExpandable,
                 Modifier.sysuiResTag("multi_user_switch"),
+                shoal = shoal,
             )
             IconButton(
                 { settings },
                 useModifierBasedExpandable,
                 Modifier.sysuiResTag("settings_button_container"),
+                shoal = shoal,
             )
             IconButton(
                 { viewModel.power },
                 useModifierBasedExpandable,
                 Modifier.sysuiResTag("pm_lite"),
+                shoal = shoal,
             )
         }
     }
@@ -374,9 +387,42 @@ private fun IconButton(
     model: () -> FooterActionsButtonViewModel?,
     useModifierBasedExpandable: Boolean,
     modifier: Modifier = Modifier,
+    shoal: Boolean = false,
 ) {
     val viewModel = model() ?: return
-    IconButton(viewModel, useModifierBasedExpandable, modifier)
+    if (shoal) {
+        ShoalIconButton(viewModel, useModifierBasedExpandable, modifier)
+    } else {
+        IconButton(viewModel, useModifierBasedExpandable, modifier)
+    }
+}
+
+/**
+ * IchthysOS "Shoal": a 44 dp hairline circle (#0c1013 + 1 dp #20282d) with a light glyph - for
+ * power too, which is not an accent disc in Shoal. The user switcher keeps its (avatar) icon
+ * colours.
+ */
+@Composable
+private fun ShoalIconButton(
+    model: FooterActionsButtonViewModel,
+    useModifierBasedExpandable: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val tint =
+        if (model is FooterActionsButtonViewModel.UserSwitcherViewModel) Color.Unspecified
+        else ShoalQsColors.OnTileOff
+    CircleExpandable(
+        color = ShoalQsColors.Track,
+        contentColor = ShoalQsColors.OnTileOff,
+        borderStroke = BorderStroke(1.dp, ShoalQsColors.Hairline),
+        onClick = model.onClick,
+        modifier = modifier.padding(horizontal = 4.dp).size(44.dp),
+        useModifierBasedImplementation = useModifierBasedExpandable,
+    ) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            FooterIcon(model.icon, Modifier.size(20.dp), tint)
+        }
+    }
 }
 
 /** A button with an icon. */
@@ -387,6 +433,27 @@ private fun IconButton(
     modifier: Modifier = Modifier,
 ) {
     val colors = buttonColorsForModel(model)
+    val context = LocalContext.current
+    if (ShoalShade.isInk(context)) {
+        // IchthysOS "Shoal": 44 dp ink circles with a 1 dp hairline; the user switcher keeps its
+        // own (avatar) colours.
+        val iconTint =
+            if (model is FooterActionsButtonViewModel.UserSwitcherViewModel) colors.icon
+            else Color(ShoalShade.TEXT)
+        CircleExpandable(
+            color = Color(ShoalShade.CARD),
+            contentColor = Color(ShoalShade.TEXT),
+            borderStroke = BorderStroke(1.dp, Color(ShoalShade.HAIRLINE)),
+            onClick = model.onClick,
+            modifier = modifier,
+            useModifierBasedImplementation = useModifierBasedExpandable,
+        ) {
+            Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
+                FooterIcon(model.icon, Modifier.size(20.dp), iconTint)
+            }
+        }
+        return
+    }
     CircleExpandable(
         color = colors.background,
         onClick = model.onClick,
@@ -446,7 +513,7 @@ private fun NumberButton(
                         Modifier.align(Alignment.Center).semantics {
                             this.contentDescription = contentDescription
                         },
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = shoalFooterStyle(MaterialTheme.typography.bodyLarge, mono = true),
                     color = colors.content,
                     // TODO(b/242040009): This should only use a standard text style instead and
                     // should not override the text size.
@@ -489,6 +556,17 @@ private fun CircleExpandable(
     )
 }
 
+/**
+ * IchthysOS "Shoal": footer text in the Shoal text face (the "1 app is active" button) and the
+ * numeric badge in the mono face; the stock style otherwise.
+ */
+@Composable
+private fun shoalFooterStyle(base: TextStyle, mono: Boolean = false): TextStyle {
+    if (!rememberShoalQsEnabled()) return base
+    val fonts = rememberShoalQsFonts()
+    return base.copy(fontFamily = if (mono) fonts.mono else fonts.text)
+}
+
 /** A dot that indicates new changes. */
 @Composable
 private fun NewChangesDot(modifier: Modifier = Modifier) {
@@ -528,7 +606,7 @@ private fun TextButton(
             Text(
                 text,
                 Modifier.weight(1f),
-                style = MaterialTheme.typography.labelLarge,
+                style = shoalFooterStyle(MaterialTheme.typography.labelLarge),
                 letterSpacing = 0.em,
                 color = colors.content,
                 maxLines = 1,
@@ -570,7 +648,7 @@ private fun TextButtonContent(
         Text(
             text,
             Modifier.weight(1f),
-            style = MaterialTheme.typography.labelLarge,
+            style = shoalFooterStyle(MaterialTheme.typography.labelLarge),
             letterSpacing = 0.em,
             color = contentColor,
             maxLines = 1,

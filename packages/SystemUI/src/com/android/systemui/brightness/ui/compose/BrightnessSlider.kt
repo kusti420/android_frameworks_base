@@ -135,6 +135,7 @@ import com.android.systemui.haptics.slider.SeekableSliderTrackerConfig
 import com.android.systemui.haptics.slider.SliderHapticFeedbackConfig
 import com.android.systemui.haptics.slider.compose.ui.SliderHapticsViewModel
 import com.android.systemui.lifecycle.rememberViewModel
+import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalQsEnabled
 import com.android.systemui.qs.ui.compose.borderOnFocus
 import com.android.systemui.res.R
 import com.android.systemui.util.policy.PolicyRestriction
@@ -817,6 +818,8 @@ private fun BrightnessRowToggle(
 @Composable
 fun BrightnessToggleButtons(modifier: Modifier = Modifier, tint: Color = Color.White) {
     val context = LocalContext.current
+    // IchthysOS "Shoal": the toggles live as pills in the brightness label row instead.
+    if (rememberShoalQsEnabled()) return
     // Registering the floor observers only when the buttons are actually shown keeps the hidden
     // case (switch off in Settings) free.
     if (rememberQsShowAutoBrightness(context)) {
@@ -985,6 +988,94 @@ fun BrightnessSliderContainer(
         } else {
             0
         }
+    // IchthysOS "Shoal" (ichthys_qs_style = shoal): its own label row + pill track, with the
+    // floor drawn inside the track and the min / Auto pills in the label row. The toggles are
+    // shown here even where the expanded header hosts them otherwise ([BrightnessToggleButtons]
+    // emits nothing in Shoal).
+    if (rememberShoalQsEnabled()) {
+        val floorGamma = (floorFraction * BrightnessUtils.GAMMA_SPACE_MAX).roundToInt()
+        ShoalBrightnessSlider(
+            gamma = gamma,
+            minGamma = minGamma,
+            maxGamma = maxGamma,
+            enabled = enabled && !isRestricted,
+            isRestricted = isRestricted,
+            onRestrictedClick = {
+                (restriction as? PolicyRestriction.Restricted)?.let {
+                    viewModel.showPolicyRestrictionDialog(it)
+                }
+            },
+            overriddenByAppState = overriddenByAppState,
+            showToast = {
+                viewModel.showToast(
+                    context,
+                    com.android.internal.R.string.brightness_unable_adjust_msg,
+                )
+            },
+            showToggles = rememberQsShowAutoBrightness(context),
+            autoMode = floorState.autoMode,
+            floorEnabled = floorState.enabled,
+            floorGamma = floorGamma,
+            onToggleAuto = {
+                Settings.System.putIntForUser(
+                    context.contentResolver,
+                    Settings.System.SCREEN_BRIGHTNESS_MODE,
+                    if (floorState.autoMode) Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL
+                    else Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC,
+                    UserHandle.USER_CURRENT,
+                )
+            },
+            onToggleFloor = {
+                Settings.System.putIntForUser(
+                    context.contentResolver,
+                    Settings.System.AUTO_BRIGHTNESS_MIN_FLOOR_ENABLED,
+                    if (floorState.enabled) 0 else 1,
+                    UserHandle.USER_CURRENT,
+                )
+            },
+            onFloorFinished = { g ->
+                val linear =
+                    BrightnessUtils.convertGammaToLinearFloat(
+                        g.coerceIn(0, BrightnessUtils.GAMMA_SPACE_MAX),
+                        minLinear,
+                        maxLinear,
+                    )
+                Settings.System.putFloatForUser(
+                    context.contentResolver,
+                    Settings.System.AUTO_BRIGHTNESS_MIN_FLOOR,
+                    linear,
+                    UserHandle.USER_CURRENT,
+                )
+            },
+            onDrag = {
+                viewModel.setIsDragging(true)
+                dragging = true
+                coroutineScope.launch { viewModel.onDrag(Drag.Dragging(GammaBrightness(it))) }
+            },
+            onStop = {
+                viewModel.setIsDragging(false)
+                dragging = false
+                coroutineScope.launch { viewModel.onDrag(Drag.Stopped(GammaBrightness(it))) }
+            },
+            modifier =
+                modifier
+                    .padding(vertical = { dimensions.verticalPadding.roundToPx() })
+                    .fillMaxWidth()
+                    .sysuiResTag("brightness_slider"),
+            sliderModifier =
+                Modifier.then(if (viewModel.showMirror) Modifier.drawInOverlay() else Modifier)
+                    .pointerInteropFilter {
+                        if (
+                            it.actionMasked == MotionEvent.ACTION_UP ||
+                                it.actionMasked == MotionEvent.ACTION_CANCEL
+                        ) {
+                            viewModel.emitBrightnessTouchForFalsing()
+                        }
+                        false
+                    },
+        )
+        return
+    }
     // IchthysOS: the slider always gets the full width. The percentage (and, in the layouts that
     // host them inline, the floor + adaptive toggles) sit in a slim label row above it.
     Column(

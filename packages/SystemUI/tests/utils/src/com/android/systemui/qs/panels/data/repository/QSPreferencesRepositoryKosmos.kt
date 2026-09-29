@@ -16,6 +16,7 @@
 
 package com.android.systemui.qs.panels.data.repository
 
+import android.content.applicationContext
 import com.android.systemui.broadcast.broadcastDispatcher
 import com.android.systemui.kosmos.Kosmos
 import com.android.systemui.kosmos.testDispatcher
@@ -32,5 +33,6 @@ val Kosmos.qsPreferencesRepository by
             testDispatcher,
             FakeLogBuffer.Factory.create(),
             broadcastDispatcher,
+            applicationContext,
         )
     }

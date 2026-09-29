@@ -129,6 +129,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
@@ -180,6 +181,8 @@ import com.android.systemui.media.remedia.ui.viewmodel.MediaPlayPauseActionViewM
 import com.android.systemui.media.remedia.ui.viewmodel.MediaSecondaryActionViewModel
 import com.android.systemui.media.remedia.ui.viewmodel.MediaSettingsButtonViewModel
 import com.android.systemui.media.remedia.ui.viewmodel.MediaViewModel
+import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalQsEnabled
+import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalQsFonts
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.verticalSquish
 import com.android.systemui.res.R
 import kotlin.math.abs
@@ -1404,6 +1407,7 @@ private fun CardGuts(
                 text = viewModel.text,
                 color = Color.White,
                 style = MaterialTheme.typography.labelMedium,
+                fontFamily = shoalMediaFamily(),
                 fontSize = 14.sp,
                 textAlign = TextAlign.Center,
             )
@@ -1421,6 +1425,7 @@ private fun CardGuts(
                         text = checkNotNull(viewModel.primaryAction.text),
                         color = colorScheme.onPrimary,
                         style = MaterialTheme.typography.labelMedium,
+                        fontFamily = shoalMediaFamily(),
                         fontSize = 14.sp,
                     )
                 }
@@ -1434,6 +1439,7 @@ private fun CardGuts(
                             text = checkNotNull(button.text),
                             color = Color.White,
                             style = MaterialTheme.typography.labelMedium,
+                            fontFamily = shoalMediaFamily(),
                             fontSize = 14.sp,
                         )
                     }
@@ -1463,6 +1469,7 @@ private fun ContentScope.Metadata(
                     text = title,
                     modifier = Modifier.sysuiResTag(MediaRes.TITLE),
                     style = MaterialTheme.typography.titleMediumEmphasized,
+                    fontFamily = shoalMediaFamily(),
                     color = color,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -1488,6 +1495,7 @@ private fun ContentScope.Metadata(
                         text = subtitle,
                         modifier = Modifier.sysuiResTag(MediaRes.ARTIST),
                         style = MaterialTheme.typography.bodyMedium,
+                        fontFamily = shoalMediaFamily(),
                         color = color,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -1572,6 +1580,7 @@ private fun DeviceChip(
                         Text(
                             text = it.toString(),
                             style = MaterialTheme.typography.labelMedium,
+                            fontFamily = shoalMediaFamily(),
                             color = style.contentColor,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -1728,6 +1737,17 @@ private fun SecondaryActionContent(
     }
 }
 
+/**
+ * IchthysOS "Shoal": media text in the Shoal text face, the elapsed / duration times in the mono
+ * face; null (the style's own family) otherwise.
+ */
+@Composable
+private fun shoalMediaFamily(mono: Boolean = false): FontFamily? {
+    if (!rememberShoalQsEnabled()) return null
+    val fonts = rememberShoalQsFonts()
+    return if (mono) fonts.mono else fonts.text
+}
+
 @Composable
 private fun TimestampText(text: String) {
     Text(
@@ -1735,6 +1755,7 @@ private fun TimestampText(text: String) {
         modifier = Modifier.widthIn(min = 48.dp).padding(4.dp),
         color = Color.White,
         style = MaterialTheme.typography.labelMedium,
+        fontFamily = shoalMediaFamily(mono = true),
         fontSize = 12.sp,
         textAlign = TextAlign.Center,
         maxLines = 1,
