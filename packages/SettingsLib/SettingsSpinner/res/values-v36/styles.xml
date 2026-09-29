@@ -52,7 +52,8 @@
 
     <style name="SettingsSpinnerDropdownText">
         <item name="android:textAppearance">@style/TextAppearance.SettingsLib.LabelLarge</item>
-        <item name="android:textColor">@color/settingslib_spinner_dropdown_color</item>
+        <!-- IchthysOS: activated row -> OnPrimaryContainer (on its pill), others -> OnSurface. -->
+        <item name="android:textColor">@color/settingslib_spinner_expressive_dropdown_color</item>
         <item name="android:maxLines">1</item>
         <item name="android:ellipsize">marquee</item>
     </style>

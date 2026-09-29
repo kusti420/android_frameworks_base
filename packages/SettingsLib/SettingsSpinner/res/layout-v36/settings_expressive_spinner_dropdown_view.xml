@@ -15,13 +15,15 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     style="@style/SettingsSpinnerDropdown.Expressive">
+  <!-- IchthysOS: tint is a state list (activated -> OnPrimaryContainer, else OnSurface) so the
+       check stays visible whether or not the row sits on the PrimaryContainer pill. -->
   <ImageView
       android:id="@android:id/icon"
       android:layout_width="@dimen/settingslib_expressive_space_small3"
       android:layout_height="@dimen/settingslib_expressive_space_small3"
       android:importantForAccessibility="no"
       android:src="@drawable/settingslib_expressive_icon_check"
-      android:tint="@color/settingslib_spinner_dropdown_color"
+      android:tint="@color/settingslib_spinner_expressive_dropdown_color"
       android:layout_gravity="center_vertical"
       android:layout_marginEnd="@dimen/settingslib_expressive_space_extrasmall4"
       android:scaleType="centerInside"/>

@@ -337,6 +337,8 @@
         <item name="thumbIconTint">@color/settingslib_expressive_color_switch_thumb_icon</item>
         <item name="thumbTint">@color/settingslib_expressive_color_switch_thumb</item>
         <item name="trackTint">@color/settingslib_expressive_color_switch_track</item>
+        <!-- IchthysOS Shoal: no outline on the dark track (see color-night-v36). -->
+        <item name="trackDecorationTint">@color/settingslib_expressive_color_switch_track_decoration</item>
     </style>
 
     <style name="SettingslibMainSwitchStyle.Expressive" parent="SettingslibSwitchStyle.Expressive">

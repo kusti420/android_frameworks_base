@@ -222,6 +222,14 @@ public class CollapsingToolbarDelegate {
                                         .build()));
             }
         }
+        if (collapsingToolbarLayout != null) {
+            // IchthysOS Shoal: page titles in the display face (theme.font.display, Syne 600).
+            final android.graphics.Typeface display =
+                    com.android.settingslib.widget.ShoalSurfaces.displayTypeface(
+                            collapsingToolbarLayout.getContext(), 600);
+            collapsingToolbarLayout.setExpandedTitleTypeface(display);
+            collapsingToolbarLayout.setCollapsedTitleTypeface(display);
+        }
         autoSetCollapsingToolbarLayoutScrolling(appBarLayout);
     }
 

@@ -270,6 +270,12 @@ abstract class SettingsBasePreferenceFragment : PreferenceFragmentCompat() {
             parent: RecyclerView,
             state: RecyclerView.State,
         ) {
+            // IchthysOS Shoal hairline cards: rows inside a group touch so the card's outline
+            // stays continuous (the row's background says whether it continues below).
+            if ((view.background as? ShoalRowDrawable)?.joinsNext == true) {
+                outRect.bottom = 0
+                return
+            }
             val viewHolder = parent.getChildViewHolder(view)
             val position = viewHolder.bindingAdapterPosition
 

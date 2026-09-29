@@ -110,6 +110,19 @@ open class SettingsPreferenceGroupAdapter @JvmOverloads constructor(
             updateBackground(holder, position)
         }
         val preference = getItem(position)
+        // IchthysOS Shoal: uppercase, muted category headers over the hairline cards.
+        if (preference is PreferenceCategory &&
+                ShoalSurfaces.isHairline(holder.itemView.context)) {
+            ShoalSurfaces.styleCategoryTitle(
+                holder.findViewById(android.R.id.title) as? android.widget.TextView)
+        } else if (preference != null && preference !is PreferenceCategory) {
+            // IchthysOS Shoal: row text in the body face; the Shoal sizes (15 / 12.5sp, muted
+            // summary) only on the standard expressive row so special layouts keep theirs.
+            ShoalSurfaces.styleRowText(
+                holder.findViewById(android.R.id.title) as? android.widget.TextView,
+                holder.findViewById(android.R.id.summary) as? android.widget.TextView,
+                preference.layoutResource == R.layout.settingslib_expressive_preference)
+        }
         val footerData = preference?.key?.let { footerDataMap[it] }
         bindFooter(holder, footerData)
     }
@@ -212,7 +225,9 @@ open class SettingsPreferenceGroupAdapter @JvmOverloads constructor(
         val drawableStateLayout = holder.itemView as? DrawableStateLayout
         if (position < mItemPositionStates.size &&
                 drawableStateLayout != null && mItemPositionStates[position] != 0) {
-            if (v.background == null) {
+            // IchthysOS: a recycled row may still carry a Shoal hairline slice; restore the
+            // stateful drawable first so its padding is read below as on a fresh row.
+            if (v.background == null || v.background is ShoalRowDrawable) {
                 // Make sure the stateful drawable is set for expressive UI
                 v.setBackgroundResource(R.drawable.settingslib_round_background_stateful)
             }
@@ -238,7 +253,7 @@ open class SettingsPreferenceGroupAdapter @JvmOverloads constructor(
             val hasIconSpace = iconFrame != null && iconFrame.visibility != View.GONE
             drawableStateLayout.extraDrawableState =
                 stateSetOf(mItemPositionStates[position], hasIconSpace)
-            applyIchthysSurface(v)
+            applyIchthysSurface(v, position)
         } else { // Handle the background of the preferences that are group divider
             val backgroundRes = getRoundCornerDrawableRes(position, isSelected = false)
             val (paddingStart, paddingEnd) = getStartEndPadding(position)
@@ -251,35 +266,44 @@ open class SettingsPreferenceGroupAdapter @JvmOverloads constructor(
             v.setBackgroundResource(backgroundRes)
             // Restore the preserved vertical padding and apply the calculated horizontal padding.
             v.setPaddingRelative(paddingStart, paddingTop, paddingEnd, paddingBottom)
-            applyIchthysSurface(v)
+            applyIchthysSurface(v, position)
         }
     }
 
     /**
      * IchthysOS "Shoal" surfaces (theme.surface / Settings.Secure ichthys_theme_surface):
-     * "hairline" (default, Koi) draws each group as a 1dp outline on the page ground with no fill;
-     * "tonal" (Abyss) keeps the filled surface and drops the outline.
+     * "hairline" (default, Koi) draws each group as ONE outlined card (see [ShoalSurfaces]): each
+     * row paints its slice (rounded top, side lines, rounded bottom) and rows in a group touch;
+     * "tonal" (Abyss) keeps the filled per-row surfaces and drops the outline.
      */
-    private fun applyIchthysSurface(v: View) {
-        val bg = v.background?.mutate() ?: return
-        val hairline =
-            android.provider.Settings.Secure.getString(
-                v.context.contentResolver, "ichthys_theme_surface") != "tonal"
-        val strokePx =
-            TypedValue.applyDimension(
-                    TypedValue.COMPLEX_UNIT_DIP, 1f, v.resources.displayMetrics)
-                .toInt()
-                .coerceAtLeast(1)
-        val outline = v.context.getColor(R.color.settingslib_materialColorOutlineVariant)
-        forEachShape(bg) { shape ->
-            if (hairline) {
-                shape.setColor(android.graphics.Color.TRANSPARENT)
-                shape.setStroke(strokePx, outline)
+    private fun applyIchthysSurface(v: View, position: Int) {
+        if (ShoalSurfaces.isHairline(v.context)) {
+            val state = if (position in mItemPositionStates.indices) {
+                mItemPositionStates[position]
             } else {
-                shape.setStroke(0, android.graphics.Color.TRANSPARENT)
+                0
             }
+            if (state != 0 && v.background != null) {
+                ShoalSurfaces.applyRow(v, state)
+            }
+            return
+        }
+        val bg = v.background?.mutate() ?: return
+        forEachShape(bg) { shape ->
+            shape.setStroke(0, android.graphics.Color.TRANSPARENT)
         }
         v.invalidate()
+    }
+
+    /**
+     * Restores a row's normal (non-highlighted) background after a highlight animation: the
+     * given round-corner resource, or its Shoal hairline slice when hairline surfaces are on.
+     */
+    protected fun setNormalRowBackground(v: View, position: Int, @DrawableRes backgroundRes: Int) {
+        v.setBackgroundResource(backgroundRes)
+        if (backgroundRes != 0 && SettingsThemeHelper.isExpressiveTheme(v.context)) {
+            applyIchthysSurface(v, position)
+        }
     }
 
     private fun forEachShape(

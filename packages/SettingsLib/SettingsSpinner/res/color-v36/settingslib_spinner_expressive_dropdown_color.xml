@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  IchthysOS: text / check-icon colour for the expressive spinner dropdown rows.
+  Only the activated (selected) row sits on the PrimaryContainer pill
+  (settings_expressive_spinner_dropdown_item_selected); every other row sits directly on the
+  popup's surface. Upstream used OnPrimaryContainer for all rows, which is only legible when the
+  on-container tone happens to contrast with the surface - with the old all-black palette
+  (OnPrimaryContainer = black, surfaces = black) unselected rows became black-on-black.
+-->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_activated="true"
+          android:color="@color/settingslib_materialColorOnPrimaryContainer"/>
+    <item android:color="@color/settingslib_materialColorOnSurface"/>
+</selector>
