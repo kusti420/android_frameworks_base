@@ -36,6 +36,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -72,6 +75,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -82,9 +86,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
@@ -93,8 +99,6 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.AwaitPointerEventScope
-import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.platform.LocalContext
@@ -164,6 +168,20 @@ private data class NRect(val l: Float, val t: Float, val r: Float, val b: Float)
     }
 }
 
+/**
+ * Fixed pen *content* colours (ink drawn onto the screenshot, not UI chrome), so they are allowed
+ * to be literal: a highlighter yellow that stays legible on both light and dark screenshots, and a
+ * fallback red for when the theme's error colour collides with the accent.
+ */
+private val PEN_YELLOW = Color(0xFFFFD600)
+private val PEN_YELLOW_ALT = Color(0xFFFFF176)
+private val PEN_RED = Color(0xFFE53935)
+private val PEN_RED_DEEP = Color(0xFFB71C1C)
+
+/** True when two colours would read as the same swatch. */
+private fun colorsClose(a: Color, b: Color): Boolean =
+    abs(a.red - b.red) + abs(a.green - b.green) + abs(a.blue - b.blue) < 0.35f
+
 private val WIDTH_FRACS = floatArrayOf(0.005f, 0.01f, 0.02f)
 private val CROP_RATIOS = floatArrayOf(0f, 1f, 9f / 16f, 16f / 9f)
 private const val MIN_CROP = 0.05f
@@ -195,6 +213,28 @@ private class EditorState {
 
     var saving by mutableStateOf(false)
 
+    /** View zoom (1 = fit) and pan (px), see [viewRect]. Purely a viewing aid, never saved. */
+    var zoom by mutableFloatStateOf(1f)
+    var pan by mutableStateOf(Offset.Zero)
+
+    /** A dot stroke committed by the first tap of a potential double-tap, plus the redo stack it cleared. */
+    var tapStroke: Pair<EditOp, List<EditOp>>? = null
+
+    fun resetZoom() {
+        zoom = 1f
+        pan = Offset.Zero
+    }
+
+    /** Removes the stroke left by the first tap of a double-tap, restoring the redo stack. */
+    fun dropTapStroke() {
+        val (op, redo) = tapStroke ?: return
+        tapStroke = null
+        if (ops.lastOrNull() === op) {
+            ops = ops.dropLast(1)
+            redoStack = redo
+        }
+    }
+
     fun currentSize(): Pair<Int, Int> {
         val src = source ?: return 0 to 0
         return ShotRenderer.sizeAfter(src.width, src.height, ops)
@@ -203,19 +243,28 @@ private class EditorState {
     fun push(op: EditOp) {
         ops = ops + op
         redoStack = emptyList()
+        tapStroke = null
+        // Geometry changed (rotate / flip / crop): the old zoom and pan no longer make sense.
+        if (op !is StrokeOp) resetZoom()
     }
 
     fun undo() {
         if (ops.isEmpty()) return
-        redoStack = redoStack + ops.last()
+        val op = ops.last()
+        redoStack = redoStack + op
         ops = ops.dropLast(1)
+        tapStroke = null
+        if (op !is StrokeOp) resetZoom()
         resetCrop()
     }
 
     fun redo() {
         if (redoStack.isEmpty()) return
-        ops = ops + redoStack.last()
+        val op = redoStack.last()
+        ops = ops + op
         redoStack = redoStack.dropLast(1)
+        tapStroke = null
+        if (op !is StrokeOp) resetZoom()
         resetCrop()
     }
 
@@ -319,17 +368,31 @@ private fun dragCrop(
     )
 }
 
-private suspend fun AwaitPointerEventScope.trackPointer(id: PointerId, onMove: (Offset) -> Unit) {
-    while (true) {
-        val ev = awaitPointerEvent()
-        val c = ev.changes.firstOrNull { it.id == id } ?: return
-        if (!c.pressed) return
-        if (c.positionChanged()) {
-            onMove(c.position)
-            c.consume()
-        }
+/** On-screen image rect: the fit rect [dst] scaled by [zoom] (about the origin) and offset by [pan]. */
+private fun viewRect(dst: Rect, zoom: Float, pan: Offset): Rect =
+    Rect(
+        dst.left * zoom + pan.x,
+        dst.top * zoom + pan.y,
+        dst.right * zoom + pan.x,
+        dst.bottom * zoom + pan.y,
+    )
+
+/**
+ * Clamps [pan] so the zoomed image never leaves the viewport: an axis smaller than the viewport is
+ * centered, a larger one must keep covering it edge to edge.
+ */
+private fun clampPan(pan: Offset, zoom: Float, dst: Rect, cw: Float, ch: Float): Offset {
+    fun axis(v: Float, lo: Float, hi: Float, size: Float): Float {
+        val sLo = lo * zoom
+        val sHi = hi * zoom
+        return if (sHi - sLo <= size) (size - sLo - sHi) / 2f else v.coerceIn(size - sHi, -sLo)
     }
+    return Offset(axis(pan.x, dst.left, dst.right, cw), axis(pan.y, dst.top, dst.bottom, ch))
 }
+
+private const val MIN_ZOOM = 1f
+private const val MAX_ZOOM = 8f
+private const val DOUBLE_TAP_ZOOM = 2.5f
 
 // endregion
 
@@ -489,7 +552,13 @@ private fun ShotEditorScreen(uri: Uri, onDone: () -> Unit) {
     val scope = rememberCoroutineScope()
     val scheme = MaterialTheme.colorScheme
 
-    val paletteColors = listOf(t.accent, Color.White, Color.Black, scheme.error, scheme.tertiary)
+    // accent, white, black, red, yellow. Red follows the theme's error colour unless that is
+    // indistinguishable from the accent (e.g. a pink/red accent), then a fixed ink red is used.
+    val red =
+        listOf(scheme.error, PEN_RED, PEN_RED_DEEP).firstOrNull { !colorsClose(it, t.accent) }
+            ?: PEN_RED
+    val yellow = if (colorsClose(PEN_YELLOW, t.accent)) PEN_YELLOW_ALT else PEN_YELLOW
+    val paletteColors = listOf(t.accent, Color.White, Color.Black, red, yellow)
     state.palette = paletteColors.map { it.toArgb() }
 
     // Load a screen-sized preview.
@@ -697,38 +766,65 @@ private fun ShotEditorScreen(uri: Uri, onDone: () -> Unit) {
 private fun EditorCanvas(state: EditorState, t: ShotTokens, scrim: Color) {
     val baked = state.baked
     val image = remember(baked) { baked?.asImageBitmap() }
+    // Last completed single tap (for double-tap detection); gesture-local, not UI state.
+    val lastTap = remember { longArrayOf(0L) }
+    val lastTapPos = remember { arrayOf(Offset.Zero) }
     Canvas(
-        Modifier.fillMaxSize().pointerInput(Unit) {
+        Modifier.fillMaxSize().clipToBounds().pointerInput(Unit) {
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false)
                 if (state.source == null || state.saving) return@awaitEachGesture
                 val (iw, ih) = state.currentSize()
-                val dst = fit(iw, ih, size.width.toFloat(), size.height.toFloat())
+                val cw = size.width.toFloat()
+                val ch = size.height.toFloat()
+                val dst = fit(iw, ih, cw, ch)
                 if (dst.width <= 0f) return@awaitEachGesture
+                val slopPx = viewConfiguration.touchSlop
+
+                // Double-tap: toggle between fit and DOUBLE_TAP_ZOOM around the tap point.
+                if (
+                    lastTap[0] != 0L &&
+                        down.uptimeMillis - lastTap[0] < viewConfiguration.doubleTapTimeoutMillis &&
+                        (down.position - lastTapPos[0]).getDistance() < slopPx * 4f
+                ) {
+                    lastTap[0] = 0L
+                    state.dropTapStroke()
+                    if (state.zoom > 1.01f) {
+                        state.resetZoom()
+                    } else {
+                        val z = state.zoom
+                        val q = (down.position - state.pan) / z
+                        state.zoom = DOUBLE_TAP_ZOOM
+                        state.pan =
+                            clampPan(down.position - q * DOUBLE_TAP_ZOOM, DOUBLE_TAP_ZOOM, dst, cw, ch)
+                    }
+                    down.consume()
+                    do {
+                        val ev = awaitPointerEvent()
+                        ev.changes.forEach { it.consume() }
+                    } while (ev.changes.any { it.pressed })
+                    return@awaitEachGesture
+                }
+
+                // Tool gestures work in the on-screen image rect (fit x zoom + pan).
+                val v = viewRect(dst, state.zoom, state.pan)
+                val strokeZoom = state.zoom
+                val cropStart = state.crop
+                var cropGrab: BooleanArray? = null // mL, mT, mR, mB
                 when (state.tool) {
                     Tool.DRAW -> {
-                        fun addPoint(p: Offset) {
-                            state.live.add((p.x - dst.left) / dst.width)
-                            state.live.add((p.y - dst.top) / dst.height)
-                        }
                         state.live.clear()
-                        addPoint(down.position)
+                        state.live.add((down.position.x - v.left) / v.width)
+                        state.live.add((down.position.y - v.top) / v.height)
                         down.consume()
-                        trackPointer(down.id) { addPoint(it) }
-                        val pts = state.live.toFloatArray()
-                        state.live.clear()
-                        val color = state.palette.getOrElse(state.colorIndex) { 0 }
-                        state.push(
-                            StrokeOp(pts, color, WIDTH_FRACS[state.widthIndex], state.highlighter)
-                        )
                     }
                     Tool.CROP -> {
-                        val s = state.crop
+                        val s = cropStart
                         val slop = 28.dp.toPx()
-                        val cl = dst.left + s.l * dst.width
-                        val ct = dst.top + s.t * dst.height
-                        val cr = dst.left + s.r * dst.width
-                        val cb = dst.top + s.b * dst.height
+                        val cl = v.left + s.l * v.width
+                        val ct = v.top + s.t * v.height
+                        val cr = v.left + s.r * v.width
+                        val cb = v.top + s.b * v.height
                         val p = down.position
                         val inY = p.y in (ct - slop)..(cb + slop)
                         val inX = p.x in (cl - slop)..(cr + slop)
@@ -737,34 +833,114 @@ private fun EditorCanvas(state: EditorState, t: ShotTokens, scrim: Color) {
                         val mT = inX && abs(p.y - ct) < slop
                         val mB = inX && !mT && abs(p.y - cb) < slop
                         val inside = p.x in cl..cr && p.y in ct..cb
-                        if (!mL && !mR && !mT && !mB && !inside) return@awaitEachGesture
-                        down.consume()
-                        val ratio = CROP_RATIOS[state.cropRatioIndex]
-                        trackPointer(down.id) { pos ->
-                            state.crop =
-                                dragCrop(
-                                    s,
-                                    (pos.x - p.x) / dst.width,
-                                    (pos.y - p.y) / dst.height,
-                                    mL,
-                                    mT,
-                                    mR,
-                                    mB,
-                                    ratio,
-                                    iw,
-                                    ih,
-                                )
+                        if (mL || mR || mT || mB || inside) {
+                            cropGrab = booleanArrayOf(mL, mT, mR, mB)
+                            down.consume()
                         }
                     }
                     Tool.ROTATE -> Unit
+                }
+
+                var transforming = false
+                var moved = false
+                var upTime = down.uptimeMillis
+                while (true) {
+                    val ev = awaitPointerEvent()
+                    val pressed = ev.changes.count { it.pressed }
+                    if (pressed == 0) {
+                        upTime = ev.changes.firstOrNull { it.id == down.id }?.uptimeMillis ?: upTime
+                        break
+                    }
+                    if (!transforming && pressed >= 2) {
+                        // Second finger: abandon the tool gesture and switch to pinch / pan.
+                        transforming = true
+                        state.live.clear()
+                        if (cropGrab != null) state.crop = cropStart
+                    }
+                    if (transforming) {
+                        val zoomChange = ev.calculateZoom()
+                        val panChange = ev.calculatePan()
+                        val c = ev.calculateCentroid(useCurrent = true)
+                        if (c.isSpecified) {
+                            val z = state.zoom
+                            val nz = (z * zoomChange).coerceIn(MIN_ZOOM, MAX_ZOOM)
+                            // Keep the content under the (previous) centroid under the fingers.
+                            val q = (c - panChange - state.pan) / z
+                            state.zoom = nz
+                            state.pan = clampPan(c - q * nz, nz, dst, cw, ch)
+                        }
+                        ev.changes.forEach { if (it.positionChanged()) it.consume() }
+                        continue
+                    }
+                    val c = ev.changes.firstOrNull { it.id == down.id } ?: continue
+                    if (!c.positionChanged()) continue
+                    val pos = c.position
+                    if ((pos - down.position).getDistance() > slopPx) moved = true
+                    when (state.tool) {
+                        Tool.DRAW -> {
+                            state.live.add((pos.x - v.left) / v.width)
+                            state.live.add((pos.y - v.top) / v.height)
+                            c.consume()
+                        }
+                        Tool.CROP -> {
+                            val g = cropGrab
+                            if (g != null) {
+                                state.crop =
+                                    dragCrop(
+                                        cropStart,
+                                        (pos.x - down.position.x) / v.width,
+                                        (pos.y - down.position.y) / v.height,
+                                        g[0],
+                                        g[1],
+                                        g[2],
+                                        g[3],
+                                        CROP_RATIOS[state.cropRatioIndex],
+                                        iw,
+                                        ih,
+                                    )
+                                c.consume()
+                            }
+                        }
+                        Tool.ROTATE -> Unit
+                    }
+                }
+
+                val isTap =
+                    !transforming &&
+                        !moved &&
+                        upTime - down.uptimeMillis < viewConfiguration.longPressTimeoutMillis
+                if (isTap) {
+                    lastTap[0] = upTime
+                    lastTapPos[0] = down.position
+                } else {
+                    lastTap[0] = 0L
+                }
+                if (state.tool == Tool.DRAW && !transforming && state.live.size >= 2) {
+                    val pts = state.live.toFloatArray()
+                    state.live.clear()
+                    val color = state.palette.getOrElse(state.colorIndex) { 0 }
+                    // Width is chosen on screen: divide by zoom so it looks the picked size now.
+                    val op =
+                        StrokeOp(
+                            pts,
+                            color,
+                            WIDTH_FRACS[state.widthIndex] / strokeZoom,
+                            state.highlighter,
+                        )
+                    val redo = state.redoStack
+                    state.push(op)
+                    if (isTap) state.tapStroke = op to redo
+                } else {
+                    state.live.clear()
                 }
             }
         }
     ) {
         val bmp = baked ?: return@Canvas
         val img = image ?: return@Canvas
-        val dst = fit(bmp.width, bmp.height, size.width, size.height)
-        if (dst.width <= 0f) return@Canvas
+        val fitRect = fit(bmp.width, bmp.height, size.width, size.height)
+        if (fitRect.width <= 0f) return@Canvas
+        val dst = viewRect(fitRect, state.zoom, state.pan)
         drawImage(
             img,
             dstOffset = IntOffset(dst.left.roundToInt(), dst.top.roundToInt()),
@@ -794,7 +970,7 @@ private fun EditorCanvas(state: EditorState, t: ShotTokens, scrim: Color) {
                         StrokeOp(
                             livePts.toFloatArray(),
                             state.palette.getOrElse(state.colorIndex) { 0 },
-                            WIDTH_FRACS[state.widthIndex],
+                            WIDTH_FRACS[state.widthIndex] / state.zoom,
                             state.highlighter,
                         )
                     ShotRenderer.drawStroke(nc, liveOp, bmp.width, bmp.height)
