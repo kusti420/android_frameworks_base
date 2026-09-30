@@ -204,16 +204,30 @@ public final class IchthysGuardService extends SystemService {
     public void onStart() {
         mThread = new HandlerThread(TAG, Process.THREAD_PRIORITY_BACKGROUND);
         mThread.start();
-        mHandler = new Handler(mThread.getLooper());
+        mHandler = new SafeHandler(mThread.getLooper());
         mScanThread = new HandlerThread(TAG + "Scan", Process.THREAD_PRIORITY_BACKGROUND);
         mScanThread.start();
-        mScanHandler = new Handler(mScanThread.getLooper());
-        loadPolicy();
+        mScanHandler = new SafeHandler(mScanThread.getLooper());
+        try {
+            loadPolicy();
+        } catch (RuntimeException e) {
+            Slog.wtf(TAG, "policy load failed; starting with an empty policy", e);
+        }
         publishBinderService(SERVICE_NAME, new BinderService());
     }
 
     @Override
     public void onBootPhase(int phase) {
+        // Guard must never take system_server (and so the whole phone) down: a failure here only
+        // disables the failing part of Guard and is logged.
+        try {
+            onBootPhaseInternal(phase);
+        } catch (RuntimeException e) {
+            Slog.wtf(TAG, "Guard boot phase " + phase + " failed; continuing without it", e);
+        }
+    }
+
+    private void onBootPhaseInternal(int phase) {
         if (phase == PHASE_SYSTEM_SERVICES_READY) {
             mCm = getContext().getSystemService(ConnectivityManager.class);
             mNpmi = LocalServices.getService(NetworkPolicyManagerInternal.class);
@@ -577,6 +591,14 @@ public final class IchthysGuardService extends SystemService {
     private final BroadcastReceiver mPackageReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
+            try {
+                onReceiveInternal(intent);
+            } catch (RuntimeException e) {
+                Slog.wtf(TAG, "package broadcast failed: " + intent, e);
+            }
+        }
+
+        private void onReceiveInternal(Intent intent) {
             final String action = intent.getAction();
             if (Intent.ACTION_UID_REMOVED.equals(action)) {
                 if (intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)) return;
@@ -878,6 +900,25 @@ public final class IchthysGuardService extends SystemService {
                     pw.println("    " + mScans.keyAt(i) + " v" + e.versionCode + ": "
                             + String.join(", ", e.matches));
                 }
+            }
+        }
+    }
+
+    /**
+     * Handler for Guard's own threads that logs instead of throwing: these threads live in
+     * system_server, where an uncaught exception would reboot the phone.
+     */
+    private static final class SafeHandler extends Handler {
+        SafeHandler(android.os.Looper looper) {
+            super(looper);
+        }
+
+        @Override
+        public void dispatchMessage(android.os.Message msg) {
+            try {
+                super.dispatchMessage(msg);
+            } catch (RuntimeException e) {
+                Slog.wtf(TAG, "Guard task failed", e);
             }
         }
     }
