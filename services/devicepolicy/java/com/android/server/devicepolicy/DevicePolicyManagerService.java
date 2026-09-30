@@ -5190,6 +5190,11 @@ public class DevicePolicyManagerService extends IDevicePolicyManager.Stub
             ActiveAdmin ap = mDeviceAdmins.getActiveAdminForCaller(caller,
                     DeviceAdminInfo.USES_POLICY_WATCH_LOGIN, parent);
 
+            // IchthysOS: a user-installed admin can't arm a wipe-after-failed-unlocks policy.
+            if (isThirdPartyLegacyAdmin(caller, MANAGE_DEVICE_POLICY_WIPE_DATA, MASTER_CLEAR)) {
+                return;
+            }
+
             if (ap.maximumFailedPasswordsForWipe != num) {
                 ap.maximumFailedPasswordsForWipe = num;
                 saveSettingsLocked(userId);
@@ -5696,6 +5701,10 @@ public class DevicePolicyManagerService extends IDevicePolicyManager.Stub
                 adminComponent = admin == null ? null : admin.info.getComponent();
             }
             checkCanExecuteOrThrowUnsafe(DevicePolicyManager.OPERATION_LOCK_NOW);
+            if (isThirdPartyLegacyAdmin(caller, MANAGE_DEVICE_POLICY_LOCK, LOCK_DEVICE)) {
+                throw new SecurityException(
+                        "Admin " + adminComponent + " is not allowed to lock the device");
+            }
             final long ident = mInjector.binderClearCallingIdentity();
             try {
                 if (adminComponent != null) {
@@ -7319,6 +7328,10 @@ public class DevicePolicyManagerService extends IDevicePolicyManager.Stub
         EnforcingAdmin enforcingAdmin = getEnforcingAdmin(caller);
 
         checkCanExecuteOrThrowUnsafe(DevicePolicyManager.OPERATION_WIPE_DATA);
+        if (isThirdPartyLegacyAdmin(caller, MANAGE_DEVICE_POLICY_WIPE_DATA, MASTER_CLEAR)) {
+            throw new SecurityException("Admin " + caller.getPackageName()
+                    + " is not allowed to wipe the device");
+        }
 
         if (TextUtils.isEmpty(wipeReasonForUser)) {
             wipeReasonForUser = getGenericWipeReason(
@@ -13637,6 +13650,43 @@ public class DevicePolicyManagerService extends IDevicePolicyManager.Stub
                 .setStrings(intent.getAction())
                 .write();
         return numberOfAppsInstalled;
+    }
+
+    /**
+     * IchthysOS: whether the caller is a user-installed legacy device admin, i.e. not a device or
+     * profile owner, not a system app and not holding any of {@code permissions}. Such admins may
+     * not wipe or lock the device.
+     */
+    private boolean isThirdPartyLegacyAdmin(CallerIdentity caller, String... permissions) {
+        if (!UserHandle.isApp(caller.getUid())
+                || mDeviceAdmins.isDeviceOwner(caller)
+                || mDeviceAdmins.isProfileOwner(caller)) {
+            return false;
+        }
+        for (String permission : permissions) {
+            if (hasCallingOrSelfPermission(permission)) {
+                return false;
+            }
+        }
+        final long ident = mInjector.binderClearCallingIdentity();
+        try {
+            String[] packages = caller.getPackageName() != null
+                    ? new String[] {caller.getPackageName()}
+                    : mIPackageManager.getPackagesForUid(caller.getUid());
+            if (packages == null) {
+                return false;
+            }
+            for (String packageName : packages) {
+                if (isSystemApp(mIPackageManager, packageName, caller.getUserId())) {
+                    return false;
+                }
+            }
+            return true;
+        } catch (RemoteException | IllegalArgumentException e) {
+            return false;
+        } finally {
+            mInjector.binderRestoreCallingIdentity(ident);
+        }
     }
 
     private boolean isSystemApp(IPackageManager pm, String packageName, int userId)
