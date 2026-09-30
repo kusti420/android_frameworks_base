@@ -2592,6 +2592,13 @@ public class NotificationManagerService extends SystemService {
                     pkgList = new String[]{pkgName};
                     uidList = new int[] {intent.getIntExtra(Intent.EXTRA_UID, -1)};
                 }
+                if (action.equals(Intent.ACTION_PACKAGE_ADDED)
+                        && !intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)
+                        && pkgList != null && uidList != null && pkgList.length == 1) {
+                    final String addedPkg = pkgList[0];
+                    final int addedUid = uidList[0];
+                    mHandler.post(() -> restrictFullScreenIntentOnInstall(addedPkg, addedUid));
+                }
                 if (pkgList != null && (pkgList.length > 0)) {
                     if (cancelNotifications) {
                         for (String pkgName : pkgList) {
@@ -9952,6 +9959,45 @@ public class NotificationManagerService extends SystemService {
         return mAppOps.checkOpNoThrow(
                 AppOpsManager.OP_SYSTEM_EXEMPT_FROM_DISMISSIBLE_NOTIFICATIONS, ai.uid,
                 ai.packageName) == MODE_ALLOWED;
+    }
+
+    /**
+     * IchthysOS: a newly installed user app may use full-screen intents only if it is a calling
+     * or alarm app (the same categories Play allows). Everything else starts with the
+     * USE_FULL_SCREEN_INTENT app op off, so its full-screen notifications show as ordinary
+     * heads-up notifications; the user can turn it back on in Special app access.
+     */
+    private void restrictFullScreenIntentOnInstall(String pkg, int uid) {
+        if (uid < 0 || !UserHandle.isApp(uid)) {
+            return;
+        }
+        final int userId = UserHandle.getUserId(uid);
+        try {
+            final ApplicationInfo ai = mPackageManagerClient.getApplicationInfoAsUser(
+                    pkg, 0, userId);
+            if (ai.isSystemApp() || ai.targetSdkVersion < Build.VERSION_CODES.Q) {
+                return;
+            }
+            if (!mPermissionHelper.hasRequestedPermission(
+                    Manifest.permission.USE_FULL_SCREEN_INTENT, pkg, userId)) {
+                return;
+            }
+            final Context context = getContext();
+            final boolean callOrAlarmApp =
+                    context.checkPermission(Manifest.permission.MANAGE_OWN_CALLS, -1, uid)
+                            == PERMISSION_GRANTED
+                    || context.checkPermission(Manifest.permission.USE_EXACT_ALARM, -1, uid)
+                            == PERMISSION_GRANTED;
+            if (callOrAlarmApp) {
+                return;
+            }
+            mAppOps.setMode(AppOpsManager.OP_USE_FULL_SCREEN_INTENT, uid, pkg,
+                    AppOpsManager.MODE_ERRORED);
+        } catch (NameNotFoundException e) {
+            // Uninstalled again before we got here.
+        } catch (RuntimeException e) {
+            Slog.w(TAG, "Could not restrict full-screen intents for " + pkg, e);
+        }
     }
 
     private boolean checkUseFullScreenIntentPermission(@NonNull AttributionSource attributionSource,
