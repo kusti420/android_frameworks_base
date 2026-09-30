@@ -200,8 +200,12 @@ public final class SuspendPackageHelper {
                     suspended ? Intent.ACTION_PACKAGES_SUSPENDED
                             : Intent.ACTION_PACKAGES_UNSUSPENDED,
                     changedPackages, notifyUids.toArray(), quarantined, targetUserId);
-            mBroadcastHelper.sendMyPackageSuspendedOrUnsuspended(mPm::snapshotComputer,
-                    changedPackages, suspended, targetUserId);
+            // IchthysOS: a quarantined app is never told; to it the state must look like a
+            // freshly installed, never opened app (Guard's quarantine until first launch).
+            if (!quarantined) {
+                mBroadcastHelper.sendMyPackageSuspendedOrUnsuspended(mPm::snapshotComputer,
+                        changedPackages, suspended, targetUserId);
+            }
             mPm.scheduleWritePackageRestrictions(targetUserId);
         }
         // Send the suspension changed broadcast to ensure suspension state is not stale.

@@ -6632,6 +6632,11 @@
   <!-- Disable the Video Capability over IWLAN when Wi-Fi Calling is turned off  -->
   <java-symbol type="bool" name="config_disable_video_capability_when_wfc_off" />
 
+  <!-- IchthysOS Guard first-launch quarantine dialog (values/ichthys_strings.xml). -->
+  <java-symbol type="string" name="ichthys_first_launch_title" />
+  <java-symbol type="string" name="ichthys_first_launch_message" />
+  <java-symbol type="string" name="ichthys_first_launch_open" />
+
   <!-- IchthysOS "Shoal" design tokens (values/ichthys_tokens.xml). -->
   <java-symbol type="color" name="ichthys_ink" />
   <java-symbol type="color" name="ichthys_ink_dark" />

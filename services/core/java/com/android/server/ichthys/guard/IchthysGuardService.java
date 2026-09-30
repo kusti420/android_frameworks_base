@@ -19,6 +19,7 @@ package com.android.server.ichthys.guard;
 import static android.net.ConnectivityManager.FIREWALL_CHAIN_OEM_DENY_3;
 
 import android.annotation.Nullable;
+import android.app.AppGlobals;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -26,6 +27,7 @@ import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.SuspendDialogInfo;
 import android.net.ConnectivityManager;
 import android.net.IIpConnectivityMetrics;
 import android.net.INetdEventCallback;
@@ -39,12 +41,14 @@ import android.os.RemoteCallbackList;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.UserHandle;
+import android.provider.Settings;
 import android.util.ArrayMap;
 import android.util.AtomicFile;
 import android.util.Slog;
 import android.util.SparseIntArray;
 import android.util.Xml;
 
+import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.ichthys.guard.GuardEvent;
 import com.android.internal.ichthys.guard.IGuardEventListener;
@@ -87,6 +91,8 @@ import java.util.Set;
  */
 public final class IchthysGuardService extends SystemService {
     private static final String TAG = "IchthysGuard";
+    /** Guard's UI lives in Settings; it is the suspending package of quarantined apps. */
+    private static final String GUARD_HOST_PACKAGE = "com.android.settings";
 
     public static final String SERVICE_NAME = "ichthys_guard";
     public static final String PERMISSION = "org.ichthys.permission.MANAGE_ICHTHYS_GUARD";
@@ -628,10 +634,55 @@ public final class IchthysGuardService extends SystemService {
                 if (removed) saveScans();
                 return;
             }
+            if (Intent.ACTION_PACKAGE_ADDED.equals(action)
+                    && !intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)) {
+                quarantineUntilFirstLaunch(pkgName, getSendingUserId());
+            }
             // ADDED (fresh or replacing) and REPLACED: scanPackage dedupes on versionCode.
             scanPackage(pkgName, getSendingUserId(), true);
         }
     };
+
+    /**
+     * W8b decision 14: a user app installed after setup stays dormant until the user opens it.
+     * It is quarantined with Settings (which hosts Guard) as the suspending package: its
+     * components are hidden from other apps and it can't run jobs, alarms or services. The first
+     * launch goes through the system's suspended-app dialog, whose Open button lifts the
+     * quarantine and continues the launch. Updates, system apps and setup-time installs are
+     * left alone. Identity must be cleared; runs on the scan thread.
+     */
+    private void quarantineUntilFirstLaunch(String pkgName, int userId) {
+        if (!android.content.pm.Flags.quarantinedEnabled()) return;
+        final Context context = getContext();
+        if (Settings.Secure.getIntForUser(context.getContentResolver(),
+                Settings.Secure.USER_SETUP_COMPLETE, 0, userId) == 0) {
+            return;
+        }
+        try {
+            final ApplicationInfo ai = context.getPackageManager().getApplicationInfoAsUser(
+                    pkgName, 0, userId);
+            if ((ai.flags & (ApplicationInfo.FLAG_SYSTEM
+                    | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0) {
+                return;
+            }
+            final SuspendDialogInfo dialog = new SuspendDialogInfo.Builder()
+                    .setTitle(context.getString(R.string.ichthys_first_launch_title))
+                    .setMessage(context.getString(R.string.ichthys_first_launch_message))
+                    .setNeutralButtonText(context.getString(R.string.ichthys_first_launch_open))
+                    .setNeutralButtonAction(SuspendDialogInfo.BUTTON_ACTION_UNSUSPEND)
+                    .build();
+            final String[] failed = AppGlobals.getPackageManager().setPackagesSuspendedAsUser(
+                    new String[] {pkgName}, true, null, null, dialog,
+                    PackageManager.FLAG_SUSPEND_QUARANTINED, GUARD_HOST_PACKAGE, userId, userId);
+            if (failed != null && failed.length > 0) {
+                Slog.i(TAG, "Not quarantining " + pkgName + " (can't be suspended)");
+            }
+        } catch (PackageManager.NameNotFoundException e) {
+            // Uninstalled again before we got here.
+        } catch (RemoteException | RuntimeException e) {
+            Slog.w(TAG, "Could not quarantine " + pkgName, e);
+        }
+    }
 
     /**
      * Returns the cached or fresh scan of {@code pkgName} as installed for {@code userId}, or
