@@ -15315,24 +15315,9 @@ public class NotificationManagerService extends SystemService {
                     return true;
                 }
 
-                // check if there is a CDM association with the listener
-                // We don't listen for changes because if an association is lost, the app loses
-                // NLS access
-                List<AssociationInfo> cdmAssocs = new ArrayList<>();
-                if (mCompanionManager == null) {
-                    mCompanionManager = getCompanionManager();
-                }
-                if (mCompanionManager != null) {
-                    cdmAssocs =
-                            mCompanionManager.getAllAssociationsForUser(UserHandle.getUserId(uid));
-                }
-                for (int i = 0; i < cdmAssocs.size(); i++) {
-                    AssociationInfo assocInfo = cdmAssocs.get(i);
-                    if (!assocInfo.isRevoked() && pkg.equals(assocInfo.getPackageName())
-                            && assocInfo.getUserId() == UserHandle.getUserId(uid)) {
-                        return true;
-                    }
-                }
+                // IchthysOS: a companion device association no longer makes a listener trusted.
+                // OTP/2FA codes stay with the system and the default SMS app, which reads them
+                // from the SMS provider rather than through notification access.
             } catch (RemoteException e) {
                 Slog.e(TAG, "Failed to check trusted status of listener", e);
             } finally {
