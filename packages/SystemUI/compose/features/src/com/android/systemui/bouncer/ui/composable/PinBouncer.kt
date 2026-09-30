@@ -119,6 +119,7 @@ fun PinPad(viewModel: PinBouncerViewModel, verticalSpacing: Dp, modifier: Modifi
     // a phyiscal keyboard.
     val focusRequester = remember { FocusRequester() }
     RequestFocus(focusRequester = focusRequester, viewModel = viewModel)
+    val digitLayout by viewModel.digitLayout.collectAsStateWithLifecycle()
 
     val view = LocalView.current
     val context = LocalContext.current
@@ -138,7 +139,7 @@ fun PinPad(viewModel: PinBouncerViewModel, verticalSpacing: Dp, modifier: Modifi
     ) {
         repeat(9) { index ->
             DigitButton(
-                digit = index + 1,
+                digit = digitLayout[index],
                 isInputEnabled = isInputEnabled,
                 onClicked = { digit ->
                     sendAccessibilityEvent(
@@ -198,16 +199,16 @@ fun PinPad(viewModel: PinBouncerViewModel, verticalSpacing: Dp, modifier: Modifi
         )
 
         DigitButton(
-            digit = 0,
+            digit = digitLayout[9],
             isInputEnabled = isInputEnabled,
-            onClicked = {
+            onClicked = { digit ->
                 sendAccessibilityEvent(view = view, accessibilityManager = accessibilityManager) {
                     PinAccessibilityEvent.DigitAdded(
                         pinLengthBeforeChange = viewModel.enteredPinLength,
-                        digitAdded = 0,
+                        digitAdded = digit,
                     )
                 }
-                viewModel.onPinButtonClicked(0)
+                viewModel.onPinButtonClicked(digit)
             },
             scaling = buttonScaleAnimatables[10]::value,
             isAnimationEnabled = isDigitButtonAnimationEnabled,

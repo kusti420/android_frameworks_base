@@ -17,6 +17,7 @@
 package com.android.systemui.bouncer.ui.viewmodel
 
 import android.content.Context
+import android.os.UserHandle
 import android.view.KeyEvent.KEYCODE_0
 import android.view.KeyEvent.KEYCODE_9
 import android.view.KeyEvent.KEYCODE_DEL
@@ -49,6 +50,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
+import lineageos.providers.LineageSettings
 
 /** Holds UI state and handles user input for the PIN code bouncer UI. */
 class PinBouncerViewModel
@@ -85,6 +87,14 @@ constructor(
 
     val isSimUnlockingDialogVisible: MutableStateFlow<Boolean> = MutableStateFlow(false)
     val pinShapes = PinShapeAdapter(applicationContext)
+    private val contentResolver = applicationContext.contentResolver
+
+    private val _digitLayout = MutableStateFlow(DEFAULT_DIGIT_LAYOUT)
+    /**
+     * The digits of the pad in reading order: the 3x3 grid, then the key below it. Shuffled on
+     * every activation when the scrambled PIN layout setting is on (never for the SIM PIN).
+     */
+    val digitLayout: StateFlow<List<Int>> = _digitLayout.asStateFlow()
     private val mutablePinInput = MutableStateFlow(PinInputViewModel.empty())
 
     /** Currently entered pin keys. */
@@ -133,6 +143,12 @@ constructor(
     private val requests = Channel<Request>(Channel.BUFFERED)
 
     override suspend fun onActivated(): Nothing {
+        _digitLayout.value =
+            if (!isSimAreaVisible && isScrambleEnabled()) {
+                DEFAULT_DIGIT_LAYOUT.shuffled()
+            } else {
+                DEFAULT_DIGIT_LAYOUT
+            }
         coroutineScope {
             launch { super.onActivated() }
                 .invokeOnCompletion { simBouncerInteractor.resetSimPukUserInput() }
@@ -182,6 +198,14 @@ constructor(
             awaitCancellation()
         }
     }
+
+    private fun isScrambleEnabled(): Boolean =
+        LineageSettings.System.getIntForUser(
+            contentResolver,
+            LineageSettings.System.LOCKSCREEN_PIN_SCRAMBLE_LAYOUT,
+            0,
+            UserHandle.USER_CURRENT,
+        ) != 0
 
     /** Notifies that the user dismissed the sim pin error dialog. */
     fun onErrorDialogDismissed() {
@@ -348,3 +372,6 @@ enum class ActionButtonAppearance {
     /** Button is shown. */
     Shown,
 }
+
+/** Stock pad order: 1-9 in the grid, 0 below. */
+private val DEFAULT_DIGIT_LAYOUT = listOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 0)
