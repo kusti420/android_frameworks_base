@@ -56,6 +56,7 @@ import com.android.internal.ichthys.guard.IIchthysGuard;
 import com.android.internal.util.DumpUtils;
 import com.android.modules.utils.TypedXmlPullParser;
 import com.android.modules.utils.TypedXmlSerializer;
+import com.android.server.IchthysPreinstallController;
 import com.android.server.LocalServices;
 import com.android.server.SystemService;
 import com.android.server.net.BaseNetdEventCallback;
@@ -648,11 +649,13 @@ public final class IchthysGuardService extends SystemService {
      * It is quarantined with Settings (which hosts Guard) as the suspending package: its
      * components are hidden from other apps and it can't run jobs, alarms or services. The first
      * launch goes through the system's suspended-app dialog, whose Open button lifts the
-     * quarantine and continues the launch. Updates, system apps and setup-time installs are
-     * left alone. Identity must be cleared; runs on the scan thread.
+     * quarantine and continues the launch. Updates, system apps, the ROM's bundled preinstalls
+     * and setup-time installs are left alone. Identity must be cleared; runs on the scan thread.
      */
     private void quarantineUntilFirstLaunch(String pkgName, int userId) {
         if (!android.content.pm.Flags.quarantinedEnabled()) return;
+        // Apps the ROM bundles (installed on first unlock) aren't new to the user.
+        if (IchthysPreinstallController.isBundledPreinstall(pkgName)) return;
         final Context context = getContext();
         if (Settings.Secure.getIntForUser(context.getContentResolver(),
                 Settings.Secure.USER_SETUP_COMPLETE, 0, userId) == 0) {

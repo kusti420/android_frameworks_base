@@ -88,6 +88,11 @@ public final class IchthysPreinstallController {
     private static final String TAG = "IchthysPreinstall";
 
     private static final File PAYLOAD_DIR = new File("/product/etc/ichthys-preinstall");
+
+    /** Whether {@code pkg} is one of the apps this controller installs from the ROM. */
+    public static boolean isBundledPreinstall(String pkg) {
+        return pkg != null && !pkg.contains("/") && new File(PAYLOAD_DIR, pkg).isDirectory();
+    }
     private static final File OBTAINIUM_APPS_JSON = new File(PAYLOAD_DIR, "obtainium-apps.json");
     private static final File STATE_FILE = new File("/data/system/ichthys_preinstall.xml");
 
