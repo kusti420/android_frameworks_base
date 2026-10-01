@@ -71,6 +71,8 @@ public class SuspendedAppActivity extends AlertActivity
     private String mSuspendingPackage;
     private int mSuspendingUserId;
     private int mNeutralButtonAction;
+    // IchthysOS: finish only once the "more details" activity has taken over (see onPause).
+    private boolean mFinishWhenPaused;
     private int mUserId;
     private PackageManager mPm;
     private UsageStatsManager mUsm;
@@ -308,6 +310,10 @@ public class SuspendedAppActivity extends AlertActivity
                         if (mMoreDetailsIntent != null) {
                             startActivityAsUser(mMoreDetailsIntent, mOptions,
                                     UserHandle.of(mSuspendingUserId));
+                            // Finishing now, while this is still the focused activity of a task
+                            // launched from home, would move home in front of the details
+                            // activity that is just starting in its new task. Finish when paused.
+                            mFinishWhenPaused = true;
                         } else {
                             Slog.wtf(TAG, "Neutral button should not have existed!");
                         }
@@ -358,7 +364,25 @@ public class SuspendedAppActivity extends AlertActivity
         if (mSuspendingPackage != null) {
             mUsm.reportUserInteraction(mSuspendingPackage, mUserId);
         }
-        finish();
+        if (!mFinishWhenPaused) {
+            finish();
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (mFinishWhenPaused) {
+            finish();
+        }
+    }
+
+    @Override
+    public void dismiss() {
+        // AlertController dismisses after every button click; keep the deferred finish.
+        if (!mFinishWhenPaused) {
+            super.dismiss();
+        }
     }
 
     public static Intent createSuspendedAppInterceptIntent(String suspendedPackage,
