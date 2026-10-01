@@ -648,8 +648,8 @@ public final class IchthysGuardService extends SystemService {
      * W8b decision 14: a user app installed after setup stays dormant until the user opens it.
      * It is quarantined with Settings (which hosts Guard) as the suspending package: its
      * components are hidden from other apps and it can't run jobs, alarms or services. The first
-     * launch goes through the system's suspended-app dialog, whose Open button lifts the
-     * quarantine and continues the launch. Updates, system apps, the ROM's bundled preinstalls
+     * launch goes through the system's suspended-app dialog, whose Review button opens Guard's
+     * first-launch sheet in Settings; the sheet lifts the quarantine and starts the app. Updates, system apps, the ROM's bundled preinstalls
      * and setup-time installs are left alone. Identity must be cleared; runs on the scan thread.
      */
     private void quarantineUntilFirstLaunch(String pkgName, int userId) {
@@ -671,8 +671,10 @@ public final class IchthysGuardService extends SystemService {
             final SuspendDialogInfo dialog = new SuspendDialogInfo.Builder()
                     .setTitle(context.getString(R.string.ichthys_first_launch_title))
                     .setMessage(context.getString(R.string.ichthys_first_launch_message))
-                    .setNeutralButtonText(context.getString(R.string.ichthys_first_launch_open))
-                    .setNeutralButtonAction(SuspendDialogInfo.BUTTON_ACTION_UNSUSPEND)
+                    .setNeutralButtonText(context.getString(R.string.ichthys_first_launch_review))
+                    // Opens Settings' first-launch review (ACTION_SHOW_SUSPENDED_APP_DETAILS),
+                    // which applies the chosen profile, lifts the quarantine and starts the app.
+                    .setNeutralButtonAction(SuspendDialogInfo.BUTTON_ACTION_MORE_DETAILS)
                     .build();
             final String[] failed = AppGlobals.getPackageManager().setPackagesSuspendedAsUser(
                     new String[] {pkgName}, true, null, null, dialog,

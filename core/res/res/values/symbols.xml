@@ -6635,7 +6635,7 @@
   <!-- IchthysOS Guard first-launch quarantine dialog (values/ichthys_strings.xml). -->
   <java-symbol type="string" name="ichthys_first_launch_title" />
   <java-symbol type="string" name="ichthys_first_launch_message" />
-  <java-symbol type="string" name="ichthys_first_launch_open" />
+  <java-symbol type="string" name="ichthys_first_launch_review" />
 
   <!-- IchthysOS "Shoal" design tokens (values/ichthys_tokens.xml). -->
   <java-symbol type="color" name="ichthys_ink" />

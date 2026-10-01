@@ -19,6 +19,7 @@
          time. Shown by the system when the app is launched while still quarantined. -->
     <string name="ichthys_first_launch_title">First launch</string>
     <!-- %1$s is the app's name. -->
-    <string name="ichthys_first_launch_message"><xliff:g id="app_name" example="Maps">%1$s</xliff:g> hasn\'t been opened yet. Until now it couldn\'t run in the background, wake up or be started by other apps.</string>
-    <string name="ichthys_first_launch_open">Open</string>
+    <string name="ichthys_first_launch_message"><xliff:g id="app_name" example="Maps">%1$s</xliff:g> hasn\'t been opened yet, so it hasn\'t been able to run in the background or be started by other apps. Review what it can do before it starts.</string>
+    <!-- Opens Guard's first-launch review in Settings. -->
+    <string name="ichthys_first_launch_review">Review</string>
 </resources>
