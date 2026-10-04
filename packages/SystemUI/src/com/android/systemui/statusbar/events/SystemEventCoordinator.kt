@@ -35,6 +35,7 @@ import com.android.systemui.privacy.PrivacyItem
 import com.android.systemui.privacy.PrivacyItemController
 import com.android.systemui.privacy.PrivacyType
 import com.android.systemui.res.R
+import com.android.systemui.statusbar.ichthys.indicator.data.IchthysPrivacyRingState
 import com.android.systemui.statusbar.policy.BatteryController
 import com.android.systemui.util.time.SystemClock
 import javax.inject.Inject
@@ -59,6 +60,7 @@ constructor(
     connectedDisplayInteractor: ConnectedDisplayInteractor,
     @SystemEventCoordinatorLog private val logBuffer: LogBuffer,
     @Main private val mainCoroutineContext: CoroutineContext,
+    private val ichthysPrivacyRingState: IchthysPrivacyRingState,
 ) {
 
     private val tag = "SystemEventCoordinator(displayId=${context.displayId})"
@@ -102,7 +104,12 @@ constructor(
     fun notifyPrivacyItemsChanged(showAnimation: Boolean = true) {
         // Disabling animation in case that the privacy indicator is implemented as a status bar
         // chip
-        val shouldShowAnimation = showAnimation && !Flags.expandedPrivacyIndicatorsOnLargeScreen()
+        // IchthysOS: nor while the ring around the camera is the indicator. The chip sliding in
+        // over the status bar says the same thing twice; the ring appears at once instead.
+        val shouldShowAnimation =
+            showAnimation &&
+                !Flags.expandedPrivacyIndicatorsOnLargeScreen() &&
+                !ichthysPrivacyRingState.isRingActive
         val event = PrivacyEvent(shouldShowAnimation)
         event.privacyItems = privacyStateListener.currentPrivacyItems
         event.contentDescription = run {

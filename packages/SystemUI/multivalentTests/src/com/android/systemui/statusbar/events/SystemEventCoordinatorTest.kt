@@ -36,6 +36,7 @@ import com.android.systemui.privacy.PrivacyItem
 import com.android.systemui.privacy.PrivacyItemController
 import com.android.systemui.privacy.PrivacyType
 import com.android.systemui.res.R
+import com.android.systemui.statusbar.ichthys.indicator.data.IchthysPrivacyRingState
 import com.android.systemui.statusbar.policy.FakeBatteryControllerImpl
 import com.android.systemui.testKosmosNew
 import com.android.systemui.util.mockito.any
@@ -82,6 +83,7 @@ class SystemEventCoordinatorTest(flags: FlagsParameterization) : SysuiTestCase()
                 connectedDisplayInteractor,
                 logcatLogBuffer("SystemEventCoordinatorTest"),
                 kosmos.mainCoroutineContext,
+                IchthysPrivacyRingState(),
             )
             .apply { attachScheduler(scheduler) }
     }
