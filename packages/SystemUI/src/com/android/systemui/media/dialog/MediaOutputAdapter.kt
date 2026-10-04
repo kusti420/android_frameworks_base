@@ -22,6 +22,7 @@ import android.graphics.drawable.AnimatedVectorDrawable
 import android.graphics.drawable.Drawable
 import android.text.BidiFormatter
 import android.util.Log
+import android.util.TypedValue
 import android.view.LayoutInflater
 import android.view.View
 import android.view.View.GONE
@@ -185,6 +186,18 @@ class MediaOutputAdapter(controller: MediaSwitchingController) :
                 R.drawable.media_output_dialog_item_fixed_volume_background,
             )
 
+        /** IchthysOS: whether the rows take the Shoal look, see [MediaOutputShoalStyle]. */
+        private val mShoal = MediaOutputShoalStyle.isEnabled(mContext)
+
+        init {
+            if (mShoal) {
+                // Captions in the mono face, and a pill track as the other Shoal sliders.
+                mSubTitleText.typeface =
+                    MediaOutputShoalStyle.mono(mContext, MediaOutputShoalStyle.WEIGHT_NORMAL)
+                mSlider.trackCornerSize = mSlider.trackHeight / 2
+            }
+        }
+
         fun onBindDevice(mediaItem: DeviceMediaItem, position: Int) {
             resetViewState()
             renderItem(mediaItem, position)
@@ -253,9 +266,19 @@ class MediaOutputAdapter(controller: MediaSwitchingController) :
             colorTheme: ColorTheme,
         ) {
             mTitleText.text = title
-            val fontFamilyName: String =
-                if (connectionState == CONNECTED) GSF_TITLE_MEDIUM_EMPHASIZED else GSF_TITLE_SMALL
-            mTitleText.typeface = Typeface.create(fontFamilyName, Typeface.NORMAL)
+            if (mShoal) {
+                mTitleText.typeface =
+                    MediaOutputShoalStyle.text(
+                        mContext,
+                        if (connectionState == CONNECTED) MediaOutputShoalStyle.WEIGHT_SEMI_BOLD
+                        else MediaOutputShoalStyle.WEIGHT_MEDIUM,
+                    )
+            } else {
+                val fontFamilyName: String =
+                    if (connectionState == CONNECTED) GSF_TITLE_MEDIUM_EMPHASIZED
+                    else GSF_TITLE_SMALL
+                mTitleText.typeface = Typeface.create(fontFamilyName, Typeface.NORMAL)
+            }
             mTitleText.setTextColor(colorTheme.titleColor)
             mTitleText.alpha = colorTheme.contentAlpha
         }
@@ -419,7 +442,7 @@ class MediaOutputAdapter(controller: MediaSwitchingController) :
             mSlider.valueFrom = 0f
             mSlider.valueTo = maxVolume.toFloat()
             mSlider.stepSize = 1f
-            mSlider.thumbTintList = ColorStateList.valueOf(colorTheme.sliderActiveColor)
+            mSlider.thumbTintList = ColorStateList.valueOf(colorTheme.sliderThumbColor)
             mSlider.trackActiveTintList = ColorStateList.valueOf(colorTheme.sliderActiveColor)
             mSlider.trackInactiveTintList = ColorStateList.valueOf(colorTheme.sliderInactiveColor)
             mSlider.trackIconActiveColor = ColorStateList.valueOf(colorTheme.sliderActiveIconColor)
@@ -620,13 +643,33 @@ class MediaOutputAdapter(controller: MediaSwitchingController) :
         val mExpandButton: ViewGroup = itemView.requireViewById(R.id.expand_button)
         private val mExpandButtonIcon: ImageView = itemView.requireViewById(R.id.expand_button_icon)
 
+        /** IchthysOS: whether the rows take the Shoal look, see [MediaOutputShoalStyle]. */
+        private val mShoal = MediaOutputShoalStyle.isEnabled(mContext)
+
+        init {
+            if (mShoal) {
+                // A muted caption, as the section headers of the Shoal shade.
+                mTitleText.isAllCaps = true
+                mTitleText.letterSpacing = MediaOutputShoalStyle.CAPTION_LETTER_SPACING
+                mTitleText.setTextSize(
+                    TypedValue.COMPLEX_UNIT_SP,
+                    MediaOutputShoalStyle.CAPTION_TEXT_SIZE_SP,
+                )
+                mTitleText.typeface =
+                    MediaOutputShoalStyle.text(mContext, MediaOutputShoalStyle.WEIGHT_SEMI_BOLD)
+            }
+        }
+
         fun onBind(
             groupDividerTitle: String?,
             isExpandableDivider: Boolean,
             hasTopSeparator: Boolean,
         ) {
             mTitleText.text = groupDividerTitle
-            mTitleText.setTextColor(mController.getColorScheme().getPrimary())
+            mTitleText.setTextColor(
+                if (mShoal) mController.getColorScheme().getOnSurfaceVariant()
+                else mController.getColorScheme().getPrimary()
+            )
             if (hasTopSeparator) {
                 mTopSeparator.visibility = VISIBLE
                 mTopSeparator.setBackgroundColor(mController.getColorScheme().getOutlineVariant())
@@ -702,8 +745,9 @@ class MediaOutputAdapter(controller: MediaSwitchingController) :
             } else {
                 colorScheme.getOnSurfaceVariant()
             }
-        val sliderActiveColor = colorScheme.getPrimary()
-        val sliderActiveIconColor = colorScheme.getOnPrimary()
+        val sliderThumbColor = colorScheme.getPrimary()
+        val sliderActiveColor = colorScheme.getSliderActive()
+        val sliderActiveIconColor = colorScheme.getOnSliderActive()
         val sliderInactiveColor = colorScheme.getSecondaryContainer()
         val sliderInactiveIconColor = colorScheme.getOnSurface()
         val containerRestrictedVolumeBackground = colorScheme.getPrimary()

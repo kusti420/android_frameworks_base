@@ -31,6 +31,12 @@ abstract class MediaOutputColorScheme {
         fun fromSystemColors(context: Context): MediaOutputColorScheme {
             return MediaOutputColorSchemeSystem(context)
         }
+
+        /** IchthysOS: the Shoal theme tokens, see [MediaOutputColorSchemeShoal]. */
+        @JvmStatic
+        fun fromShoalTokens(context: Context): MediaOutputColorScheme {
+            return MediaOutputColorSchemeShoal(context)
+        }
     }
 
     abstract fun getPrimary(): Int
@@ -52,6 +58,12 @@ abstract class MediaOutputColorScheme {
     abstract fun getOutline(): Int
 
     abstract fun getOutlineVariant(): Int
+
+    /** Filled part of the volume sliders. */
+    open fun getSliderActive(): Int = getPrimary()
+
+    /** Icon drawn on the filled part of the volume sliders. */
+    open fun getOnSliderActive(): Int = getOnPrimary()
 }
 
 class MediaOutputColorSchemeDynamic(dynamicScheme: ColorScheme) : MediaOutputColorScheme() {
@@ -100,4 +112,42 @@ class MediaOutputColorSchemeSystem(private val mContext: Context) : MediaOutputC
     override fun getOutline() = mContext.getColor(R.color.media_dialog_outline)
 
     override fun getOutlineVariant() = mContext.getColor(R.color.media_dialog_outline_variant)
+}
+
+/**
+ * IchthysOS "Shoal": the framework theme tokens (com.android.internal.R.color.ichthys_*, which
+ * alias the Material roles while no Shoal palette is applied). The surface is the card rung, as the
+ * other SystemUI dialogs, and the sliders are filled like the Shoal ones: accent fill on the track,
+ * the accent itself only on the thumb.
+ */
+class MediaOutputColorSchemeShoal(private val mContext: Context) : MediaOutputColorScheme() {
+    override fun getPrimary() = mContext.getColor(com.android.internal.R.color.ichthys_accent)
+
+    override fun getOnPrimary() = mContext.getColor(com.android.internal.R.color.ichthys_on_accent)
+
+    override fun getSecondary() = mContext.getColor(com.android.internal.R.color.ichthys_accent)
+
+    override fun getSecondaryContainer() =
+        mContext.getColor(com.android.internal.R.color.ichthys_track)
+
+    override fun getSurfaceContainer() =
+        mContext.getColor(com.android.internal.R.color.ichthys_card)
+
+    override fun getSurfaceContainerHigh() =
+        mContext.getColor(com.android.internal.R.color.ichthys_raised)
+
+    override fun getOnSurface() = mContext.getColor(com.android.internal.R.color.ichthys_text)
+
+    override fun getOnSurfaceVariant() =
+        mContext.getColor(com.android.internal.R.color.ichthys_muted)
+
+    override fun getOutline() = mContext.getColor(com.android.internal.R.color.ichthys_outline)
+
+    override fun getOutlineVariant() =
+        mContext.getColor(com.android.internal.R.color.ichthys_hairline)
+
+    override fun getSliderActive() =
+        mContext.getColor(com.android.internal.R.color.ichthys_accent_fill)
+
+    override fun getOnSliderActive() = mContext.getColor(com.android.internal.R.color.ichthys_text)
 }

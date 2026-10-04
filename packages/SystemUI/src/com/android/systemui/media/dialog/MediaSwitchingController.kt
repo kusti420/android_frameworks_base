@@ -71,6 +71,7 @@ import com.android.systemui.media.dialog.MediaItem.DeviceGroupMediaItem
 import com.android.systemui.media.dialog.MediaItem.DeviceMediaItem
 import com.android.systemui.media.dialog.MediaItem.GroupDividerMediaItem
 import com.android.systemui.media.dialog.MediaOutputColorScheme.Factory.fromDynamicColors
+import com.android.systemui.media.dialog.MediaOutputColorScheme.Factory.fromShoalTokens
 import com.android.systemui.media.dialog.MediaOutputColorScheme.Factory.fromSystemColors
 import com.android.systemui.media.nearby.NearbyMediaDevicesManager
 import com.android.systemui.monet.ColorScheme
@@ -158,7 +159,11 @@ constructor(
     @VisibleForTesting
     var mMetricLogger: MediaOutputMetricLogger = MediaOutputMetricLogger(mContext, mPackageName)
     private var mCurrentState = 0
-    private var mMediaOutputColorScheme: MediaOutputColorScheme = fromSystemColors(mContext)
+    // IchthysOS: the Shoal dialog reads the theme tokens (and keeps them: MediaOutputDialogDelegate
+    // does not take the artwork's colours then).
+    private var mMediaOutputColorScheme: MediaOutputColorScheme =
+        if (MediaOutputShoalStyle.isEnabled(mContext)) fromShoalTokens(mContext)
+        else fromSystemColors(mContext)
 
     private var mIsGroupListCollapsed: Boolean = true
     private var mHasAdjustVolumeUserRestriction = false

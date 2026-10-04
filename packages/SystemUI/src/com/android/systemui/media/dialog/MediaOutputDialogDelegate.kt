@@ -20,6 +20,7 @@ import android.app.WallpaperColors
 import android.content.Context
 import android.content.res.ColorStateList
 import android.content.res.Configuration
+import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.Icon
 import android.os.Bundle
 import android.os.Handler
@@ -94,6 +95,9 @@ constructor(
     private var mDismissing = false
     private var currentDialog: SystemUIDialog? = null
 
+    /** IchthysOS: whether the dialog takes the Shoal look, see [MediaOutputShoalStyle]. */
+    private var mShoal = false
+
     @JvmField
     @VisibleForTesting
     var mAdapter: MediaOutputAdapter = MediaOutputAdapter(mMediaSwitchingController)
@@ -107,8 +111,11 @@ constructor(
     }
 
     override fun createDialog(): SystemUIDialog {
-        val dialog =
-            systemUIDialogFactory.create(this, context, R.style.Theme_SystemUI_Dialog_Media)
+        // IchthysOS: the Shoal dialog sits on the card surface of the plain SystemUI dialogs.
+        val theme =
+            if (MediaOutputShoalStyle.isEnabled(context)) R.style.Theme_SystemUI_Dialog
+            else R.style.Theme_SystemUI_Dialog_Media
+        val dialog = systemUIDialogFactory.create(this, context, theme)
         if (!aboveStatusBar) {
             dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
         }
@@ -151,6 +158,11 @@ constructor(
         mWarningSection = mDialogView.requireViewById(R.id.warning_section)
         mWarningTextView = mDialogView.requireViewById(R.id.warning_text)
         mWarningFixButton = mDialogView.requireViewById(R.id.warning_fix_button)
+
+        mShoal = MediaOutputShoalStyle.isEnabled(mContext)
+        if (mShoal) {
+            applyShoalStyle()
+        }
 
         updateAppResourceIcon()
         mMediaMetadataSectionLayout.visibility =
@@ -240,7 +252,9 @@ constructor(
             val icon = headerIcon.toIcon(mContext)
             val iconSupportsColorExtraction =
                 icon.type == Icon.TYPE_BITMAP || icon.type == Icon.TYPE_ADAPTIVE_BITMAP
-            val useSystemColors = enableMediaOutputSwitcherEntryPointTheming() && mUseSystemColors
+            // IchthysOS: the Shoal dialog keeps the theme tokens, whatever the artwork is.
+            val useSystemColors =
+                mShoal || (enableMediaOutputSwitcherEntryPointTheming() && mUseSystemColors)
             if (!iconSupportsColorExtraction || useSystemColors) {
                 // icon doesn't support getBitmap, use default value for color scheme
                 updateButtonBackgroundColorFilter()
@@ -278,8 +292,9 @@ constructor(
             } else {
                 mHeaderSubtitle.visibility = View.VISIBLE
                 mHeaderSubtitle.text = subTitle
+                val colorScheme = mMediaSwitchingController.getColorScheme()
                 mHeaderSubtitle.setTextColor(
-                    mMediaSwitchingController.getColorScheme().getOnSurface()
+                    if (mShoal) colorScheme.getOnSurfaceVariant() else colorScheme.getOnSurface()
                 )
                 mHeaderTitle.setGravity(Gravity.NO_GRAVITY)
             }
@@ -311,6 +326,39 @@ constructor(
         } else {
             mMediaSwitchingController.setRefreshing(false)
             mMediaSwitchingController.refreshDataSetIfNeeded()
+        }
+    }
+
+    /**
+     * IchthysOS "Shoal": the panel takes the theme radius and a hairline outline, the texts the
+     * theme faces. The colours come from the controller's colour scheme, as in the stock look.
+     */
+    private fun applyShoalStyle() {
+        val radius = MediaOutputShoalStyle.radius(mContext)
+        (mDialogView.background?.mutate() as? GradientDrawable)?.cornerRadius = radius
+        // The list and the footer fill the panel edge to edge: clip them to its shape and draw the
+        // hairline over them.
+        mDialogView.clipToOutline = true
+        mDialogView.foreground =
+            MediaOutputShoalStyle.outline(
+                mContext,
+                mMediaSwitchingController.getColorScheme().getOutlineVariant(),
+                radius,
+            )
+
+        mHeaderTitle.typeface =
+            MediaOutputShoalStyle.text(mContext, MediaOutputShoalStyle.WEIGHT_SEMI_BOLD)
+        val textFace = MediaOutputShoalStyle.text(mContext, MediaOutputShoalStyle.WEIGHT_NORMAL)
+        mHeaderSubtitle.typeface = textFace
+        mWarningTextView.typeface = textFace
+        val buttonFace = MediaOutputShoalStyle.text(mContext, MediaOutputShoalStyle.WEIGHT_MEDIUM)
+        val smallRadius = MediaOutputShoalStyle.radiusSmall(mContext)
+        for (button in arrayOf(mDoneButton, mStopButton, mWarningFixButton)) {
+            button.typeface = buttonFace
+        }
+        for (button in arrayOf(mConnectDeviceButton, mAudioSharingButton)) {
+            button.typeface = buttonFace
+            button.cornerRadius = smallRadius
         }
     }
 
