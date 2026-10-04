@@ -214,25 +214,41 @@ constructor(
         // and the reset dialog with the stock editor below.
         if (rememberShoalQsEnabled()) {
             val junctionTiles by viewModel.iconTilesViewModel.junctionTilesState
+            // The collapsed panel (quick quick settings) is edited here too: which tiles it
+            // shows, and how many per row on how many rows.
+            val collapsedTiles by viewModel.iconTilesViewModel.collapsedTilesState
+            val collapsedColumns by viewModel.collapsedColumnsState
+            val collapsedRows by viewModel.collapsedRowsState
             ShoalEditTileGrid(
                 tiles = tiles,
                 largeTiles = largeTiles,
                 junctionTiles = junctionTiles,
+                collapsedTiles = collapsedTiles,
+                collapsedColumns = collapsedColumns,
+                collapsedRows = collapsedRows,
+                collapsedColumnsRange = viewModel.collapsedColumnsRange,
+                collapsedRowsRange = viewModel.collapsedRowsRange,
                 canUndo = snapshotViewModel.canUndo,
                 topBarActions = actions,
                 scrollState = scrollState,
                 onUndo = snapshotViewModel::undo,
                 onReset = { dialogDelegate.showDialog() },
                 onStopEditing = onStopEditing,
+                onCollapsedColumns = viewModel::setCollapsedColumns,
+                onCollapsedRows = viewModel::setCollapsedRows,
                 onLayout = { layout ->
                     snapshotViewModel.takeSnapshot(
                         currentTiles.map { it.tileSpec },
                         largeTiles,
                         junctionTiles,
+                        collapsedTiles,
                     )
                     // Slots and sizes first: both are in place by the time the new tile list
                     // (written asynchronously) arrives, so a new tile shows up where it belongs.
                     iconTilesViewModel.setShoalLayout(layout.big.toSet(), layout.slots)
+                    // The collapsed panel's tiles as well, written every time like the two
+                    // above. Empty means none are picked and deletes the key.
+                    iconTilesViewModel.setCollapsedTiles(layout.collapsed)
                     val specs = layout.tileSpecs()
                     if (specs != currentTiles.map { it.tileSpec }) {
                         onSetTiles(specs)

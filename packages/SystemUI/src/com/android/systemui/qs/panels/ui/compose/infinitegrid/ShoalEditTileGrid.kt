@@ -93,6 +93,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -112,6 +113,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.LayoutDirection
@@ -139,16 +141,20 @@ import com.android.systemui.qs.shared.model.groupAndSort
 import com.android.systemui.res.R
 import kotlin.math.abs
 import kotlin.math.floor
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
  * IchthysOS "Shoal" tile editor (Settings.Secure ichthys_qs_style = "shoal").
  *
- * It shows the panel the way [ShoalTileGrid] lays it out, editable in place: the big tiles two per
- * row with a junction slot on every meeting point, then the honeycomb of circles. The tiles that
- * are not in the panel sit in a tray pinned to the bottom, outside the scrolling part. Tapping a
- * tile selects it and turns the tray into its options; holding one drags it.
+ * It has two parts. First the collapsed panel (quick quick settings): its tiles as circles in rows,
+ * with steppers for the tiles per row and the rows. A tile is there on top of its place in the
+ * expanded panel, never instead of it. Then the expanded panel the way [ShoalTileGrid] lays it out,
+ * editable in place: the big tiles two per row with a junction slot on every meeting point, then
+ * the honeycomb of circles. The tiles that are not in the panel sit in a tray pinned to the bottom,
+ * outside the scrolling part. Tapping a tile selects it and turns the tray into its options;
+ * holding one drags it.
  *
  * Every edit is one [ShoalEditLayout] handed to [onLayout]; the caller snapshots (undo) and writes
  * it. Nothing here writes settings.
@@ -158,12 +164,21 @@ internal object ShoalEdit {
     /** Height of the top bar's buttons and of the round buttons elsewhere. */
     val BUTTON = 36.dp
     val SECTION_LABEL_HEIGHT = 26.dp
+    /** Height of the heading of each of the two parts, the collapsed and the expanded panel. */
+    val PART_LABEL_HEIGHT = 30.dp
     /** Height of the options bar's action buttons. */
     val ACTION_HEIGHT = 44.dp
     val CHIP_HEIGHT = 30.dp
     val TRAY_RADIUS = 22.dp
     /** Width of one tile of the tray: a [ShoalQs.CELL] circle with its label underneath. */
     val TRAY_ITEM_WIDTH = 62.dp
+    /** Diameter of a tile of the collapsed section, where its share of the row has the room. */
+    val COLLAPSED_CELL = 40.dp
+    /** The least space between two tiles of the collapsed section: a selection ring fits in it. */
+    val COLLAPSED_MIN_GAP = 6.dp
+    val COLLAPSED_ROW_GAP = 8.dp
+    /** Width kept for the number of a stepper, so that the buttons stay put when it changes. */
+    val STEPPER_VALUE_WIDTH = 20.dp
     /** The ring around a selected tile and the gap between the two. */
     val SELECTION_STROKE = 2.dp
     val SELECTION_GAP = 2.dp
@@ -191,6 +206,9 @@ private sealed interface ShoalDropTarget {
 
     data class Junction(val slot: Int) : ShoalDropTarget
 
+    /** A place of the collapsed section; only a drag that started there has it as a target. */
+    data class Collapsed(val index: Int) : ShoalDropTarget
+
     data object Tray : ShoalDropTarget
 }
 
@@ -208,9 +226,21 @@ private class ShoalEditState : DragAndDropState {
     override var dragType by mutableStateOf<DragType?>(null)
         private set
 
+    /**
+     * Whether the drag started on a tile of the collapsed section. A tile is drawn there and in the
+     * expanded panel, so the spec alone does not say which of the two is on the move. Such a drag
+     * only rearranges the collapsed section.
+     */
+    var draggedFromCollapsed by mutableStateOf(false)
+        private set
+
     // A tile can be taken out by a drag if the drag brought it in, or if it is removable anyway.
+    // Out of the collapsed section any tile can go: it stays in quick settings.
     override val isDraggedCellRemovable: Boolean
-        get() = dragType == DragType.Add || draggedCell?.tile?.isRemovable ?: false
+        get() =
+            draggedFromCollapsed ||
+                dragType == DragType.Add ||
+                draggedCell?.tile?.isRemovable ?: false
 
     override val dragInProgress: Boolean
         get() = draggedCell != null
@@ -228,6 +258,12 @@ private class ShoalEditState : DragAndDropState {
 
     var selected by mutableStateOf<TileSpec?>(null)
 
+    /**
+     * Whether [selected] was tapped in the collapsed section rather than in the expanded panel. The
+     * same tile has different options in the two.
+     */
+    var selectedInCollapsed by mutableStateOf(false)
+
     /** The free junction waiting for a tile from the tray, if one was tapped. */
     var pickSlot by mutableStateOf<Int?>(null)
 
@@ -239,7 +275,9 @@ private class ShoalEditState : DragAndDropState {
     var wideCoordinates: LayoutCoordinates? = null
     var circleCoordinates: LayoutCoordinates? = null
     var trayCoordinates: LayoutCoordinates? = null
+    var collapsedCoordinates: LayoutCoordinates? = null
     var honeycomb: HoneycombGeometry? = null
+    var collapsedGrid: ShoalCollapsedGrid? = null
 
     private var target: ShoalDropTarget? = null
 
@@ -248,9 +286,15 @@ private class ShoalEditState : DragAndDropState {
     override fun onStarted(cell: SizedTile<EditTileViewModel>, dragType: DragType) {
         draggedCell = cell
         this.dragType = dragType
+        draggedFromCollapsed = false
         target = null
         preview = null
         pickSlot = null
+    }
+
+    /** To be called by a tile of the collapsed section when its drag starts, after [onStarted]. */
+    fun onStartedInCollapsed() {
+        draggedFromCollapsed = true
     }
 
     // The editor targets by position (see [hover]), not by lazy grid item.
@@ -266,16 +310,30 @@ private class ShoalEditState : DragAndDropState {
         draggedCell = null
         draggedPosition = Offset.Unspecified
         dragType = null
+        draggedFromCollapsed = false
         target = null
         preview = null
     }
 
     /**
      * Updates [preview] for a drag at [position] (root coordinates) over the [committed] layout.
+     *
+     * @param collapsed the collapsed panel's tiles of [committed], the automatic ones if none are
+     *   picked (see [ShoalEditLayout.collapsedOr])
      */
-    fun hover(position: Offset, committed: ShoalEditLayout, metrics: ShoalEditMetrics) {
+    fun hover(
+        position: Offset,
+        committed: ShoalEditLayout,
+        collapsed: List<TileSpec>,
+        metrics: ShoalEditMetrics,
+    ) {
         val spec = draggedCell?.tile?.tileSpec ?: return
-        val newTarget = targetAt(position, spec, committed, metrics)
+        val newTarget =
+            if (draggedFromCollapsed) {
+                collapsedTargetAt(position, metrics)
+            } else {
+                targetAt(position, spec, committed, metrics)
+            }
         if (newTarget == target) return
         target = newTarget
         val next =
@@ -285,16 +343,44 @@ private class ShoalEditState : DragAndDropState {
                 is ShoalDropTarget.Circle -> committed.toCircle(spec, newTarget.index)
                 // Null over the tile's own junction: it stays where it is.
                 is ShoalDropTarget.Junction -> committed.toJunction(spec, newTarget.slot)
-                // Dropping a panel tile on the tray takes it out. A tile that came from the
-                // tray simply goes back.
+                // Back on its own place nothing changes; in particular the automatic tiles
+                // are not turned into picked ones by a drag that moved nothing.
+                is ShoalDropTarget.Collapsed ->
+                    committed.collapsedAt(collapsed, spec, newTarget.index).takeIf {
+                        it.collapsed != collapsed
+                    }
+                // Dropping a panel tile on the tray takes it out: out of the collapsed panel
+                // if that is where it was picked up, out of quick settings otherwise. A tile
+                // that came from the tray simply goes back.
                 ShoalDropTarget.Tray ->
-                    if (dragType == DragType.Move && isDraggedCellRemovable) {
+                    if (draggedFromCollapsed) {
+                        committed.collapsedWithout(collapsed, spec)
+                    } else if (dragType == DragType.Move && isDraggedCellRemovable) {
                         committed.remove(spec)
                     } else {
                         null
                     }
             }
         preview = next?.takeIf { it != committed }
+    }
+
+    /** What a drag that started in the collapsed section is over: a place of it, or the tray. */
+    private fun collapsedTargetAt(position: Offset, metrics: ShoalEditMetrics): ShoalDropTarget? {
+        val tray = trayCoordinates?.takeIf { it.isAttached }
+        if (tray != null && tray.boundsInRoot().contains(position)) return ShoalDropTarget.Tray
+
+        val section = collapsedCoordinates?.takeIf { it.isAttached } ?: return null
+        val grid = collapsedGrid ?: return null
+        val local = position - section.positionInRoot()
+        // Half a row of slack above and below; further out the drag has left the section and
+        // the tiles go back to where they were.
+        val slack = grid.rowPitch / 2f
+        if (local.y < -slack || local.y > section.size.height + slack) return null
+        val column = floor(local.x / grid.cellWidth).toInt().coerceIn(0, grid.columns - 1)
+        val row = floor(local.y / grid.rowPitch).toInt().coerceAtLeast(0)
+        val fromStart = if (metrics.rtl) grid.columns - 1 - column else column
+        // Past the last tile is the end of the row: the index is brought into range on insert.
+        return ShoalDropTarget.Collapsed(row * grid.columns + fromStart)
     }
 
     private fun targetAt(
@@ -305,6 +391,11 @@ private class ShoalEditState : DragAndDropState {
     ): ShoalDropTarget? {
         val tray = trayCoordinates?.takeIf { it.isAttached }
         if (tray != null && tray.boundsInRoot().contains(position)) return ShoalDropTarget.Tray
+
+        // The collapsed section takes no tile from a drag (a tile gets there from its options),
+        // and what is above the big tiles is no longer theirs: that section sits there.
+        val collapsed = collapsedCoordinates?.takeIf { it.isAttached }
+        if (collapsed != null && position.y < collapsed.boundsInRoot().bottom) return null
 
         val wide = wideCoordinates?.takeIf { it.isAttached } ?: return null
         val circles = circleCoordinates?.takeIf { it.isAttached } ?: return null
@@ -365,6 +456,22 @@ private class ShoalEditState : DragAndDropState {
     }
 }
 
+/** What [ShoalCollapsedLayout] measured, for working out which of its places a drag is over. */
+private class ShoalCollapsedGrid(val columns: Int, val cellWidth: Float, val rowPitch: Int)
+
+/**
+ * The collapsed panel as the options of a tile need it: its [tiles] (the automatic ones if none are
+ * picked, see [ShoalEditLayout.collapsedOr]), the tiles per row and how many tiles it shows.
+ */
+private data class ShoalEditCollapsed(
+    val tiles: List<TileSpec>,
+    val columns: Int,
+    val capacity: Int,
+) {
+    val isFull: Boolean
+        get() = tiles.size >= capacity
+}
+
 /** Pixel sizes the drop targets are worked out with; the same ones [ShoalWideLayout] uses. */
 private class ShoalEditMetrics(
     val gap: Int,
@@ -373,17 +480,31 @@ private class ShoalEditMetrics(
     val rtl: Boolean,
 )
 
+/**
+ * @param collapsedTiles the tiles picked for the collapsed panel as stored; empty while none are
+ * @param collapsedColumns tiles per row of the collapsed panel
+ * @param collapsedRows rows of the collapsed panel
+ * @param onCollapsedColumns sets the tiles per row; written at once, it is not part of a layout
+ * @param onCollapsedRows sets the rows, likewise
+ */
 @Composable
 internal fun ShoalEditTileGrid(
     tiles: List<EditTileViewModel>,
     largeTiles: Set<TileSpec>,
     junctionTiles: List<TileSpec?>,
+    collapsedTiles: List<TileSpec>,
+    collapsedColumns: Int,
+    collapsedRows: Int,
+    collapsedColumnsRange: IntRange,
+    collapsedRowsRange: IntRange,
     canUndo: Boolean,
     topBarActions: List<EditTopBarActionViewModel>,
     onUndo: () -> Unit,
     onReset: () -> Unit,
     onStopEditing: () -> Unit,
     onLayout: (ShoalEditLayout) -> Unit,
+    onCollapsedColumns: (Int) -> Unit,
+    onCollapsedRows: (Int) -> Unit,
     modifier: Modifier = Modifier,
     scrollState: ScrollState = rememberScrollState(),
 ) {
@@ -405,18 +526,37 @@ internal fun ShoalEditTileGrid(
         }
 
     val bySpec = remember(tiles) { tiles.associateBy { it.tileSpec } }
+    val currentSpecs = remember(tiles) { tiles.filter { it.isCurrent }.map { it.tileSpec } }
     val stored =
-        remember(tiles, largeTiles, junctionTiles) {
-            ShoalEditLayout.of(
-                tiles.filter { it.isCurrent }.map { it.tileSpec },
-                largeTiles,
-                junctionTiles,
-            )
+        remember(currentSpecs, largeTiles, junctionTiles, collapsedTiles) {
+            ShoalEditLayout.of(currentSpecs, largeTiles, junctionTiles, collapsedTiles)
         }
     val committed = state.pending ?: stored
     val layout = state.preview ?: committed
     val currentCommitted by rememberUpdatedState(committed)
     val currentOnLayout by rememberUpdatedState(onLayout)
+
+    // The collapsed panel's tiles of a layout. While none are picked they are the first of the
+    // tile list, and that list is only rewritten (big tiles, junctions, circles) by an edit: the
+    // stored layout still has it in the order it came in.
+    val collapsedCapacity = collapsedColumns * collapsedRows
+    val committedCollapsed =
+        remember(committed, stored, currentSpecs, collapsedCapacity) {
+            committed.collapsedOr(
+                if (committed == stored) currentSpecs else committed.tileSpecs(),
+                collapsedCapacity,
+            )
+        }
+    val shownCollapsed =
+        remember(layout, stored, currentSpecs, collapsedCapacity) {
+            layout
+                .collapsedOr(
+                    if (layout == stored) currentSpecs else layout.tileSpecs(),
+                    collapsedCapacity,
+                )
+                .take(collapsedCapacity)
+        }
+    val currentCollapsed by rememberUpdatedState(committedCollapsed)
 
     // Drop the stand-in once the stores agree with it, or after a while if they never do (an edit
     // the tile list refused, say).
@@ -425,9 +565,17 @@ internal fun ShoalEditTileGrid(
         if (pending != stored) delay(ShoalEdit.PENDING_TIMEOUT_MILLIS)
         state.pending = null
     }
-    LaunchedEffect(committed) {
+    LaunchedEffect(committed, committedCollapsed, collapsedCapacity) {
         val selected = state.selected
         if (selected != null && selected !in committed) state.selected = null
+        // A tile selected in the collapsed section has to still be shown there.
+        if (
+            selected != null &&
+                state.selectedInCollapsed &&
+                selected !in committedCollapsed.take(collapsedCapacity)
+        ) {
+            state.selected = null
+        }
         val slot = state.pickSlot
         if (
             slot != null &&
@@ -443,13 +591,17 @@ internal fun ShoalEditTileGrid(
             currentOnLayout(next)
         }
     }
-    val onTileClick: (TileSpec) -> Unit = { spec ->
+    val select: (TileSpec, Boolean) -> Unit = { spec, inCollapsed ->
         state.pickSlot = null
-        state.selected = if (state.selected == spec) null else spec
+        val again = state.selected == spec && state.selectedInCollapsed == inCollapsed
+        state.selected = if (again) null else spec
+        state.selectedInCollapsed = inCollapsed
     }
+    val onTileClick: (TileSpec) -> Unit = { spec -> select(spec, false) }
     val onJunctionClick: (Int) -> Unit = { slot ->
         val tile = currentCommitted.junctionTile(slot)
-        val selected = state.selected
+        // A tile selected in the collapsed section is not on its way to a junction.
+        val selected = state.selected?.takeIf { !state.selectedInCollapsed }
         when {
             // Tap then tap: the selected tile goes to the junction, swapping with what is there.
             selected != null && selected != tile -> {
@@ -467,9 +619,27 @@ internal fun ShoalEditTileGrid(
             slot?.let { currentCommitted.toJunction(spec, it) } ?: currentCommitted.toCircle(spec)
         )
     }
+    // Tap then tap, as with a junction: the tile selected in the expanded panel is added to the
+    // collapsed one. A free place is only there while the section is not full.
+    val onCollapsedSlotClick: () -> Unit = {
+        val selected = state.selected?.takeIf { !state.selectedInCollapsed }
+        if (selected != null && selected in currentCommitted && selected !in currentCollapsed) {
+            commit(currentCommitted.collapsedAt(currentCollapsed, selected))
+        }
+    }
     val onDragStart: () -> Unit = { state.selected = null }
+    val onCollapsedDragStart: () -> Unit = {
+        state.selected = null
+        state.onStartedInCollapsed()
+    }
 
-    ShoalEditAutoScroll(state, scrollState, committed = { currentCommitted }, metrics = metrics)
+    ShoalEditAutoScroll(
+        state,
+        scrollState,
+        committed = { currentCommitted },
+        collapsed = { currentCollapsed },
+        metrics = metrics,
+    )
 
     Column(
         modifier =
@@ -478,7 +648,7 @@ internal fun ShoalEditTileGrid(
                 .consumeWindowInsets(WindowInsets.displayCutout)
                 .dragAndDropTileArea(
                     dragAndDropState = state,
-                    onMoved = { state.hover(it, currentCommitted, metrics) },
+                    onMoved = { state.hover(it, currentCommitted, currentCollapsed, metrics) },
                     onDrop = { commit(state.preview) },
                 )
                 .sysuiResTag(SHOAL_EDIT_ROOT_TEST_TAG)
@@ -499,9 +669,17 @@ internal fun ShoalEditTileGrid(
         )
 
         val selectedSpec = state.selected
+        val selectedInCollapsed = state.selectedInCollapsed
+        // The selection as the expanded panel shows it: its copy of a tile is not the selected
+        // one while the tile was tapped in the collapsed section.
+        val expandedSelection = selectedSpec?.takeIf { !selectedInCollapsed }
         val markedJunctions =
-            remember(committed, selectedSpec) {
-                if (selectedSpec == null) emptySet() else committed.junctionsFor(selectedSpec)
+            remember(committed, expandedSelection) {
+                if (expandedSelection == null) {
+                    emptySet()
+                } else {
+                    committed.junctionsFor(expandedSelection)
+                }
             }
         Column(
             modifier =
@@ -512,6 +690,104 @@ internal fun ShoalEditTileGrid(
                     .verticalScroll(scrollState)
                     .padding(top = 4.dp, bottom = 24.dp)
         ) {
+            ShoalEditPartLabel(
+                title = stringResource(R.string.ichthys_qs_edit_collapsed_panel),
+                count =
+                    stringResource(
+                        R.string.ichthys_qs_edit_collapsed_count,
+                        shownCollapsed.size,
+                        collapsedCapacity,
+                    ),
+                hint =
+                    stringResource(
+                        if (layout.collapsed.isEmpty()) {
+                            R.string.ichthys_qs_edit_collapsed_automatic
+                        } else {
+                            R.string.ichthys_qs_edit_drag_to_reorder
+                        }
+                    ),
+                accent = accent,
+                fonts = fonts,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ShoalEditStepper(
+                    label = stringResource(R.string.ichthys_qs_edit_collapsed_per_row),
+                    value = collapsedColumns,
+                    range = collapsedColumnsRange,
+                    decreaseDescription =
+                        stringResource(R.string.ichthys_qs_edit_collapsed_per_row_fewer),
+                    increaseDescription =
+                        stringResource(R.string.ichthys_qs_edit_collapsed_per_row_more),
+                    fonts = fonts,
+                    onValue = onCollapsedColumns,
+                )
+                Spacer(Modifier.weight(1f))
+                ShoalEditStepper(
+                    label = stringResource(R.string.ichthys_qs_edit_collapsed_rows),
+                    value = collapsedRows,
+                    range = collapsedRowsRange,
+                    decreaseDescription =
+                        stringResource(R.string.ichthys_qs_edit_collapsed_rows_fewer),
+                    increaseDescription =
+                        stringResource(R.string.ichthys_qs_edit_collapsed_rows_more),
+                    fonts = fonts,
+                    onValue = onCollapsedRows,
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Box(Modifier.fillMaxWidth().onGloballyPositioned { state.collapsedCoordinates = it }) {
+                // The free places take the tile selected in the expanded panel, if it is not
+                // here already.
+                val canAdd = expandedSelection != null && expandedSelection !in shownCollapsed
+                ShoalCollapsedLayout(
+                    columns = collapsedColumns,
+                    modifier = Modifier.fillMaxWidth(),
+                    onGrid = { state.collapsedGrid = it },
+                ) {
+                    shownCollapsed.forEachIndexed { index, spec ->
+                        key(spec) {
+                            ShoalEditCircleTile(
+                                tile = bySpec[spec],
+                                selected = selectedInCollapsed && spec == selectedSpec,
+                                moving = state.draggedFromCollapsed && state.isMoving(spec),
+                                accent = accent,
+                                dragState = state,
+                                onClick = { select(spec, true) },
+                                onDragStart = onCollapsedDragStart,
+                                description =
+                                    stringResource(
+                                        R.string.ichthys_qs_edit_collapsed_tile,
+                                        bySpec[spec]?.label?.text ?: "",
+                                        index + 1,
+                                    ),
+                            )
+                        }
+                    }
+                    repeat(collapsedCapacity - shownCollapsed.size) { free ->
+                        key(free) {
+                            ShoalEditCollapsedSlot(
+                                marked = canAdd,
+                                accent = accent,
+                                onClick = onCollapsedSlotClick,
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+            Box(Modifier.fillMaxWidth().height(1.dp).background(ShoalQsColors.Hairline))
+            Spacer(Modifier.height(8.dp))
+            ShoalEditPartLabel(
+                title = stringResource(R.string.ichthys_qs_edit_expanded_panel),
+                count = layout.tileSpecs().size.toString(),
+                hint = null,
+                accent = accent,
+                fonts = fonts,
+            )
             ShoalEditSectionLabel(
                 label = stringResource(R.string.ichthys_qs_edit_big_tiles),
                 count = layout.big.size,
@@ -551,8 +827,8 @@ internal fun ShoalEditTileGrid(
                                 ShoalEditWideTile(
                                     tile = bySpec[spec],
                                     shape = shape,
-                                    selected = spec == selectedSpec,
-                                    moving = state.isMoving(spec),
+                                    selected = spec == expandedSelection,
+                                    moving = !state.draggedFromCollapsed && state.isMoving(spec),
                                     accent = accent,
                                     fonts = fonts,
                                     dragState = state,
@@ -567,9 +843,12 @@ internal fun ShoalEditTileGrid(
                                 ShoalEditJunction(
                                     slot = slot,
                                     tile = spec?.let { bySpec[it] },
-                                    selected = spec != null && spec == selectedSpec,
+                                    selected = spec != null && spec == expandedSelection,
                                     marked = slot in markedJunctions || slot == state.pickSlot,
-                                    moving = spec != null && state.isMoving(spec),
+                                    moving =
+                                        spec != null &&
+                                            !state.draggedFromCollapsed &&
+                                            state.isMoving(spec),
                                     accent = accent,
                                     dragState = state,
                                     onClick = { onJunctionClick(slot) },
@@ -609,8 +888,8 @@ internal fun ShoalEditTileGrid(
                             key(spec) {
                                 ShoalEditCircleTile(
                                     tile = bySpec[spec],
-                                    selected = spec == selectedSpec,
-                                    moving = state.isMoving(spec),
+                                    selected = spec == expandedSelection,
+                                    moving = !state.draggedFromCollapsed && state.isMoving(spec),
                                     accent = accent,
                                     dragState = state,
                                     onClick = { onTileClick(spec) },
@@ -652,8 +931,15 @@ internal fun ShoalEditTileGrid(
         ShoalEditTray(
             state = state,
             layout = committed,
+            collapsed =
+                ShoalEditCollapsed(
+                    tiles = committedCollapsed,
+                    columns = collapsedColumns,
+                    capacity = collapsedCapacity,
+                ),
             tiles = tiles,
             selected = selectedSpec?.let { bySpec[it] },
+            selectedInCollapsed = selectedInCollapsed,
             accent = accent,
             fonts = fonts,
             onTrayClick = onTrayClick,
@@ -688,6 +974,7 @@ private fun ShoalEditAutoScroll(
     state: ShoalEditState,
     scrollState: ScrollState,
     committed: () -> ShoalEditLayout,
+    collapsed: () -> List<TileSpec>,
     metrics: ShoalEditMetrics,
 ) {
     val zone = with(LocalDensity.current) { ShoalEdit.AUTO_SCROLL_ZONE.toPx() }
@@ -730,7 +1017,9 @@ private fun ShoalEditAutoScroll(
         snapshotFlow { scrollState.value }
             .collect {
                 val position = state.draggedPosition
-                if (position.isSpecified) state.hover(position, committed(), metrics)
+                if (position.isSpecified) {
+                    state.hover(position, committed(), collapsed(), metrics)
+                }
             }
     }
 }
@@ -807,6 +1096,171 @@ private fun ShoalEditTopBar(
 // endregion
 
 // region panel
+
+/**
+ * The heading of one of the editor's two parts, the collapsed panel and the expanded one. Set like
+ * the tray's title, a step above the section labels that follow it.
+ */
+@Composable
+private fun ShoalEditPartLabel(
+    title: String,
+    count: String,
+    hint: String?,
+    accent: Color,
+    fonts: ShoalQsFonts,
+) {
+    val mono = TextStyle(color = ShoalQsColors.Muted, fontSize = 11.sp, fontFamily = fonts.mono)
+    Row(
+        modifier = Modifier.fillMaxWidth().height(ShoalEdit.PART_LABEL_HEIGHT),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = spacedBy(8.dp),
+    ) {
+        BasicText(
+            text = title,
+            style =
+                TextStyle(
+                    color = ShoalQsColors.OnTileOff,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    fontFamily = fonts.display,
+                ),
+            maxLines = 1,
+        )
+        BasicText(text = count, style = mono.copy(color = accent), maxLines = 1)
+        Spacer(Modifier.weight(1f))
+        if (hint != null) BasicText(text = hint, style = mono, maxLines = 1)
+    }
+}
+
+/**
+ * A number with a button on either side to take one off or add one, labelled like a section. The
+ * buttons stop at the ends of [range].
+ */
+@Composable
+private fun ShoalEditStepper(
+    label: String,
+    value: Int,
+    range: IntRange,
+    decreaseDescription: String,
+    increaseDescription: String,
+    fonts: ShoalQsFonts,
+    onValue: (Int) -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = spacedBy(6.dp)) {
+        BasicText(
+            text = label.uppercase(),
+            style =
+                TextStyle(
+                    color = ShoalQsColors.Muted,
+                    fontSize = 11.sp,
+                    fontFamily = fonts.mono,
+                    letterSpacing = 0.08.em,
+                ),
+            maxLines = 1,
+        )
+        ShoalEditRoundButton(
+            contentDescription = decreaseDescription,
+            enabled = value > range.first,
+            onClick = { onValue(value - 1) },
+        ) {
+            ShoalEditGlyph(ShoalEditGlyphs.Minus, ShoalQsColors.Label)
+        }
+        BasicText(
+            text = value.toString(),
+            style =
+                TextStyle(
+                    color = ShoalQsColors.OnTileOff,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    textAlign = TextAlign.Center,
+                    fontFamily = fonts.mono,
+                ),
+            maxLines = 1,
+            modifier = Modifier.width(ShoalEdit.STEPPER_VALUE_WIDTH),
+        )
+        ShoalEditRoundButton(
+            contentDescription = increaseDescription,
+            enabled = value < range.last,
+            onClick = { onValue(value + 1) },
+        ) {
+            ShoalEditGlyph(ShoalEditGlyphs.Plus, ShoalQsColors.Label)
+        }
+    }
+}
+
+/**
+ * The tiles of the collapsed section in rows of [columns], the way the collapsed panel lays them
+ * out: every place is an equal share of the width, with its circle in the middle. The circle is
+ * [ShoalEdit.COLLAPSED_CELL] across, or less where the places are too narrow for that.
+ */
+@Composable
+private fun ShoalCollapsedLayout(
+    columns: Int,
+    modifier: Modifier = Modifier,
+    onGrid: (ShoalCollapsedGrid) -> Unit,
+    content: @Composable () -> Unit,
+) {
+    Layout(content = content, modifier = modifier) { measurables, constraints ->
+        val width = if (constraints.hasBoundedWidth) constraints.maxWidth else constraints.minWidth
+        val perRow = columns.coerceAtLeast(1)
+        val cellWidth = width.toFloat() / perRow
+        val circle =
+            minOf(
+                    ShoalEdit.COLLAPSED_CELL.roundToPx(),
+                    (cellWidth - ShoalEdit.COLLAPSED_MIN_GAP.toPx()).toInt(),
+                )
+                .coerceAtLeast(0)
+        val rowGap = ShoalEdit.COLLAPSED_ROW_GAP.roundToPx()
+        val rowPitch = circle + rowGap
+        val placeables = measurables.map { it.measure(Constraints.fixed(circle, circle)) }
+        val rows = (placeables.size + perRow - 1) / perRow
+        onGrid(ShoalCollapsedGrid(perRow, cellWidth, rowPitch))
+        layout(width, (rows * rowPitch - rowGap).coerceAtLeast(0)) {
+            placeables.forEachIndexed { index, placeable ->
+                val x = (index % perRow) * cellWidth + (cellWidth - circle) / 2f
+                placeable.placeRelative(x.roundToInt(), (index / perRow) * rowPitch)
+            }
+        }
+    }
+}
+
+/**
+ * A free place of the collapsed section: a dashed circle, as a free junction is.
+ *
+ * @param marked the tile selected in the expanded panel can be put here, with a tap
+ */
+@Composable
+private fun ShoalEditCollapsedSlot(
+    marked: Boolean,
+    accent: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val description = stringResource(R.string.ichthys_qs_edit_collapsed_slot)
+    Box(
+        modifier =
+            modifier
+                .clip(CircleShape)
+                .drawBehind {
+                    val radius = size.minDimension / 2f
+                    if (marked) {
+                        drawJunctionMark(accent, radius)
+                    } else {
+                        drawCircle(
+                            ShoalQsColors.Muted,
+                            radius - ShoalEdit.DASH_STROKE.toPx() / 2f,
+                            alpha = ShoalEdit.FREE_SLOT_ALPHA,
+                            style = dashedStroke(),
+                        )
+                    }
+                }
+                .clickable(enabled = marked, role = Role.Button, onClick = onClick)
+                .semantics { contentDescription = description },
+        contentAlignment = Alignment.Center,
+    ) {
+        if (marked) ShoalEditGlyph(glyph = ShoalEditGlyphs.Plus, color = accent)
+    }
+}
 
 @Composable
 private fun ShoalEditSectionLabel(
@@ -962,6 +1416,8 @@ private fun ShoalEditCircleTile(
     onClick: () -> Unit,
     onDragStart: () -> Unit,
     modifier: Modifier = Modifier,
+    // What the tile is announced as; its name unless the place needs saying too.
+    description: String? = null,
 ) {
     if (tile == null || moving) {
         Box(
@@ -988,7 +1444,7 @@ private fun ShoalEditCircleTile(
                 .background(ShoalQsColors.TileOff)
                 .clickable(role = Role.Button, onClick = onClick)
                 .semantics {
-                    contentDescription = tile.label.text
+                    contentDescription = description ?: tile.label.text
                     this.selected = selected
                 },
         contentAlignment = Alignment.Center,
@@ -1111,8 +1567,10 @@ private fun ShoalEditJunction(
 private fun ShoalEditTray(
     state: ShoalEditState,
     layout: ShoalEditLayout,
+    collapsed: ShoalEditCollapsed,
     tiles: List<EditTileViewModel>,
     selected: EditTileViewModel?,
+    selectedInCollapsed: Boolean,
     accent: Color,
     fonts: ShoalQsFonts,
     onTrayClick: (TileSpec) -> Unit,
@@ -1172,7 +1630,9 @@ private fun ShoalEditTray(
         if (selected != null && !dragging) {
             ShoalEditOptions(
                 tile = selected,
+                inCollapsed = selectedInCollapsed,
                 layout = layout,
+                collapsed = collapsed,
                 availableCount = available.size,
                 accent = accent,
                 fonts = fonts,
@@ -1248,6 +1708,8 @@ private fun ShoalEditAvailable(
             BasicText(
                 text =
                     when {
+                        folded && state.draggedFromCollapsed ->
+                            stringResource(R.string.ichthys_qs_edit_tray_hint_remove_collapsed)
                         folded && state.dragType == DragType.Move && state.isDraggedCellRemovable ->
                             stringResource(R.string.ichthys_qs_edit_tray_hint_remove)
                         folded -> ""
@@ -1352,13 +1814,17 @@ private fun ShoalEditTrayTile(
 }
 
 /**
- * The options of the selected tile: what it is and where, a way out of the selection, and the three
- * things that can be done with it. Which three depends on where the tile is.
+ * The options of the selected tile: what it is and where, a way out of the selection, and what can
+ * be done with it. For a tile of the expanded panel that is three things, depending on where it is,
+ * and under them whether it is in the collapsed panel as well. A tile selected in the collapsed
+ * section ([inCollapsed]) can only be taken out of that panel.
  */
 @Composable
 private fun ShoalEditOptions(
     tile: EditTileViewModel,
+    inCollapsed: Boolean,
     layout: ShoalEditLayout,
+    collapsed: ShoalEditCollapsed,
     availableCount: Int,
     accent: Color,
     fonts: ShoalQsFonts,
@@ -1367,23 +1833,34 @@ private fun ShoalEditOptions(
     modifier: Modifier = Modifier,
 ) {
     val spec = tile.tileSpec
-    val place = layout.placeOf(spec)
+    // Null for a tile selected in the collapsed section: where it is in the expanded panel is
+    // not what the options are about then.
+    val place = if (inCollapsed) null else layout.placeOf(spec)
+    // -1 when the tile is not in the collapsed panel.
+    val collapsedIndex = collapsed.tiles.indexOf(spec)
     val placeText =
-        when (place) {
-            is ShoalPlace.Big ->
-                stringResource(
-                    if (place.index % 2 == 0) R.string.ichthys_qs_edit_place_big_left
-                    else R.string.ichthys_qs_edit_place_big_right,
-                    place.index / 2 + 1,
-                )
-            is ShoalPlace.Junction ->
-                stringResource(R.string.ichthys_qs_edit_place_junction, place.slot + 1)
-            is ShoalPlace.Circle ->
-                stringResource(
-                    R.string.ichthys_qs_edit_place_circle,
-                    honeycombRowOf(place.index, layout.shownCircles.size) + 1,
-                )
-            null -> ""
+        if (inCollapsed) {
+            stringResource(
+                R.string.ichthys_qs_edit_place_collapsed,
+                collapsedIndex.coerceAtLeast(0) / collapsed.columns.coerceAtLeast(1) + 1,
+            )
+        } else {
+            when (place) {
+                is ShoalPlace.Big ->
+                    stringResource(
+                        if (place.index % 2 == 0) R.string.ichthys_qs_edit_place_big_left
+                        else R.string.ichthys_qs_edit_place_big_right,
+                        place.index / 2 + 1,
+                    )
+                is ShoalPlace.Junction ->
+                    stringResource(R.string.ichthys_qs_edit_place_junction, place.slot + 1)
+                is ShoalPlace.Circle ->
+                    stringResource(
+                        R.string.ichthys_qs_edit_place_circle,
+                        honeycombRowOf(place.index, layout.shownCircles.size) + 1,
+                    )
+                null -> ""
+            }
         }
     val freeJunction = layout.freeJunctionFor(spec)
     val makeBig = stringResource(R.string.ichthys_qs_edit_make_big)
@@ -1442,58 +1919,95 @@ private fun ShoalEditOptions(
             }
         }
 
-        Row(horizontalArrangement = spacedBy(8.dp)) {
-            val actionModifier = Modifier.weight(1f).height(ShoalEdit.ACTION_HEIGHT)
-            if (place is ShoalPlace.Junction) {
+        if (!inCollapsed) {
+            Row(horizontalArrangement = spacedBy(8.dp)) {
+                val actionModifier = Modifier.weight(1f).height(ShoalEdit.ACTION_HEIGHT)
+                if (place is ShoalPlace.Junction) {
+                    ShoalEditButton(
+                        text = makeBig,
+                        style = ShoalEditButtonStyle.Tile,
+                        accent = accent,
+                        fonts = fonts,
+                        onClick = { onLayout(layout.toBig(spec)) },
+                        modifier = actionModifier,
+                    )
+                    ShoalEditButton(
+                        text = makeSmall,
+                        style = ShoalEditButtonStyle.Tile,
+                        accent = accent,
+                        fonts = fonts,
+                        onClick = { onLayout(layout.toCircle(spec, 0)) },
+                        modifier = actionModifier,
+                    )
+                } else {
+                    val isBig = place is ShoalPlace.Big
+                    ShoalEditButton(
+                        text = if (isBig) makeSmall else makeBig,
+                        style = ShoalEditButtonStyle.Tile,
+                        accent = accent,
+                        fonts = fonts,
+                        // A tile changing size lands on the edge of its new section nearest to
+                        // where it was: the end of the big tiles, the front of the circles.
+                        onClick = {
+                            onLayout(if (isBig) layout.toCircle(spec, 0) else layout.toBig(spec))
+                        },
+                        modifier = actionModifier,
+                    )
+                    ShoalEditButton(
+                        text = stringResource(R.string.ichthys_qs_edit_to_junction),
+                        style = ShoalEditButtonStyle.Accent,
+                        accent = accent,
+                        fonts = fonts,
+                        enabled = freeJunction != null,
+                        onClick = { freeJunction?.let { onLayout(layout.toJunction(spec, it)) } },
+                        modifier = actionModifier,
+                    )
+                }
                 ShoalEditButton(
-                    text = makeBig,
-                    style = ShoalEditButtonStyle.Tile,
+                    text = stringResource(R.string.qs_customize_remove),
+                    style = ShoalEditButtonStyle.Outline,
                     accent = accent,
                     fonts = fonts,
-                    onClick = { onLayout(layout.toBig(spec)) },
-                    modifier = actionModifier,
-                )
-                ShoalEditButton(
-                    text = makeSmall,
-                    style = ShoalEditButtonStyle.Tile,
-                    accent = accent,
-                    fonts = fonts,
-                    onClick = { onLayout(layout.toCircle(spec, 0)) },
-                    modifier = actionModifier,
-                )
-            } else {
-                val isBig = place is ShoalPlace.Big
-                ShoalEditButton(
-                    text = if (isBig) makeSmall else makeBig,
-                    style = ShoalEditButtonStyle.Tile,
-                    accent = accent,
-                    fonts = fonts,
-                    // A tile changing size lands on the edge of its new section nearest to
-                    // where it was: the end of the big tiles, the front of the circles.
-                    onClick = {
-                        onLayout(if (isBig) layout.toCircle(spec, 0) else layout.toBig(spec))
-                    },
-                    modifier = actionModifier,
-                )
-                ShoalEditButton(
-                    text = stringResource(R.string.ichthys_qs_edit_to_junction),
-                    style = ShoalEditButtonStyle.Accent,
-                    accent = accent,
-                    fonts = fonts,
-                    enabled = freeJunction != null,
-                    onClick = { freeJunction?.let { onLayout(layout.toJunction(spec, it)) } },
+                    enabled = tile.isRemovable,
+                    onClick = { onLayout(layout.remove(spec)) },
                     modifier = actionModifier,
                 )
             }
-            ShoalEditButton(
-                text = stringResource(R.string.qs_customize_remove),
-                style = ShoalEditButtonStyle.Outline,
-                accent = accent,
-                fonts = fonts,
-                enabled = tile.isRemovable,
-                onClick = { onLayout(layout.remove(spec)) },
-                modifier = actionModifier,
-            )
+        }
+
+        // In the collapsed panel as well, or not. For a tile selected in the collapsed section
+        // this is all there is to do.
+        val collapsedModifier = Modifier.fillMaxWidth().height(ShoalEdit.ACTION_HEIGHT)
+        when {
+            collapsedIndex >= 0 ->
+                ShoalEditButton(
+                    text = stringResource(R.string.ichthys_qs_edit_collapsed_remove),
+                    style = ShoalEditButtonStyle.Outline,
+                    accent = accent,
+                    fonts = fonts,
+                    onClick = { onLayout(layout.collapsedWithout(collapsed.tiles, spec)) },
+                    modifier = collapsedModifier,
+                )
+            // No room: the button says so instead of offering what it cannot do.
+            collapsed.isFull ->
+                ShoalEditButton(
+                    text = stringResource(R.string.ichthys_qs_edit_collapsed_full),
+                    style = ShoalEditButtonStyle.Tile,
+                    accent = accent,
+                    fonts = fonts,
+                    enabled = false,
+                    onClick = {},
+                    modifier = collapsedModifier,
+                )
+            else ->
+                ShoalEditButton(
+                    text = stringResource(R.string.ichthys_qs_edit_collapsed_add),
+                    style = ShoalEditButtonStyle.Tile,
+                    accent = accent,
+                    fonts = fonts,
+                    onClick = { onLayout(layout.collapsedAt(collapsed.tiles, spec)) },
+                    modifier = collapsedModifier,
+                )
         }
 
         // The folded tray: tapping it lets go of the tile and brings the available tiles back.
@@ -1674,6 +2188,7 @@ private fun ShoalEditVectorGlyph(icon: ImageVector, color: Color) {
 
 private enum class ShoalEditGlyphs {
     Plus,
+    Minus,
     Close,
     ChevronUp,
 }
@@ -1700,6 +2215,7 @@ private fun ShoalEditGlyph(glyph: ShoalEditGlyphs, color: Color, modifier: Modif
                     line(0.5f, 0.2f, 0.5f, 0.8f)
                     line(0.2f, 0.5f, 0.8f, 0.5f)
                 }
+                ShoalEditGlyphs.Minus -> line(0.2f, 0.5f, 0.8f, 0.5f)
                 ShoalEditGlyphs.Close -> {
                     line(0.25f, 0.25f, 0.75f, 0.75f)
                     line(0.75f, 0.25f, 0.25f, 0.75f)

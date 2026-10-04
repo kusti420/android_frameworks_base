@@ -31,6 +31,12 @@ interface IconTilesViewModel {
      */
     val junctionTiles: StateFlow<List<TileSpec?>>
 
+    /**
+     * IchthysOS: the tiles picked for the collapsed panel, in order. Empty while none are picked:
+     * the collapsed panel then shows the first tiles of the tile list.
+     */
+    val collapsedTiles: StateFlow<List<TileSpec>>
+
     fun isIconTile(spec: TileSpec): Boolean
 
     fun resize(spec: TileSpec, toIcon: Boolean)
@@ -41,6 +47,9 @@ interface IconTilesViewModel {
      * about to become current (a tile dragged in from the tray).
      */
     fun setShoalLayout(largeTiles: Set<TileSpec>, junctionTiles: List<TileSpec?>)
+
+    /** IchthysOS: sets the collapsed panel's tiles; an empty list means the automatic ones. */
+    fun setCollapsedTiles(specs: List<TileSpec>)
 }
 
 @SysUISingleton
@@ -49,6 +58,7 @@ class IconTilesViewModelImpl @Inject constructor(private val interactor: IconTil
     override val largeTiles = interactor.largeTilesSpecs
 
     override val junctionTiles = interactor.junctionTilesSpecs
+    override val collapsedTiles = interactor.collapsedTilesSpecs
 
     override fun isIconTile(spec: TileSpec): Boolean = interactor.isIconTile(spec)
 
@@ -60,4 +70,6 @@ class IconTilesViewModelImpl @Inject constructor(private val interactor: IconTil
         interactor.setJunctionTiles(junctionTiles)
         interactor.setLargeTiles(largeTiles)
     }
+
+    override fun setCollapsedTiles(specs: List<TileSpec>) = interactor.setCollapsedTiles(specs)
 }

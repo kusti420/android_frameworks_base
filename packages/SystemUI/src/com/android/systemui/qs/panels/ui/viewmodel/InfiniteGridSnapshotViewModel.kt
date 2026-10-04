@@ -51,6 +51,8 @@ constructor(
             iconTilesInteractor.setLargeTiles(it.largeTiles)
             // IchthysOS "Shoal": the junction slots are part of the layout that is undone.
             iconTilesInteractor.setJunctionTiles(it.junctionTiles)
+            // IchthysOS: and so is the collapsed panel's own selection of tiles.
+            iconTilesInteractor.setCollapsedTiles(it.collapsedTiles)
         }
     }
 
@@ -58,14 +60,16 @@ constructor(
      * Create a snapshot of the current tiles and large tiles and save it.
      *
      * IchthysOS "Shoal": [junctionTiles] are the junction slots at the time of the snapshot; the
-     * stock grid editor never changes them and leaves the default.
+     * stock grid editor never changes them and leaves the default. The same goes for
+     * [collapsedTiles], the tiles picked for the collapsed panel.
      */
     fun takeSnapshot(
         tiles: List<TileSpec>,
         largeTiles: Set<TileSpec>,
         junctionTiles: List<TileSpec?> = iconTilesInteractor.junctionTilesSpecs.value,
+        collapsedTiles: List<TileSpec> = iconTilesInteractor.collapsedTilesSpecs.value,
     ) {
-        val snapshot = InfiniteGridSnapshot(tiles, largeTiles, junctionTiles)
+        val snapshot = InfiniteGridSnapshot(tiles, largeTiles, junctionTiles, collapsedTiles)
         if (snapshot != snapshots.lastOrNull()) {
             snapshots.add(snapshot)
         }
@@ -88,6 +92,7 @@ constructor(
         val tiles: List<TileSpec>,
         val largeTiles: Set<TileSpec>,
         val junctionTiles: List<TileSpec?> = emptyList(),
+        val collapsedTiles: List<TileSpec> = emptyList(),
     )
 
     private companion object {

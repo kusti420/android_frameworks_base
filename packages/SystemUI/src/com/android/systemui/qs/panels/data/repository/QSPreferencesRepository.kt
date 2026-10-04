@@ -102,7 +102,9 @@ constructor(
             }
             .flowOn(backgroundDispatcher)
 
-    private val junctionSettingChanges: Flow<Unit> =
+    private val junctionSettingChanges: Flow<Unit> = secureSettingChanges(JUNCTION_TILES_SETTING)
+
+    private fun secureSettingChanges(setting: String): Flow<Unit> =
         callbackFlow {
                 val observer =
                     object : ContentObserver(null) {
@@ -111,7 +113,7 @@ constructor(
                         }
                     }
                 context.contentResolver.registerContentObserver(
-                    Settings.Secure.getUriFor(JUNCTION_TILES_SETTING),
+                    Settings.Secure.getUriFor(setting),
                     false,
                     observer,
                     UserHandle.USER_ALL,
@@ -133,6 +135,41 @@ constructor(
         userRepository.selectedUserInfo
             .flatMapLatest { userInfo ->
                 junctionSettingChanges.emitOnStart().map { readJunctionTileSpecs(userInfo.id) }
+            }
+            .distinctUntilChanged()
+            .flowOn(backgroundDispatcher)
+
+    /**
+     * IchthysOS: the tiles picked for the collapsed panel (quick quick settings) for the current
+     * user, in order. Empty while nothing is picked: the collapsed panel then shows the first tiles
+     * of the tile list, as it always did.
+     *
+     * The list only names tiles; it never adds one to quick settings. A spec that is not a current
+     * tile is skipped by the readers. Lives in Settings.Secure ([COLLAPSED_TILES_SETTING]) for the
+     * same reason as [junctionTilesSpecs]: the ichthys.nix option quickSettings.collapsed.tiles and
+     * the tile editor share the value.
+     */
+    val collapsedTilesSpecs: Flow<List<TileSpec>> =
+        userRepository.selectedUserInfo
+            .flatMapLatest { userInfo ->
+                secureSettingChanges(COLLAPSED_TILES_SETTING).emitOnStart().map {
+                    readCollapsedTileSpecs(userInfo.id)
+                }
+            }
+            .distinctUntilChanged()
+            .flowOn(backgroundDispatcher)
+
+    /**
+     * IchthysOS: tiles per row of the collapsed panel for the current user, within
+     * [COLLAPSED_COLUMNS_MIN]..[COLLAPSED_COLUMNS_MAX]; [COLLAPSED_COLUMNS_DEFAULT] while
+     * [COLLAPSED_COLUMNS_SETTING] (quickSettings.collapsed.columns) is unset.
+     */
+    val collapsedColumns: Flow<Int> =
+        userRepository.selectedUserInfo
+            .flatMapLatest { userInfo ->
+                secureSettingChanges(COLLAPSED_COLUMNS_SETTING).emitOnStart().map {
+                    readCollapsedColumns(userInfo.id)
+                }
             }
             .distinctUntilChanged()
             .flowOn(backgroundDispatcher)
@@ -209,6 +246,78 @@ constructor(
             encoded,
             userId,
         )
+    }
+
+    /**
+     * IchthysOS: sets the collapsed panel's tiles for the current user. An empty list deletes the
+     * key: the collapsed panel goes back to the first tiles of the tile list.
+     */
+    fun writeCollapsedTileSpecs(specs: List<TileSpec>) {
+        writeCollapsedTileSpecs(userRepository.getSelectedUserInfo().id, specs)
+    }
+
+    /** IchthysOS: takes [specs] out of the collapsed panel's tiles. */
+    fun removeCollapsedTileSpecs(specs: Set<TileSpec>) {
+        val userId = userRepository.getSelectedUserInfo().id
+        // The stored value, not the flow's last one; see removeJunctionTileSpecs.
+        val stored = readCollapsedTileSpecs(userId)
+        val kept = stored.filter { it !in specs }
+        if (kept != stored) {
+            writeCollapsedTileSpecs(userId, kept)
+        }
+    }
+
+    /**
+     * IchthysOS: sets the collapsed panel's tiles per row for the current user; null deletes the
+     * key, which is the option's default.
+     */
+    fun writeCollapsedColumns(columns: Int?) {
+        val userId = userRepository.getSelectedUserInfo().id
+        val stored = columns?.coerceIn(COLLAPSED_COLUMNS_MIN, COLLAPSED_COLUMNS_MAX)?.toString()
+        logger.i("Collapsed panel columns for user $userId: $stored")
+        Settings.Secure.putStringForUser(
+            context.contentResolver,
+            COLLAPSED_COLUMNS_SETTING,
+            stored,
+            userId,
+        )
+    }
+
+    private fun readCollapsedTileSpecs(userId: Int): List<TileSpec> {
+        return decodeCollapsedTiles(
+            Settings.Secure.getStringForUser(
+                context.contentResolver,
+                COLLAPSED_TILES_SETTING,
+                userId,
+            )
+        )
+    }
+
+    private fun writeCollapsedTileSpecs(userId: Int, specs: List<TileSpec>) {
+        val encoded = encodeCollapsedTiles(specs)
+        logger.i("Collapsed panel tiles for user $userId: $encoded")
+        Settings.Secure.putStringForUser(
+            context.contentResolver,
+            COLLAPSED_TILES_SETTING,
+            encoded,
+            userId,
+        )
+    }
+
+    private fun readCollapsedColumns(userId: Int): Int {
+        val stored =
+            Settings.Secure.getIntForUser(
+                context.contentResolver,
+                COLLAPSED_COLUMNS_SETTING,
+                COLLAPSED_COLUMNS_UNSET,
+                userId,
+            )
+        // The clamp is for the stored value only; the default is ours and already in range.
+        return if (stored == COLLAPSED_COLUMNS_UNSET) {
+            COLLAPSED_COLUMNS_DEFAULT
+        } else {
+            stored.coerceIn(COLLAPSED_COLUMNS_MIN, COLLAPSED_COLUMNS_MAX)
+        }
     }
 
     /** Sets the value for whether or not the edit icon tooltip was shown for the current user. */
@@ -403,6 +512,46 @@ constructor(
             return trimmed.joinToString(",") { spec ->
                 if (spec == null || spec == TileSpec.Invalid) JUNCTION_FREE else spec.spec
             }
+        }
+
+        /**
+         * IchthysOS: Settings.Secure key of the collapsed panel's tiles, the ichthys.nix option
+         * quickSettings.collapsed.tiles. Tile specs joined with "," in the order shown
+         * ("flashlight,rotation,bt").
+         */
+        const val COLLAPSED_TILES_SETTING = "ichthys_qqs_tiles"
+        /**
+         * IchthysOS: Settings.Secure key of the collapsed panel's tiles per row, the ichthys.nix
+         * option quickSettings.collapsed.columns.
+         */
+        const val COLLAPSED_COLUMNS_SETTING = "ichthys_qqs_columns"
+        // A collapsed tile is a 38 dp bubble in a cell that is a share of the row. On the 411 dp
+        // wide phone the row is 379 dp: 8 cells of 44 dp keep 6 dp between the bubbles, 9 would
+        // leave them touching. Under 3 the row stops reading as a row.
+        const val COLLAPSED_COLUMNS_MIN = 3
+        const val COLLAPSED_COLUMNS_MAX = 8
+        /** What the collapsed panel drew before the key existed. */
+        const val COLLAPSED_COLUMNS_DEFAULT = 7
+        private const val COLLAPSED_COLUMNS_UNSET = -1
+
+        /**
+         * Parses a stored [COLLAPSED_TILES_SETTING] value. Entries that are not a tile are dropped,
+         * and so is a tile named a second time: the panel shows a tile once.
+         */
+        fun decodeCollapsedTiles(stored: String?): List<TileSpec> {
+            if (stored.isNullOrEmpty()) return emptyList()
+            return stored
+                .split(",")
+                .map { TileSpec.create(it.trim()) }
+                .filter { it != TileSpec.Invalid }
+                .distinct()
+        }
+
+        /** The stored form of [specs], or null (delete the key) when there are none. */
+        fun encodeCollapsedTiles(specs: List<TileSpec>): String? {
+            val valid = specs.filter { it != TileSpec.Invalid }.distinct()
+            if (valid.isEmpty()) return null
+            return valid.joinToString(",") { it.spec }
         }
     }
 }

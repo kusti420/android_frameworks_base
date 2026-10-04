@@ -55,6 +55,9 @@ constructor(
                 // IchthysOS "Shoal": a removed tile gives its junction back too, so that adding
                 // it again later starts it as an ordinary circle.
                 iconTilesInteractor.removeJunctionTiles(removedTiles)
+                // IchthysOS: and its place in the collapsed panel, which only shows tiles that
+                // are in quick settings.
+                iconTilesInteractor.removeCollapsedTiles(removedTiles)
             }
     }
 

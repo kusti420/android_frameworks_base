@@ -17,6 +17,7 @@
 package com.android.systemui.qs.panels.ui.viewmodel
 
 import com.android.systemui.kosmos.Kosmos
+import com.android.systemui.qs.panels.domain.interactor.quickQuickSettingsRowInteractor
 import com.android.systemui.qs.panels.ui.dialog.qsResetDialogDelegateFactoryKosmos
 
 val Kosmos.infiniteGridViewModelFactory by
@@ -30,6 +31,7 @@ val Kosmos.infiniteGridViewModelFactory by
                     infiniteGridSnapshotViewModelFactory,
                     qsResetDialogDelegateFactoryKosmos,
                     editTopBarActionsViewModelFactory,
+                    quickQuickSettingsRowInteractor,
                 )
             }
         }

@@ -44,6 +44,12 @@ constructor(
             traceName = "junctionTiles",
             source = iconTilesViewModel.junctionTiles,
         )
+    /** IchthysOS: see [IconTilesViewModel.collapsedTiles]. */
+    val collapsedTilesState =
+        hydrator.hydratedStateOf(
+            traceName = "collapsedTiles",
+            source = iconTilesViewModel.collapsedTiles,
+        )
 
     override suspend fun onActivated(): Nothing {
         coroutineScope {

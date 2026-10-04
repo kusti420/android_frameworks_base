@@ -19,6 +19,7 @@ package com.android.systemui.qs.panels.ui.viewmodel
 import com.android.systemui.lifecycle.ExclusiveActivatable
 import com.android.systemui.lifecycle.Hydrator
 import com.android.systemui.media.controls.ui.controller.MediaHierarchyManager.Companion.LOCATION_QS
+import com.android.systemui.qs.panels.domain.interactor.QuickQuickSettingsRowInteractor
 import com.android.systemui.qs.panels.shared.model.SizedTileImpl
 import com.android.systemui.qs.panels.ui.dialog.QSResetDialogDelegate
 import com.android.systemui.qs.panels.ui.viewmodel.PaginatableViewModel.Companion.splitInRows
@@ -39,6 +40,7 @@ constructor(
     val snapshotViewModelFactory: InfiniteGridSnapshotViewModel.Factory,
     val resetDialogDelegateFactory: QSResetDialogDelegate.Factory,
     val editTopBarActionsViewModelFactory: EditTopBarActionsViewModel.Factory,
+    private val quickQuickSettingsRowInteractor: QuickQuickSettingsRowInteractor,
 ) : ExclusiveActivatable(), PaginatableViewModel {
     private val hydrator = Hydrator("InfiniteGridViewModel.hydrator")
 
@@ -48,6 +50,30 @@ constructor(
             LOCATION_QS,
             QuickSettingsContainerViewModel.mediaUiBehavior,
         )
+
+    // IchthysOS: the shape of the collapsed panel, which the Shoal tile editor shows and sets.
+    val collapsedColumnsState =
+        hydrator.hydratedStateOf(
+            traceName = "collapsedColumns",
+            initialValue = quickQuickSettingsRowInteractor.defaultColumns,
+            source = quickQuickSettingsRowInteractor.columns,
+        )
+    val collapsedRowsState =
+        hydrator.hydratedStateOf(
+            traceName = "collapsedRows",
+            initialValue = quickQuickSettingsRowInteractor.defaultRows,
+            source = quickQuickSettingsRowInteractor.rows,
+        )
+    val collapsedColumnsRange: IntRange = quickQuickSettingsRowInteractor.columnsRange
+    val collapsedRowsRange: IntRange = quickQuickSettingsRowInteractor.rowsRange
+
+    fun setCollapsedColumns(columns: Int) {
+        quickQuickSettingsRowInteractor.setColumns(columns)
+    }
+
+    fun setCollapsedRows(rows: Int) {
+        quickQuickSettingsRowInteractor.setRows(rows)
+    }
 
     override val pageKeys: Array<Any>
         get() =

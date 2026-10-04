@@ -29,6 +29,10 @@ class QSPreferencesInteractor @Inject constructor(private val repo: QSPreference
     val editTooltipShown: Flow<Boolean> = repo.editTooltipShown
     /** IchthysOS "Shoal": tiles in the junction slots, top to bottom; null is a free slot. */
     val junctionTilesSpecs: Flow<List<TileSpec?>> = repo.junctionTilesSpecs
+    /** IchthysOS: tiles picked for the collapsed panel, in order; empty while none are picked. */
+    val collapsedTilesSpecs: Flow<List<TileSpec>> = repo.collapsedTilesSpecs
+    /** IchthysOS: tiles per row of the collapsed panel. */
+    val collapsedColumns: Flow<Int> = repo.collapsedColumns
 
     fun setLargeTilesSpecs(specs: Set<TileSpec>) {
         repo.writeLargeTileSpecs(specs)
@@ -44,6 +48,19 @@ class QSPreferencesInteractor @Inject constructor(private val repo: QSPreference
 
     fun removeJunctionTilesSpecs(specs: Set<TileSpec>) {
         repo.removeJunctionTileSpecs(specs)
+    }
+
+    fun setCollapsedTilesSpecs(specs: List<TileSpec>) {
+        repo.writeCollapsedTileSpecs(specs)
+    }
+
+    fun removeCollapsedTilesSpecs(specs: Set<TileSpec>) {
+        repo.removeCollapsedTileSpecs(specs)
+    }
+
+    /** Null goes back to the default. */
+    fun setCollapsedColumns(columns: Int?) {
+        repo.writeCollapsedColumns(columns)
     }
 
     fun setEditTooltipShown(value: Boolean) {

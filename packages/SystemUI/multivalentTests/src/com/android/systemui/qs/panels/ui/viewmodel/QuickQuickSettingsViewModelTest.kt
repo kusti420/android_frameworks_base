@@ -30,6 +30,7 @@ import com.android.systemui.media.controls.ui.controller.mediaHostStatesManager
 import com.android.systemui.media.controls.ui.view.MediaHost
 import com.android.systemui.media.remedia.data.repository.setHasMedia
 import com.android.systemui.qs.composefragment.dagger.usingMediaInComposeFragment
+import com.android.systemui.qs.panels.data.repository.QSPreferencesRepository
 import com.android.systemui.qs.panels.domain.interactor.qsPreferencesInteractor
 import com.android.systemui.qs.pipeline.domain.interactor.currentTilesInteractor
 import com.android.systemui.qs.pipeline.shared.TileSpec
@@ -82,20 +83,19 @@ class QuickQuickSettingsViewModelTest : SysuiTestCase() {
         kosmos.setTiles(tiles)
     }
 
+    // IchthysOS: the collapsed panel has its own tiles per row (7 while ichthys_qqs_columns is
+    // unset) instead of the expanded grid's columns, and every tile takes one place. It shows as
+    // many tiles as its tiles per row times its rows hold.
+
     @Test
-    fun splitIntoRows_onlyFirstTwoRowsOfTiles() =
+    fun tiles_asManyAsColumnsTimesRows() =
         with(kosmos) {
             testScope.runTest {
-                setRows(2)
+                setRows(1)
 
-                assertThat(underTest.columns).isEqualTo(4)
-                // All tiles in 4 columns
-                // [1] [2] [3 3]
-                // [4] [5 5]
-                // [6 6] [7] [8]
-                // [9 9]
-
-                assertThat(underTest.tileViewModels.map { it.tile.spec }).isEqualTo(tiles.take(5))
+                assertThat(underTest.columns).isEqualTo(DEFAULT_COLUMNS)
+                assertThat(underTest.tileViewModels.map { it.tile.spec })
+                    .isEqualTo(tiles.take(DEFAULT_COLUMNS))
             }
         }
 
@@ -103,19 +103,13 @@ class QuickQuickSettingsViewModelTest : SysuiTestCase() {
     fun changeRows_tilesChange() =
         with(kosmos) {
             testScope.runTest {
-                setRows(2)
-
-                assertThat(underTest.columns).isEqualTo(4)
-                // All tiles in 4 columns
-                // [1] [2] [3 3]
-                // [4] [5 5]
-                // [6 6] [7] [8]
-                // [9 9]
-
-                setRows(3)
-                assertThat(underTest.tileViewModels.map { it.tile.spec }).isEqualTo(tiles.take(8))
                 setRows(1)
-                assertThat(underTest.tileViewModels.map { it.tile.spec }).isEqualTo(tiles.take(3))
+                assertThat(underTest.tileViewModels.map { it.tile.spec })
+                    .isEqualTo(tiles.take(DEFAULT_COLUMNS))
+
+                // Two rows of 7 hold all 9 tiles.
+                setRows(2)
+                assertThat(underTest.tileViewModels.map { it.tile.spec }).isEqualTo(tiles)
             }
         }
 
@@ -123,57 +117,35 @@ class QuickQuickSettingsViewModelTest : SysuiTestCase() {
     fun changeTiles_tilesChange() =
         with(kosmos) {
             testScope.runTest {
-                setRows(2)
-
-                assertThat(underTest.columns).isEqualTo(4)
-                // All tiles in 4 columns
-                // [1] [2] [3 3]
-                // [4] [5 5]
-                // [6 6] [7] [8]
-                // [9 9]
+                setRows(1)
 
                 // Remove tile small:4
                 currentTilesInteractor.removeTiles(setOf(tiles[3]))
                 runCurrent()
 
                 assertThat(underTest.tileViewModels.map { it.tile.spec })
-                    .isEqualTo(
-                        listOf(
-                                "$PREFIX_SMALL:1",
-                                "$PREFIX_SMALL:2",
-                                "$PREFIX_LARGE:3",
-                                "$PREFIX_LARGE:5",
-                                "$PREFIX_LARGE:6",
-                            )
-                            .map(TileSpec::create)
-                    )
+                    .isEqualTo((tiles - tiles[3]).take(DEFAULT_COLUMNS))
             }
         }
 
     @Test
-    fun mediaVisibleInLandscape_doubleRows_halfColumns() =
+    fun mediaVisibleInLandscape_halfColumns_sameTiles() =
         with(kosmos) {
             testScope.runTest {
                 setRows(1)
-                assertThat(underTest.columns).isEqualTo(4)
-                // All tiles in 4 columns (but we only show the first 3 tiles)
-                // [1] [2] [3 3]
-                // [4] [5 5]
-                // [6 6] [7] [8]
-                // [9 9]
-
                 runCurrent()
-                assertThat(underTest.tileViewModels.map { it.tile.spec }).isEqualTo(tiles.take(3))
+                assertThat(underTest.columns).isEqualTo(DEFAULT_COLUMNS)
+                assertThat(underTest.tileViewModels.map { it.tile.spec })
+                    .isEqualTo(tiles.take(DEFAULT_COLUMNS))
 
                 makeMediaVisible(LOCATION_QQS, visible = true)
                 setConfigurationForMediaInRow(mediaInRow = true)
                 runCurrent()
 
-                assertThat(underTest.columns).isEqualTo(2)
-                // Tiles in 4 columns
-                // [1] [2]
-                // [3 3]
-                assertThat(underTest.tileViewModels.map { it.tile.spec }).isEqualTo(tiles.take(3))
+                // Half the tiles per row, rounded up; the same tiles wrap onto twice the rows.
+                assertThat(underTest.columns).isEqualTo((DEFAULT_COLUMNS + 1) / 2)
+                assertThat(underTest.tileViewModels.map { it.tile.spec })
+                    .isEqualTo(tiles.take(DEFAULT_COLUMNS))
             }
         }
 
@@ -195,6 +167,7 @@ class QuickQuickSettingsViewModelTest : SysuiTestCase() {
     private companion object {
         const val PREFIX_SMALL = "small"
         const val PREFIX_LARGE = "large"
+        const val DEFAULT_COLUMNS = QSPreferencesRepository.COLLAPSED_COLUMNS_DEFAULT
 
         private fun Kosmos.makeMediaVisible(@MediaLocation location: Int, visible: Boolean) {
             mediaHostStatesManager.updateHostState(

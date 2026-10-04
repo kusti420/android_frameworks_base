@@ -283,6 +283,27 @@ final class IchthysOptions {
                         + "(quickSettings.style = \"shoal\").",
                 setting(SECURE, "ichthys_qs_junctions")).preserved());
         // --- Junction tiles (end) ---
+
+        // --- Collapsed panel (begin) ---
+        // The collapsed quick settings (the row of tiles in the notification shade, before the
+        // second swipe down) has a selection of tiles of its own (SystemUI
+        // QuickQuickSettingsViewModel.kt). It only names tiles that are in quick settings and
+        // never adds one; a name that is not a tile there is skipped. No default and preserved,
+        // like the junctions: it is what the user arranged in the tile editor, which writes the
+        // same key. Unset or empty, the panel shows the first tiles of the tile list.
+        s.add(Option.stringList("quickSettings.collapsed.tiles",
+                "Tiles of the collapsed quick settings, in order, by tile spec (e.g. "
+                        + "\"flashlight\" \"rotation\" \"bt\"). Only tiles that are in quick "
+                        + "settings are shown, as many as columns x rows hold "
+                        + "(quickSettings.layout.qqsTilesRows). Empty: the first tiles of quick "
+                        + "settings.",
+                setting(SECURE, "ichthys_qqs_tiles")).preserved());
+        // No default: unset is the 7 per row the panel always had, and SystemUI owns that
+        // number. The range is SystemUI's too (QSPreferencesRepository.COLLAPSED_COLUMNS_*).
+        s.add(Option.integer("quickSettings.collapsed.columns", null, 3, 8,
+                "Tiles per row of the collapsed quick settings (null: 7).",
+                setting(SECURE, "ichthys_qqs_columns")));
+        // --- Collapsed panel (end) ---
     }
 
     // ---------------------------------------------------------------------------------------------

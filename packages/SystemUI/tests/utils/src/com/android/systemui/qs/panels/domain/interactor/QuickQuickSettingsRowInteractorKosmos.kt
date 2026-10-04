@@ -20,4 +20,6 @@ import com.android.systemui.kosmos.Kosmos
 import com.android.systemui.qs.panels.data.repository.quickQuickSettingsRowRepository
 
 val Kosmos.quickQuickSettingsRowInteractor by
-    Kosmos.Fixture { QuickQuickSettingsRowInteractor(quickQuickSettingsRowRepository) }
+    Kosmos.Fixture {
+        QuickQuickSettingsRowInteractor(quickQuickSettingsRowRepository, qsPreferencesInteractor)
+    }

@@ -17,16 +17,45 @@
 package com.android.systemui.qs.panels.domain.interactor
 
 import com.android.systemui.dagger.SysUISingleton
+import com.android.systemui.qs.panels.data.repository.QSPreferencesRepository
 import com.android.systemui.qs.panels.data.repository.QuickQuickSettingsRowRepository
 import javax.inject.Inject
+import kotlinx.coroutines.flow.Flow
 
 @SysUISingleton
 class QuickQuickSettingsRowInteractor
 @Inject
 constructor(
-    quickQuickSettingsRowRepository: QuickQuickSettingsRowRepository,
+    private val quickQuickSettingsRowRepository: QuickQuickSettingsRowRepository,
+    private val preferencesInteractor: QSPreferencesInteractor,
 ) {
     val rows = quickQuickSettingsRowRepository.rows
 
-    val defaultRows = 2
+    val defaultRows = 1
+
+    /** The row counts the user can pick. */
+    val rowsRange: IntRange =
+        QuickQuickSettingsRowRepository.MIN_ROWS..QuickQuickSettingsRowRepository.MAX_ROWS
+
+    /** IchthysOS: tiles per row of the collapsed panel. Not the columns of the expanded grid. */
+    val columns: Flow<Int> = preferencesInteractor.collapsedColumns
+
+    val defaultColumns: Int = QSPreferencesRepository.COLLAPSED_COLUMNS_DEFAULT
+
+    /** The tiles per row the user can pick. */
+    val columnsRange: IntRange =
+        QSPreferencesRepository.COLLAPSED_COLUMNS_MIN..QSPreferencesRepository.COLLAPSED_COLUMNS_MAX
+
+    fun setRows(rows: Int) {
+        quickQuickSettingsRowRepository.setRows(rows)
+    }
+
+    fun setColumns(columns: Int) {
+        preferencesInteractor.setCollapsedColumns(columns)
+    }
+
+    /** Back to [defaultColumns]: the key is deleted, not set to the default. */
+    fun resetColumns() {
+        preferencesInteractor.setCollapsedColumns(null)
+    }
 }

@@ -22,5 +22,10 @@ import com.android.systemui.qs.pipeline.domain.interactor.currentTilesInteractor
 
 val Kosmos.sizedTilesResetInteractor by
     Kosmos.Fixture {
-        SizedTilesResetInteractor(currentTilesInteractor, iconTilesInteractor, uiEventLogger)
+        SizedTilesResetInteractor(
+            currentTilesInteractor,
+            iconTilesInteractor,
+            quickQuickSettingsRowInteractor,
+            uiEventLogger,
+        )
     }

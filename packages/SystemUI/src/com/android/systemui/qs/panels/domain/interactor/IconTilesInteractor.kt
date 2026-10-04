@@ -62,6 +62,17 @@ constructor(
             emptyList(),
         )
 
+    /**
+     * IchthysOS: the tiles picked for the collapsed panel (quick quick settings), in order. Empty
+     * while none are picked; the collapsed panel then shows the first tiles of the tile list.
+     */
+    val collapsedTilesSpecs =
+        preferencesInteractor.collapsedTilesSpecs.stateIn(
+            scope,
+            SharingStarted.Eagerly,
+            emptyList(),
+        )
+
     fun isIconTile(spec: TileSpec): Boolean = !largeTilesSpecs.value.contains(spec)
 
     /** Set the large tiles to be [specs] */
@@ -87,6 +98,16 @@ constructor(
     /** IchthysOS "Shoal": free the junction slots that hold any of [specs] */
     fun removeJunctionTiles(specs: Set<TileSpec>) {
         preferencesInteractor.removeJunctionTilesSpecs(specs)
+    }
+
+    /** IchthysOS: set the collapsed panel's tiles to be [specs]; empty for the automatic ones */
+    fun setCollapsedTiles(specs: List<TileSpec>) {
+        preferencesInteractor.setCollapsedTilesSpecs(specs)
+    }
+
+    /** IchthysOS: take [specs] out of the collapsed panel's tiles */
+    fun removeCollapsedTiles(specs: Set<TileSpec>) {
+        preferencesInteractor.removeCollapsedTilesSpecs(specs)
     }
 
     fun resetToDefault() {

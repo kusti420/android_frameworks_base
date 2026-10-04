@@ -32,6 +32,7 @@ class SizedTilesResetInteractor
 constructor(
     private val currentTilesInteractor: CurrentTilesInteractor,
     private val iconTilesInteractor: IconTilesInteractor,
+    private val quickQuickSettingsRowInteractor: QuickQuickSettingsRowInteractor,
     private val uiEventLogger: UiEventLogger,
 ) : EditTilesResetInteractor {
     override fun reset() {
@@ -40,5 +41,9 @@ constructor(
         iconTilesInteractor.resetToDefault()
         // IchthysOS "Shoal": the default layout has no junction tiles.
         iconTilesInteractor.setJunctionTiles(emptyList())
+        // IchthysOS: nor a collapsed panel of its own; that one follows the tile list again, at
+        // the default tiles per row.
+        iconTilesInteractor.setCollapsedTiles(emptyList())
+        quickQuickSettingsRowInteractor.resetColumns()
     }
 }

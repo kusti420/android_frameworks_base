@@ -21,7 +21,6 @@ import android.os.UserHandle
 import android.provider.Settings
 import com.android.systemui.common.ui.data.repository.ConfigurationRepository
 import com.android.systemui.dagger.SysUISingleton
-import com.android.systemui.res.R
 import com.android.systemui.shade.ShadeDisplayAware
 import com.android.systemui.util.kotlin.emitOnStart
 import com.android.systemui.util.settings.SettingsProxyExt.observerFlow
@@ -47,17 +46,27 @@ constructor(
             .map { currentRows }
 
     /**
-     * IchthysOS: crDroid's `qqs_tiles_rows` (Settings.System, `qs_layout_settings.xml`, range 1..3)
-     * — the number of tile rows shown in the collapsed Quick Quick Settings header. Nothing read it
-     * before, so the slider was inert.
+     * IchthysOS: writes the user's row count, the same key the crDroid slider and the ichthys.nix
+     * option quickSettings.layout.qqsTilesRows write. The tile editor sets it.
+     */
+    fun setRows(rows: Int) {
+        systemSettings.putIntForUser(
+            Settings.System.QQS_TILES_ROWS,
+            rows.coerceIn(MIN_ROWS, MAX_ROWS),
+            UserHandle.USER_CURRENT,
+        )
+    }
+
+    /**
+     * IchthysOS: crDroid's `qqs_tiles_rows` (Settings.System, `qs_layout_settings.xml`, range 1..5)
+     * — the number of tile rows shown in the collapsed Quick Quick Settings header.
      *
-     * crDroid's companion `qqs_tiles_rows_landscape` is commented out in `qs_layout_settings.xml`,
-     * so there is no landscape key to honour: an unset value falls back to the per-orientation
-     * `quick_qs_paginated_grid_num_rows` resource (2 portrait / 1 landscape) exactly as before.
+     * Unset is one row. The header only ever drew one row whatever this said (and whatever the
+     * `quick_qs_paginated_grid_num_rows` resource said), so one row is what an untouched panel
+     * has to keep now that the value is honoured.
      */
     private val currentRows: Int
         get() {
-            val resourceRows = resources.getInteger(R.integer.quick_qs_paginated_grid_num_rows)
             // USER_CURRENT, never the resolver's own user: built from a per-display context.
             val userRows =
                 systemSettings.getIntForUser(
@@ -65,13 +74,12 @@ constructor(
                     UNSET,
                     UserHandle.USER_CURRENT,
                 )
-            // Clamp the user's value only — never the resource fallback, which a device overlay is
-            // allowed to set outside the slider's range.
-            return if (userRows == UNSET) resourceRows else userRows.coerceIn(MIN_ROWS, MAX_ROWS)
+            return if (userRows == UNSET) DEFAULT_ROWS else userRows.coerceIn(MIN_ROWS, MAX_ROWS)
         }
 
-    private companion object {
-        const val UNSET = -1
+    companion object {
+        private const val UNSET = -1
+        private const val DEFAULT_ROWS = 1
         // Mirrors settings:min / android:max on the crDroid seek bar.
         const val MIN_ROWS = 1
         const val MAX_ROWS = 5

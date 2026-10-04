@@ -43,9 +43,12 @@ fun ContentScope.QuickQuickSettings(
     modifier: Modifier = Modifier,
     listening: () -> Boolean,
 ) {
-    // Android 8.1-style collapsed QS: a single row of icon-only tiles.
-    val columns = 7
-    val sizedTiles = viewModel.tileViewModels.take(columns)
+    // Android 8.1-style collapsed QS: rows of icon-only tiles. How many per row and how many
+    // rows is the user's choice (IchthysOS: quickSettings.collapsed.columns, qqs_tiles_rows); the
+    // view model has already cut the tiles down to that. The grid gives every tile an equal share
+    // of the width and the tile centres its bubble in it, so any count per row comes out even.
+    val columns = viewModel.columns
+    val sizedTiles = viewModel.tileViewModels
     val tiles = sizedTiles.fastMap { it.tile }
     val squishiness by viewModel.squishinessViewModel.squishiness.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()

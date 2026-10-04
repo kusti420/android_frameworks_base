@@ -25,8 +25,8 @@ import com.android.systemui.media.controls.ui.controller.MediaHierarchyManager.C
 import com.android.systemui.media.remedia.ui.compose.MediaUiBehavior
 import com.android.systemui.media.remedia.ui.viewmodel.MediaCarouselVisibility
 import com.android.systemui.qs.panels.domain.interactor.QuickQuickSettingsRowInteractor
+import com.android.systemui.qs.panels.shared.model.SizedTile
 import com.android.systemui.qs.panels.shared.model.SizedTileImpl
-import com.android.systemui.qs.panels.shared.model.splitInRowsSequence
 import com.android.systemui.qs.pipeline.domain.interactor.CurrentTilesInteractor
 import com.android.systemui.qs.pipeline.shared.TileSpec
 import dagger.assisted.AssistedFactory
@@ -50,18 +50,28 @@ constructor(
     private val mediaInRowViewModel =
         mediaInRowInLandscapeViewModelFactory.create(LOCATION_QQS, mediaUiBehavior)
 
+    /**
+     * IchthysOS: tiles per row as laid out. This is the collapsed panel's own count
+     * (quickSettings.collapsed.columns), not the columns of the expanded grid. Next to the media
+     * player the panel has half the width, so it takes half the tiles per row (rounded up, so that
+     * an odd count still fits on twice the rows).
+     */
     val columns: Int
-        get() = qsColumnsViewModel.columns
+        get() =
+            if (mediaInRowViewModel.shouldMediaShowInRow) {
+                (columnsWithoutMedia + 1) / 2
+            } else {
+                columnsWithoutMedia
+            }
+
+    private val columnsWithoutMedia by
+        quickQuickSettingsRowInteractor.columns.hydratedStateOf(
+            initialValue = quickQuickSettingsRowInteractor.defaultColumns
+        )
 
     private val largeTiles by iconTilesViewModel.largeTiles.hydratedStateOf()
 
-    private val rows: Int
-        get() =
-            if (mediaInRowViewModel.shouldMediaShowInRow) {
-                rowsWithoutMedia * 2
-            } else {
-                rowsWithoutMedia
-            }
+    private val collapsedTiles by iconTilesViewModel.collapsedTiles.hydratedStateOf()
 
     private val rowsWithoutMedia by
         quickQuickSettingsRowInteractor.rows.hydratedStateOf(
@@ -73,12 +83,19 @@ constructor(
 
     private val currentTiles by tilesInteractor.currentTiles.hydratedStateOf()
 
-    val tileViewModels by derivedStateOf {
-        currentTiles
-            // Android 8.1-style QQS: uniform single-cell (icon-only) tiles, so pack width 1 to
-            // surface enough tiles for a full row of icons.
+    val tileViewModels: List<SizedTile<TileViewModel>> by derivedStateOf {
+        // IchthysOS: the tiles picked for the collapsed panel, as far as they are in quick
+        // settings. With none picked (or none of them left) it is the first tiles of the tile
+        // list, as it was before the panel had a selection of its own.
+        val bySpec = currentTiles.associateBy { it.spec }
+        val picked = collapsedTiles.mapNotNull { bySpec[it] }
+        picked
+            .ifEmpty { currentTiles }
+            // As many as the user's tiles per row and rows hold. Next to the media player these
+            // are the same tiles: [columns] is halved there, so they wrap onto twice the rows.
+            .take(columnsWithoutMedia * rowsWithoutMedia)
+            // Android 8.1-style QQS: uniform single-cell (icon-only) tiles.
             .map { SizedTileImpl(TileViewModel(it.tile, it.spec, it.expandable), 1) }
-            .let { splitInRowsSequence(it, columns).take(rows).toList().flatten() }
     }
 
     override suspend fun onActivated() {
