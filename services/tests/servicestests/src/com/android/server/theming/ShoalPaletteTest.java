@@ -137,6 +137,47 @@ public class ShoalPaletteTest {
     }
 
     @Test
+    public void darkAccent_keepsItsDarkShadeDark() {
+        // A pink darker than mid-tone: its on-colour is white. accentN_800 doubles as a dark
+        // container in the tonal contract (Fossify apps paint dialogs with accent2_800), so it
+        // must not follow on_accent to white.
+        final int pink = 0xFFC2185B;
+        final ShoalPalette p = ShoalPalette.create(pink, Surface.HAIRLINE, ShoalPalette.NEUTRAL,
+                4, false, true);
+        final Map<String, Integer> t = p.tokens();
+        assertThat(t.get(ShoalPalette.ACCENT)).isEqualTo(pink);
+        assertThat(t.get(ShoalPalette.ON_ACCENT)).isEqualTo(0xFFFFFFFF);
+        assertThat(p.legacy("accent1_800", 0xFF123456)).isEqualTo(t.get(ShoalPalette.INK));
+        assertThat(p.legacy("accent2_800", 0xFF123456)).isEqualTo(t.get(ShoalPalette.INK));
+        assertThat(p.legacy("accent1_400", 0xFF123456)).isEqualTo(pink);
+        // The on-container poles still follow on_accent: their containers are the flat accent.
+        assertThat(p.legacy("accent2_100", 0xFF123456)).isEqualTo(0xFFFFFFFF);
+    }
+
+    @Test
+    public void unreadableAccent_isMovedUntilItShows() {
+        // Navy on ink is 1.5:1; a pale yellow on the white card is 1.2:1.
+        final int navy = 0xFF1A237E;
+        final Map<String, Integer> dark = ShoalPalette.create(navy, Surface.HAIRLINE,
+                ShoalPalette.NEUTRAL, 4, false, true).tokens();
+        assertThat(dark.get(ShoalPalette.ACCENT)).isNotEqualTo(navy);
+        assertThat(ShoalPalette.contrast(dark.get(ShoalPalette.ACCENT),
+                dark.get(ShoalPalette.INK))).isAtLeast(2.5);
+        assertThat(ShoalPalette.contrast(dark.get(ShoalPalette.ACCENT),
+                dark.get(ShoalPalette.CARD))).isAtLeast(2.5);
+        final int yellow = 0xFFFFEB3B;
+        final Map<String, Integer> light = ShoalPalette.create(yellow, Surface.HAIRLINE,
+                ShoalPalette.NEUTRAL, 4, false, false).tokens();
+        assertThat(ShoalPalette.contrast(light.get(ShoalPalette.ACCENT),
+                light.get(ShoalPalette.CARD))).isAtLeast(2.5);
+        // Koi passes untouched in both themes.
+        for (boolean isDark : new boolean[] {true, false}) {
+            assertThat(ShoalPalette.create(KOI, Surface.HAIRLINE, ShoalPalette.NEUTRAL, 4,
+                    false, isDark).tokens().get(ShoalPalette.ACCENT)).isEqualTo(KOI);
+        }
+    }
+
+    @Test
     public void pitchBlack_pinsInkInDarkOnly() {
         assertThat(ShoalPalette.create(KOI, Surface.HAIRLINE, ShoalPalette.TINTED, 3, true, true)
                 .tokens().get(ShoalPalette.INK)).isEqualTo(0xFF000000);

@@ -170,6 +170,12 @@ public final class ShoalPalette {
 
     private static final double TEXT_CONTRAST = 4.5;
     private static final double OUTLINE_CONTRAST = 3.0;
+    /**
+     * Minimum contrast of the accent against the ground and the card. Deliberately below the 3:1
+     * of {@link #OUTLINE_CONTRAST}: koi on the light theme's white card is 2.8:1 and is the
+     * designed look, so the floor only catches accents that are clearly harder to see than that.
+     */
+    private static final double ACCENT_CONTRAST = 2.5;
 
     private static final int BLACK = 0xFF000000;
     private static final int WHITE = 0xFFFFFFFF;
@@ -199,8 +205,8 @@ public final class ShoalPalette {
             mHash = nonZero(31 * (surface.ordinal() + 1) + mLevels);
             return;
         }
-        final int accent = BLACK | (seed & 0x00FFFFFF);
-        final double seedHue = Hct.fromInt(accent).getHue();
+        final int seedAccent = BLACK | (seed & 0x00FFFFFF);
+        final double seedHue = Hct.fromInt(seedAccent).getHue();
         final int[] anchors = dark ? DARK_ANCHORS : LIGHT_ANCHORS;
 
         // 1. Rungs: anchors (NEUTRAL) or the cold-shifted seed hue at the anchor tone (TINTED).
@@ -254,7 +260,13 @@ public final class ShoalPalette {
         r[R_MUTED] = ensureContrast(r[R_MUTED], surfaces, TEXT_CONTRAST);
         r[R_OUTLINE] = ensureContrast(r[R_OUTLINE], new int[] {r[R_INK]}, OUTLINE_CONTRAST);
 
-        // 7. Accent tokens.
+        // 7. Accent tokens. The accent is the seed as chosen, unless it cannot be told apart from
+        //    the ground it sits on (a navy accent on ink, a pale yellow on paper): then its tone
+        //    is moved, hue and chroma kept, until outlines, glyphs and large text in it reach
+        //    ACCENT_CONTRAST on the ground and the card. Koi and other mid-tone accents pass
+        //    untouched, so "the accent you picked" stays exact wherever that is usable.
+        final int accent = ensureContrast(seedAccent, new int[] {r[R_INK], r[R_CARD]},
+                ACCENT_CONTRAST);
         final int onAccent = onColor(accent);
         final int accentTint = blend(accent, r[R_INK], 0.10);
         final int accentFill = blend(accent, r[R_CARD], 0.20);
@@ -341,10 +353,17 @@ public final class ShoalPalette {
      * or {@code null} to keep Monet. Only the dark theme's legacy tokens are rewritten (as before):
      * <ul>
      *   <li>{@code accentN_100..700}: the flat accent, so every legacy accent use is one colour.</li>
-     *   <li>{@code accentN_800} and {@code accent2_100}/{@code accent3_100}: the dark on-accent and
-     *       on-container poles. Their containers are the flat accent, so they take on_accent
-     *       (the same contrast rule as the Material on_* roles). {@code accent1_100} stays the
-     *       accent: it is {@code ?android:attr/colorAccent} in dark.</li>
+     *   <li>{@code accent2_100}/{@code accent3_100}: the on-container poles. Their containers are
+     *       the flat accent, so they take on_accent (the same contrast rule as the Material on_*
+     *       roles). {@code accent1_100} stays the accent: it is {@code ?android:attr/colorAccent}
+     *       in dark.</li>
+     *   <li>{@code accentN_800}: always dark. In the Monet contract it is both the text on a
+     *       primary button and a dark container; apps that theme themselves from the tonal
+     *       tokens (the Fossify apps paint dialogs, the status bar and selected rows with
+     *       {@code accent2_800}) rely on the second meaning. It used to be on_accent, which is
+     *       white for any accent darker than mid-tone, and turned those surfaces into white
+     *       slabs under near-white text. Black when on_accent is black (unchanged for koi),
+     *       ink otherwise.</li>
      *   <li>{@code neutralN_800..1000}: ink ({@code neutral1_800} must equal system_surface since
      *       SettingsLib paints its content area from it); {@code neutralN_700}: raised.</li>
      *   <li>{@code neutralN_0..600}: kept at their tone, moved to the ramp's hue/chroma, so
@@ -369,7 +388,11 @@ public final class ShoalPalette {
             return null;
         }
         if (accent) {
-            if (shade == 800 || (shade == 100 && !name.startsWith("accent1_"))) {
+            if (shade == 800) {
+                final int onAccent = mTokens.get(ON_ACCENT);
+                return onAccent == BLACK ? onAccent : mTokens.get(INK);
+            }
+            if (shade == 100 && !name.startsWith("accent1_")) {
                 return mTokens.get(ON_ACCENT);
             }
             if (shade >= 100 && shade <= 700) {
