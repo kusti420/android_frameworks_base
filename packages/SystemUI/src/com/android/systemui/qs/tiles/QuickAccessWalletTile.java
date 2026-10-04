@@ -31,7 +31,11 @@ import static com.android.systemui.wallet.util.WalletCardUtilsKt.getPaymentCards
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
+import android.graphics.Canvas;
+import android.graphics.Rect;
+import android.graphics.drawable.AdaptiveIconDrawable;
 import android.graphics.drawable.Drawable;
+import android.graphics.drawable.DrawableWrapper;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.UserHandle;
@@ -93,6 +97,8 @@ public class QuickAccessWalletTile extends QSTileImpl<QSTile.State> {
     private boolean mIsWalletUpdating = true;
     @Nullable
     @VisibleForTesting Drawable mCardViewDrawable;
+    /** IchthysOS: Curve Pay's logo as the tile icon, made once (see {@link #logoOf}). */
+    @Nullable private QSTile.Icon mCurveLogoIcon;
 
     @Inject
     public QuickAccessWalletTile(
@@ -209,9 +215,16 @@ public class QuickAccessWalletTile extends QSTileImpl<QSTile.State> {
                 CharSequence curveLabel = mPackageManager.getApplicationLabel(ai);
                 state.label = curveLabel;
                 state.contentDescription = curveLabel;
-                Drawable curveIcon = mPackageManager.getApplicationIcon(ai);
-                if (curveIcon != null) {
-                    state.icon = new DrawableIcon(curveIcon);
+                // A tile draws its icon in one colour, which turns a whole launcher icon into a
+                // filled blob. Only the logo of it is used; without one the wallet glyph stays.
+                if (mCurveLogoIcon == null) {
+                    final Drawable curveLogo = logoOf(mPackageManager.getApplicationIcon(ai));
+                    if (curveLogo != null) {
+                        mCurveLogoIcon = new DrawableIcon(curveLogo);
+                    }
+                }
+                if (mCurveLogoIcon != null) {
+                    state.icon = mCurveLogoIcon;
                 }
             } catch (PackageManager.NameNotFoundException e) {
                 // Shouldn't happen since we just checked, but fall back gracefully
@@ -224,6 +237,43 @@ public class QuickAccessWalletTile extends QSTileImpl<QSTile.State> {
             state.sideViewCustomDrawable = null;
         }
         state.expandedAccessibilityClassName = Button.class.getName();
+    }
+
+    /**
+     * IchthysOS: the logo of a launcher icon, to draw in one colour: its monochrome layer, or else
+     * its foreground layer, which for most apps is the logo on a transparent ground. Null for an
+     * icon without layers.
+     */
+    @Nullable
+    private static Drawable logoOf(@Nullable Drawable appIcon) {
+        if (!(appIcon instanceof AdaptiveIconDrawable)) {
+            return null;
+        }
+        final AdaptiveIconDrawable adaptive = (AdaptiveIconDrawable) appIcon;
+        final Drawable layer = adaptive.getMonochrome() != null
+                ? adaptive.getMonochrome() : adaptive.getForeground();
+        return layer == null ? null : new IconLayerLogo(layer);
+    }
+
+    /**
+     * A layer of an adaptive icon is 108 dp with its logo inside the middle 66 dp; this draws it
+     * so that the middle 72 dp, the part a launcher shows, fills the bounds.
+     */
+    private static final class IconLayerLogo extends DrawableWrapper {
+        private static final float ZOOM = 108f / 72f;
+
+        IconLayerLogo(Drawable layer) {
+            super(layer);
+        }
+
+        @Override
+        public void draw(Canvas canvas) {
+            final Rect bounds = getBounds();
+            final int save = canvas.save();
+            canvas.scale(ZOOM, ZOOM, bounds.exactCenterX(), bounds.exactCenterY());
+            super.draw(canvas);
+            canvas.restoreToCount(save);
+        }
     }
 
     @Override
