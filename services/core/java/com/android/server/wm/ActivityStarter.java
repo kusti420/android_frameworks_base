@@ -2573,6 +2573,14 @@ class ActivityStarter {
                 ? targetTask.getTopNonFinishingActivity()
                 : targetTaskTop;
 
+        // IchthysOS: the lock screen calculator shortcut found the calculator already running.
+        // The permission to show over the keyguard was given to the record made for this start,
+        // which is dropped here; hand it to the activity that is shown instead, or the
+        // calculator comes to the front behind the keyguard.
+        if (mStartActivity.isLaunchedByLockscreenShortcut() && targetTaskTop != null) {
+            targetTaskTop.setShowWhenLocked(true);
+        }
+
         // The mLastStartActivityRecord isn't added to task, update latest launch source to top
         // activity before creating starting window.
         if (mLastStartActivityRecord != null && targetTaskTop != mLastStartActivityRecord) {
@@ -2637,6 +2645,11 @@ class ActivityStarter {
                     mStartActivity.requestCode, RESULT_CANCELED,
                     null /* data */, null /* callerToken */, null /* dataGrants */);
             mStartActivity.resultTo = null;
+        }
+
+        // IchthysOS: as in recycleTask, for a calculator that is already the top activity.
+        if (mStartActivity.isLaunchedByLockscreenShortcut()) {
+            top.setShowWhenLocked(true);
         }
 
         deliverNewIntent(top, intentGrants);

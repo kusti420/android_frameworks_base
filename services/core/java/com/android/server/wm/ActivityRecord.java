@@ -677,6 +677,8 @@ final class ActivityRecord extends WindowToken {
     /** IchthysOS: intent extra set by SystemUI's lock screen calculator shortcut. */
     private static final String ICHTHYS_EXTRA_LOCKSCREEN_SHORTCUT =
             "org.ichthys.extra.LOCKSCREEN_SHORTCUT";
+    /** IchthysOS: this record was made for a start by that shortcut. */
+    private boolean mLaunchedByLockscreenShortcut;
     private boolean mInheritShowWhenLocked;
     private boolean mTurnScreenOn;
 
@@ -1984,6 +1986,7 @@ final class ActivityRecord extends WindowToken {
                 && _launchedFromPackage.equals(
                         _service.getSysUiServiceComponentLocked().getPackageName())) {
             mShowWhenLocked = true;
+            mLaunchedByLockscreenShortcut = true;
         }
         shortComponentName = _intent.getComponent().flattenToShortString();
         resolvedType = _resolvedType;
@@ -4834,6 +4837,11 @@ final class ActivityRecord extends WindowToken {
         }
 
         return false;
+    }
+
+    /** IchthysOS: see {@link #ICHTHYS_EXTRA_LOCKSCREEN_SHORTCUT}. */
+    boolean isLaunchedByLockscreenShortcut() {
+        return mLaunchedByLockscreenShortcut;
     }
 
     void setShowWhenLocked(boolean showWhenLocked) {
