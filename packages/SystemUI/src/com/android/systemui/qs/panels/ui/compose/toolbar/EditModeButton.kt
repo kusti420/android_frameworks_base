@@ -27,6 +27,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Text
@@ -82,6 +83,7 @@ fun EditModeButton(
     viewModel: EditModeButtonViewModel,
     modifier: Modifier = Modifier,
     isVisible: Boolean = true,
+    compact: Boolean = false,
 ) {
     if (!viewModel.isEditButtonVisible) {
         return
@@ -160,31 +162,42 @@ fun EditModeButton(
                 }
             },
         ) {
-            // IchthysOS "Shoal": a 44 dp hairline circle (#0c1013 + 1 dp #20282d).
+            // IchthysOS "Shoal": a 44 dp hairline circle (#0c1013 + 1 dp #20282d); 32 dp in the
+            // pager row ([compact]), which has to stay low enough to clear the docked player.
             val shoal = rememberShoalQsEnabled()
-            IconButton(
-                onClick = viewModel::onButtonClick,
-                shape = if (shoal) CircleShape else RoundedCornerShape(CornerSize(28.dp)),
-                modifier =
-                    Modifier.sysuiResTag("qs_edit_mode_button")
-                        .thenIf(shoal) {
-                            Modifier.size(44.dp)
-                                .clip(CircleShape)
-                                .background(ShoalQsColors.Track, CircleShape)
-                                .border(1.dp, ShoalQsColors.Hairline, CircleShape)
-                        }
-                        .borderOnFocus(
-                            color = MaterialTheme.colorScheme.secondary,
-                            cornerSize = CornerSize(24.dp),
-                        ),
+            val shoalSize = if (compact) 32.dp else 44.dp
+            CompositionLocalProvider(
+                // The 48 dp minimum touch size would undo the compact size.
+                value =
+                    LocalMinimumInteractiveComponentSize provides
+                        if (shoal && compact) 0.dp
+                        else LocalMinimumInteractiveComponentSize.current
             ) {
-                Icon(
-                    imageVector = Edit,
-                    contentDescription =
-                        stringResource(id = R.string.accessibility_quick_settings_edit),
-                    tint = if (shoal) ShoalQsColors.OnTileOff else LocalContentColor.current,
-                    modifier = if (shoal) Modifier.size(20.dp) else Modifier,
-                )
+                IconButton(
+                    onClick = viewModel::onButtonClick,
+                    shape = if (shoal) CircleShape else RoundedCornerShape(CornerSize(28.dp)),
+                    modifier =
+                        Modifier.sysuiResTag("qs_edit_mode_button")
+                            .thenIf(shoal) {
+                                Modifier.size(shoalSize)
+                                    .clip(CircleShape)
+                                    .background(ShoalQsColors.Track, CircleShape)
+                                    .border(1.dp, ShoalQsColors.Hairline, CircleShape)
+                            }
+                            .borderOnFocus(
+                                color = MaterialTheme.colorScheme.secondary,
+                                cornerSize = CornerSize(24.dp),
+                            ),
+                ) {
+                    Icon(
+                        imageVector = Edit,
+                        contentDescription =
+                            stringResource(id = R.string.accessibility_quick_settings_edit),
+                        tint = if (shoal) ShoalQsColors.OnTileOff else LocalContentColor.current,
+                        modifier =
+                            if (shoal) Modifier.size(if (compact) 16.dp else 20.dp) else Modifier,
+                    )
+                }
             }
         }
     }

@@ -49,6 +49,7 @@ import com.android.systemui.lifecycle.rememberViewModel
 import com.android.systemui.qs.panels.dagger.PaginatedBaseLayoutType
 import com.android.systemui.qs.panels.ui.compose.Dimensions.FooterHeight
 import com.android.systemui.qs.panels.ui.compose.Dimensions.InterPageSpacing
+import com.android.systemui.qs.panels.ui.compose.Dimensions.ShoalFooterHeight
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.LocalShoalJunctionOffset
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.ShoalJunctions
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.ShoalQsColors
@@ -194,6 +195,11 @@ constructor(
 
 private object Dimensions {
     val FooterHeight = 48.dp
+    /**
+     * IchthysOS "Shoal": the pager row is only the dots and a small edit button. At 48 dp it hung
+     * a few dp below the room left above the docked media strip, which clipped the button.
+     */
+    val ShoalFooterHeight = 36.dp
     val InterPageSpacing = 16.dp
 }
 
@@ -218,8 +224,13 @@ private fun FooterBar(
     //   constrained by the available space left over after PagerDots.
     // * On the end side, we place the edit mode button, with the same constraints as for
     //   BuildNumber (but it will usually fit, as it's just a square button).
+    // IchthysOS "Shoal": an 18x6 accent pill for the current page, 6 dp #2a3136 dots.
+    val shoal = rememberShoalQsEnabled()
+    val shoalAccent = rememberShoalAccent()
     Row(
-        modifier = Modifier.requiredHeight(FooterHeight).fillMaxWidth(),
+        modifier =
+            Modifier.requiredHeight(if (shoal) ShoalFooterHeight else FooterHeight)
+                .fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = spacedBy(8.dp),
     ) {
@@ -227,9 +238,6 @@ private fun FooterBar(
             BuildNumber(viewModelFactory = buildNumberViewModelFactory)
             Spacer(modifier = Modifier.weight(1f))
         }
-        // IchthysOS "Shoal": an 18x6 accent pill for the current page, 6 dp #2a3136 dots.
-        val shoal = rememberShoalQsEnabled()
-        val shoalAccent = rememberShoalAccent()
         PagerDots(
             pagerState = pagerState,
             activeColor =
@@ -245,7 +253,11 @@ private fun FooterBar(
         )
         Row(Modifier.weight(1f)) {
             Spacer(modifier = Modifier.weight(1f))
-            EditModeButton(viewModel = editButtonViewModel, isVisible = isVisible())
+            EditModeButton(
+                viewModel = editButtonViewModel,
+                isVisible = isVisible(),
+                compact = shoal,
+            )
         }
     }
 }
