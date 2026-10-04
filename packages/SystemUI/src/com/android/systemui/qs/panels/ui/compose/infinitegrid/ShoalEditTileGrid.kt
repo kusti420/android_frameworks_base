@@ -47,14 +47,16 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
@@ -176,6 +178,10 @@ internal object ShoalEdit {
     val TRAY_RADIUS = 22.dp
     /** Width of one tile of the tray: a [ShoalQs.CELL] circle with its label underneath. */
     val TRAY_ITEM_WIDTH = 62.dp
+    /** Tiles per row of the tray. */
+    const val TRAY_COLUMNS = 5
+    /** Two rows of the tray's tiles (circle, gap, a two-line label) and part of a third. */
+    val TRAY_GRID_MAX_HEIGHT = 212.dp
     /** Space between the cells of the collapsed panel's rows, as the panel has it. */
     val COLLAPSED_CELL_SPACING = 4.dp
     /** The least space between two tiles of the collapsed panel's rows: a selection ring fits. */
@@ -1545,18 +1551,23 @@ internal fun ShoalEditAvailable(
                 )
             }
         }
-        LazyRow(
-            modifier = Modifier.fillMaxWidth(),
+        // Rows of tiles that scroll up and down, with part of the next row showing so it is
+        // clear there is more. One sideways row meant a lot of scrolling to find a tile.
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(ShoalEdit.TRAY_COLUMNS),
+            modifier = Modifier.fillMaxWidth().heightIn(max = ShoalEdit.TRAY_GRID_MAX_HEIGHT),
             contentPadding = PaddingValues(horizontal = bleed),
-            horizontalArrangement = spacedBy(14.dp),
+            verticalArrangement = spacedBy(10.dp),
         ) {
             items(shown, key = { it.tileSpec.spec }) { tile ->
-                ShoalEditTrayTile(
-                    tile = tile,
-                    fonts = fonts,
-                    dragState = dragState,
-                    onClick = { onTrayClick(tile.tileSpec) },
-                )
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+                    ShoalEditTrayTile(
+                        tile = tile,
+                        fonts = fonts,
+                        dragState = dragState,
+                        onClick = { onTrayClick(tile.tileSpec) },
+                    )
+                }
             }
         }
     }
