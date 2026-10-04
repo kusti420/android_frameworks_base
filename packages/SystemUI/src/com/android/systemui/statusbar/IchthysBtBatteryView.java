@@ -46,6 +46,7 @@ import java.util.ArrayList;
  * accent-outlined pill in the status bar: a Bluetooth glyph plus the percentage in the monospaced
  * numeral face. Shown only in the zig-zag layout (Settings.Secure ichthys_statusbar_layout) and
  * only while a connected device reports a battery level; the lowest level wins when several do.
+ * Earbuds that report each bud get both levels, the left one above the right one.
  */
 public class IchthysBtBatteryView extends View implements DarkReceiver,
         BluetoothController.Callback {
@@ -59,6 +60,11 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
     private static final float PAD_DP = 5f;
     private static final float GAP_DP = 2f;
     private static final float STROKE_DP = 1f;
+    // Two buds: a taller pill with two lines of slightly smaller numerals, right-aligned.
+    private static final float STACKED_PILL_HEIGHT_DP = 23f;
+    private static final float STACKED_TEXT_DP = 8.5f;
+    private static final float STACKED_LINE_DP = 9.5f;
+    private static final float STACKED_RADIUS_DP = 8f;
     private static final String BT_GLYPH = "M7 7l10 10-5 5V2l5 5L7 17";
 
     private final Paint mRingPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -72,9 +78,34 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
 
     private BluetoothController mBluetoothController;
     private boolean mZigzag;
-    private int mLevel = -1;
+    private Levels mLevels = Levels.NONE;
     private int mLevelRequest;
     private String mText = "";
+    /** The right bud's level, under {@link #mText}; null when there is one level to show. */
+    private String mSecondText;
+
+    /** What one device reports: its overall level, and each bud's if it has two (-1 if not). */
+    private static final class Levels {
+        static final Levels NONE = new Levels(-1, -1, -1);
+
+        final int overall;
+        final int left;
+        final int right;
+
+        Levels(int overall, int left, int right) {
+            this.overall = overall;
+            this.left = left;
+            this.right = right;
+        }
+
+        boolean hasBothBuds() {
+            return left >= 0 && right >= 0;
+        }
+
+        boolean sameAs(Levels other) {
+            return overall == other.overall && left == other.left && right == other.right;
+        }
+    }
 
     private final ContentObserver mSettingsObserver =
             new ContentObserver(new Handler(Looper.getMainLooper())) {
@@ -147,40 +178,52 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
         // can overtake each other on the background pool; only the newest one is applied.
         final int request = ++mLevelRequest;
         ThreadUtils.postOnBackgroundThread(() -> {
-            final int level = lowestLevel(controller);
+            final Levels levels = lowestLevels(controller);
             getContext().getMainExecutor().execute(() -> {
                 if (request == mLevelRequest) {
-                    applyLevel(level);
+                    applyLevels(levels);
                 }
             });
         });
     }
 
     /**
-     * The lowest level among the connected devices, or -1. Earbuds that report each bud (Fast
-     * Pair, and AirPods through IchthysPodBatteryController) count with their lower bud, or with
-     * the case if no bud is known; everything else with the level its profile reports.
+     * The levels of the connected device with the lowest one, or {@link Levels#NONE}. Earbuds that
+     * report each bud (Fast Pair, and AirPods through IchthysPodBatteryController) count with
+     * their lower bud, or with the case if no bud is known; everything else with the level its
+     * profile reports.
      */
-    private static int lowestLevel(BluetoothController controller) {
-        int level = -1;
+    private static Levels lowestLevels(BluetoothController controller) {
+        Levels lowest = Levels.NONE;
         if (controller.isBluetoothConnected()) {
             for (CachedBluetoothDevice device : controller.getConnectedDevices()) {
                 final BatteryLevelsInfo info = device.getBatteryLevelsInfo();
-                final int deviceLevel = info == null ? -1 : info.getOverallBatteryLevel();
-                if (deviceLevel >= 0 && (level < 0 || deviceLevel < level)) {
-                    level = deviceLevel;
+                final int level = info == null ? -1 : info.getOverallBatteryLevel();
+                if (level >= 0 && (lowest.overall < 0 || level < lowest.overall)) {
+                    lowest = new Levels(level, info.getLeftBatteryLevel(),
+                            info.getRightBatteryLevel());
                 }
             }
         }
-        return level;
+        return lowest;
     }
 
-    private void applyLevel(int level) {
-        final boolean show = mZigzag && level >= 0;
-        if (level != mLevel) {
-            mLevel = level;
-            mText = level >= 0 ? String.valueOf(level) : "";
-            setContentDescription(level >= 0 ? "Bluetooth device battery " + level + "%" : null);
+    private void applyLevels(Levels levels) {
+        final boolean show = mZigzag && levels.overall >= 0;
+        if (!levels.sameAs(mLevels)) {
+            mLevels = levels;
+            if (levels.hasBothBuds()) {
+                mText = String.valueOf(levels.left);
+                mSecondText = String.valueOf(levels.right);
+                setContentDescription("Bluetooth device battery, left " + levels.left
+                        + "%, right " + levels.right + "%");
+            } else {
+                mText = levels.overall >= 0 ? String.valueOf(levels.overall) : "";
+                mSecondText = null;
+                setContentDescription(levels.overall >= 0
+                        ? "Bluetooth device battery " + levels.overall + "%" : null);
+            }
+            mTextPaint.setTextSize((mSecondText != null ? STACKED_TEXT_DP : TEXT_DP) * mDensity);
             requestLayout();
             invalidate();
         }
@@ -247,11 +290,18 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
         invalidate();
     }
 
+    /** Width of the numerals: the wider line when there are two. */
+    private float textWidth() {
+        final float first = mTextPaint.measureText(mText);
+        return mSecondText == null ? first : Math.max(first, mTextPaint.measureText(mSecondText));
+    }
+
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-        final float pillHeight = PILL_HEIGHT_DP * mDensity;
+        final float pillHeight =
+                (mSecondText != null ? STACKED_PILL_HEIGHT_DP : PILL_HEIGHT_DP) * mDensity;
         final float width = PAD_DP * mDensity * 2 + GLYPH_DP * mDensity + GAP_DP * mDensity
-                + mTextPaint.measureText(mText);
+                + textWidth();
         final int height = MeasureSpec.getMode(heightMeasureSpec) == MeasureSpec.UNSPECIFIED
                 ? (int) Math.ceil(pillHeight) : MeasureSpec.getSize(heightMeasureSpec);
         // A little breathing room from the icons on either side.
@@ -260,16 +310,20 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
 
     @Override
     protected void onDraw(Canvas canvas) {
-        if (mLevel < 0) {
+        if (mLevels.overall < 0) {
             return;
         }
-        final float pillHeight = Math.min(PILL_HEIGHT_DP * mDensity, getHeight());
+        final boolean stacked = mSecondText != null;
+        final float pillHeight = Math.min(
+                (stacked ? STACKED_PILL_HEIGHT_DP : PILL_HEIGHT_DP) * mDensity, getHeight());
         final float stroke = mRingPaint.getStrokeWidth();
         final float left = 2 * mDensity;
         final float top = (getHeight() - pillHeight) / 2f;
         mPill.set(left + stroke / 2f, top + stroke / 2f, getWidth() - left - stroke / 2f,
                 top + pillHeight - stroke / 2f);
-        canvas.drawRoundRect(mPill, pillHeight / 2f, pillHeight / 2f, mRingPaint);
+        final float radius = stacked
+                ? Math.min(STACKED_RADIUS_DP * mDensity, pillHeight / 2f) : pillHeight / 2f;
+        canvas.drawRoundRect(mPill, radius, radius, mRingPaint);
 
         final float glyph = GLYPH_DP * mDensity;
         final float glyphLeft = left + PAD_DP * mDensity;
@@ -281,6 +335,17 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
 
         final Paint.FontMetrics fm = mTextPaint.getFontMetrics();
         final float baseline = getHeight() / 2f - (fm.ascent + fm.descent) / 2f;
-        canvas.drawText(mText, glyphLeft + glyph + GAP_DP * mDensity, baseline, mTextPaint);
+        final float textLeft = glyphLeft + glyph + GAP_DP * mDensity;
+        if (!stacked) {
+            canvas.drawText(mText, textLeft, baseline, mTextPaint);
+            return;
+        }
+        // Left bud above, right bud below, both ending at the same edge.
+        final float textRight = textLeft + textWidth();
+        final float half = STACKED_LINE_DP * mDensity / 2f;
+        canvas.drawText(mText, textRight - mTextPaint.measureText(mText), baseline - half,
+                mTextPaint);
+        canvas.drawText(mSecondText, textRight - mTextPaint.measureText(mSecondText),
+                baseline + half, mTextPaint);
     }
 }
