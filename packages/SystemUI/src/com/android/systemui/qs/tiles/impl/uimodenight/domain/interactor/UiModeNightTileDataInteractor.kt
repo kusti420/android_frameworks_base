@@ -19,7 +19,11 @@ package com.android.systemui.qs.tiles.impl.uimodenight.domain.interactor
 import android.app.UiModeManager
 import android.content.Context
 import android.content.res.Configuration
+import android.database.ContentObserver
+import android.os.Handler
+import android.os.Looper
 import android.os.UserHandle
+import android.provider.Settings
 import com.android.systemui.qs.tiles.base.domain.interactor.QSTileDataInteractor
 import com.android.systemui.qs.tiles.base.domain.model.DataUpdateTrigger
 import com.android.systemui.qs.tiles.impl.uimodenight.domain.interactor.model.UiModeNightTileModel
@@ -78,10 +82,30 @@ constructor(
                 }
             locationController.addCallback(locationCallback)
 
+            // IchthysOS: the tile cycles Off / On / Scheduled, and going between On and Scheduled
+            // (or Off and Scheduled by day) changes the mode without changing how the screen
+            // looks, so no configuration callback comes. The mode itself is in these settings.
+            val modeObserver =
+                object : ContentObserver(Handler(Looper.getMainLooper())) {
+                    override fun onChange(selfChange: Boolean) {
+                        trySend(createModel())
+                    }
+                }
+            for (key in
+                listOf(Settings.Secure.UI_NIGHT_MODE, Settings.Secure.UI_NIGHT_MODE_CUSTOM_TYPE)) {
+                context.contentResolver.registerContentObserver(
+                    Settings.Secure.getUriFor(key),
+                    false,
+                    modeObserver,
+                    UserHandle.USER_ALL,
+                )
+            }
+
             awaitClose {
                 configurationController.removeCallback(configurationCallback)
                 batteryController.removeCallback(batteryCallback)
                 locationController.removeCallback(locationCallback)
+                context.contentResolver.unregisterContentObserver(modeObserver)
             }
         }
 

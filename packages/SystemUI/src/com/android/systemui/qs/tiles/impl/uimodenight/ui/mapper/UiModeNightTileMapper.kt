@@ -49,6 +49,11 @@ constructor(@ShadeDisplayAware private val resources: Resources, private val the
                         resources.getString(
                             R.string.quick_settings_dark_mode_secondary_label_battery_saver
                         )
+                } else if (uiMode == UiModeManager.MODE_NIGHT_AUTO && !isLocationEnabled) {
+                    // IchthysOS: the tile cycles into this mode, so it has to say so even when
+                    // there is no sunset time to name.
+                    secondaryLabel =
+                        resources.getString(R.string.ichthys_night_light_mode_scheduled)
                 } else if (uiMode == UiModeManager.MODE_NIGHT_AUTO && isLocationEnabled) {
                     secondaryLabel =
                         resources.getString(
@@ -86,7 +91,9 @@ constructor(@ShadeDisplayAware private val resources: Resources, private val the
                                 else R.string.quick_settings_dark_mode_secondary_label_on_at_bedtime
                             )
                     } else {
-                        secondaryLabel = null // undefined type of nightModeCustomType
+                        // undefined type of nightModeCustomType
+                        secondaryLabel =
+                            resources.getString(R.string.ichthys_night_light_mode_scheduled)
                     }
                 } else {
                     secondaryLabel = null
