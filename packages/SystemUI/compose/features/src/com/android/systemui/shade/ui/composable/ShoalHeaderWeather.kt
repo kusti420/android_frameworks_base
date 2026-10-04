@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.android.compose.ui.graphics.painter.rememberDrawablePainter
 import com.android.internal.util.crdroid.OmniJawsClient
+import com.android.systemui.qs.rememberSecureSettingBoolean
 import com.android.systemui.shade.ui.ShoalShade
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -67,7 +68,8 @@ private data class ShoalHeaderWeatherState(
  * readout it replaces while the shade is open: the condition glyph, the temperature in the mono
  * face, and today's high and low below it. Tapping it opens the weather page.
  *
- * Shows nothing while the weather service is off or has no data. The data is the same OmniJaws
+ * Shows nothing while it is switched off (quickSettings.header.weather), the weather service is
+ * off or there is no data. The data is the same OmniJaws
  * the status bar weather reads.
  */
 @Composable
@@ -77,6 +79,8 @@ fun ShoalHeaderWeather(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // quickSettings.header.weather; unset means on.
+    if (!rememberSecureSettingBoolean(SETTING_ENABLED, default = true)) return
     val context = LocalContext.current
     val state = rememberShoalHeaderWeather(context) ?: return
     val monoFamily =
@@ -192,5 +196,7 @@ private fun readWeather(context: Context, client: OmniJawsClient): ShoalHeaderWe
     }
 }
 
+/** Settings.Secure, per user: show the weather in the shade header. */
+private const val SETTING_ENABLED = "ichthys_qs_header_weather"
 private val IconSize = 24.dp
 private val IconGap = 6.dp

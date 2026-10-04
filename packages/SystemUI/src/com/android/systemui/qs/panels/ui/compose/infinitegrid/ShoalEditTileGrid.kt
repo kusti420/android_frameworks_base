@@ -2080,7 +2080,7 @@ private fun ShoalEditButton(
 ) {
     val content =
         when (style) {
-            ShoalEditButtonStyle.Accent -> ShoalQsColors.Ink
+            ShoalEditButtonStyle.Accent -> ShoalQsColors.OnAccent
             ShoalEditButtonStyle.Tile -> ShoalQsColors.OnTileOff
             ShoalEditButtonStyle.Outline -> ShoalQsColors.Label
         }
@@ -2142,7 +2142,7 @@ private fun ShoalEditChip(
             text = text,
             style =
                 TextStyle(
-                    color = if (selected) ShoalQsColors.Ink else ShoalQsColors.Label,
+                    color = if (selected) ShoalQsColors.OnAccent else ShoalQsColors.Label,
                     fontSize = 12.sp,
                     fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                     fontFamily = fonts.text,

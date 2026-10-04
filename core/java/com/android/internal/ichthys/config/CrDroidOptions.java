@@ -95,7 +95,7 @@ final class CrDroidOptions {
         s.add(Option.bool("quickSettings.footerShowServices", Boolean.TRUE, "Running services shortcut", Binding.setting(Binding.Store.SYSTEM, "qs_footer_show_services")));
         s.add(Option.bool("quickSettings.footerShowSettings", Boolean.TRUE, "Settings shortcut", Binding.setting(Binding.Store.SYSTEM, "qs_footer_show_settings")));
         s.add(Option.bool("quickSettings.footerWarnings", Boolean.TRUE, "Footer alerts", Binding.setting(Binding.Store.SYSTEM, "qs_footer_warnings")));
-        s.add(Option.integer("quickSettings.layout.qqsTilesRows", 2L, 1L, 5L, "Quick QS Rows (portrait)", Binding.setting(Binding.Store.SYSTEM, "qqs_tiles_rows")));
+        s.add(Option.integer("quickSettings.layout.qqsTilesRows", 1L, 1L, 5L, "Quick QS Rows (portrait)", Binding.setting(Binding.Store.SYSTEM, "qqs_tiles_rows")));
         s.add(Option.integer("quickSettings.layout.tilesColumns", 4L, 2L, 10L, "Columns (portrait)", Binding.setting(Binding.Store.SYSTEM, "qs_tiles_columns")));
         s.add(Option.integer("quickSettings.layout.tilesColumnsLandscape", 4L, 2L, 10L, "Columns (landscape)", Binding.setting(Binding.Store.SYSTEM, "qs_tiles_columns_landscape")));
         s.add(Option.integer("quickSettings.layout.tilesRows", 4L, 2L, 8L, "Rows (portrait)", Binding.setting(Binding.Store.SYSTEM, "qs_tiles_rows")));

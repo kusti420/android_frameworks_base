@@ -262,6 +262,11 @@ final class IchthysOptions {
                 setting(SECURE, "ichthys_qs_media_dock_custom_action")));
         // --- Docked media player (end) ---
 
+        s.add(Option.bool("quickSettings.header.weather", Boolean.TRUE,
+                "Weather in the shade header: condition, temperature and today's high and low "
+                        + "(quickSettings.style = \"shoal\"; needs the weather service on).",
+                setting(SECURE, "ichthys_qs_header_weather")));
+
         s.add(Option.enumeration("quickSettings.style", new String[] {"grid", "shoal"},
                 new String[] {"grid", "shoal"}, "shoal",
                 "Tile layout: the standard grid, or the Shoal honeycomb of circles.",
