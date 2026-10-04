@@ -4844,7 +4844,23 @@ final class ActivityRecord extends WindowToken {
         return mLaunchedByLockscreenShortcut;
     }
 
+    /**
+     * IchthysOS: lets this activity show over the keyguard for the lock screen shortcut, for a
+     * start that reuses a running activity instead of the record the shortcut's start made.
+     */
+    void showOverKeyguardForLockscreenShortcut() {
+        mLaunchedByLockscreenShortcut = true;
+        setShowWhenLocked(true);
+    }
+
     void setShowWhenLocked(boolean showWhenLocked) {
+        // IchthysOS: an app with a "show on lock screen" preference of its own calls this with
+        // false on every start while that preference is off (the calculator does, a few
+        // milliseconds after it is resumed), which took back what the lock screen shortcut had
+        // just been given and sent the app behind the keyguard again.
+        if (!showWhenLocked && mLaunchedByLockscreenShortcut) {
+            return;
+        }
         if (mShowWhenLocked != showWhenLocked) {
             mShowWhenLocked = showWhenLocked;
             mDisplayContent.notifyKeyguardFlagsChanged();

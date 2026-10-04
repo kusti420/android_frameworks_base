@@ -2578,7 +2578,7 @@ class ActivityStarter {
         // which is dropped here; hand it to the activity that is shown instead, or the
         // calculator comes to the front behind the keyguard.
         if (mStartActivity.isLaunchedByLockscreenShortcut() && targetTaskTop != null) {
-            targetTaskTop.setShowWhenLocked(true);
+            targetTaskTop.showOverKeyguardForLockscreenShortcut();
         }
 
         // The mLastStartActivityRecord isn't added to task, update latest launch source to top
@@ -2649,7 +2649,7 @@ class ActivityStarter {
 
         // IchthysOS: as in recycleTask, for a calculator that is already the top activity.
         if (mStartActivity.isLaunchedByLockscreenShortcut()) {
-            top.setShowWhenLocked(true);
+            top.showOverKeyguardForLockscreenShortcut();
         }
 
         deliverNewIntent(top, intentGrants);
