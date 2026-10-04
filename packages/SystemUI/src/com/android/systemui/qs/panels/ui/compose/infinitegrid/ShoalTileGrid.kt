@@ -56,6 +56,7 @@ import androidx.compose.ui.graphics.PathOperation
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.TextStyle
@@ -118,6 +119,8 @@ internal object ShoalQs {
     const val MAX_PER_ROW = 6
     /** Glyph size inside a circle. */
     val CIRCLE_ICON = 20.dp
+    /** Circle diameter in the collapsed panel's row. */
+    val COLLAPSED_CIRCLE = 40.dp
 
     // Wide two-column tiles.
     val WIDE_HEIGHT = 52.dp
@@ -621,6 +624,9 @@ private fun ShoalCircleTile(
     modifier: Modifier = Modifier,
     iconSize: Dp = ShoalQs.CIRCLE_ICON,
     inset: Dp = 0.dp,
+    // Keep the glyph at the start when the tile is wider than tall, where a wide tile has its
+    // icon: for a circle that is being stretched into a wide tile by a scene transition.
+    iconAtStart: Boolean = false,
 ) {
     val state = rememberShoalTileState(tile, tileHapticsViewModelFactory)
     val uiState = state.uiState
@@ -698,15 +704,62 @@ private fun ShoalCircleTile(
                         isDualTarget = isDualTarget,
                         interactionSource = null,
                     ),
-            contentAlignment = Alignment.Center,
+            contentAlignment = if (iconAtStart) Alignment.CenterStart else Alignment.Center,
         ) {
             SmallTileContent(
                 iconProvider = state.iconProvider,
                 color = content,
                 size = { iconSize },
+                modifier = if (iconAtStart) Modifier.wideTileIconSlot() else Modifier,
             )
         }
     }
+}
+
+/**
+ * The glyph's place in a tile of any width: centred in a slot at the start that is as wide as a
+ * wide tile's icon area ([ShoalQs.WIDE_PADDING] + [ShoalQs.WIDE_ICON_TARGET] + padding again), or
+ * the whole tile when the tile is narrower than that. So the glyph is centred in a circle and
+ * ends up exactly where the wide tile draws its icon once the tile has grown to that size.
+ */
+private fun Modifier.wideTileIconSlot(): Modifier = layout { measurable, constraints ->
+    val slot = (ShoalQs.WIDE_PADDING * 2 + ShoalQs.WIDE_ICON_TARGET).roundToPx()
+    val width = minOf(slot, constraints.maxWidth)
+    val placeable = measurable.measure(constraints.copy(minWidth = 0, minHeight = 0))
+    layout(width, constraints.maxHeight) {
+        placeable.place(
+            (width - placeable.width) / 2,
+            (constraints.maxHeight - placeable.height) / 2,
+        )
+    }
+}
+
+/**
+ * The collapsed panel's tile in the Shoal style: the same circle as in the expanded panel's
+ * honeycomb, [ShoalQs.COLLAPSED_CIRCLE] across.
+ *
+ * It fills whatever size it is measured at beyond that. On the way to Quick Settings the scene
+ * transition measures the shared tile at sizes between this circle and the tile it becomes there,
+ * so the circle widens into the wide tile's pill as it travels, glyph at the start, instead of
+ * flying as a circle and turning into the wide tile at the very end.
+ */
+@Composable
+internal fun ShoalCollapsedTile(
+    tile: TileViewModel,
+    squishiness: () -> Float,
+    tileHapticsViewModelFactory: TileHapticsViewModel.Factory,
+    modifier: Modifier = Modifier,
+) {
+    ShoalCircleTile(
+        tile = tile,
+        accent = rememberShoalAccent(),
+        squishiness = squishiness,
+        tileHapticsViewModelFactory = tileHapticsViewModelFactory,
+        detailsViewModel = null,
+        requestToggleTextFeedback = {},
+        modifier = modifier.size(ShoalQs.COLLAPSED_CIRCLE),
+        iconAtStart = true,
+    )
 }
 
 private fun Context.shoalTileIcon(icon: IconProvider): Icon {

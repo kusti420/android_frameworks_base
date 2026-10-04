@@ -17,11 +17,14 @@
 package com.android.systemui.qs.panels.ui.compose
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.unit.dp
@@ -31,7 +34,9 @@ import com.android.compose.animation.scene.ContentScope
 import com.android.systemui.compose.modifiers.sysuiResTag
 import com.android.systemui.grid.ui.compose.VerticalSpannedGrid
 import com.android.systemui.qs.composefragment.ui.GridAnchor
+import com.android.systemui.qs.panels.ui.compose.infinitegrid.ShoalCollapsedTile
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.Tile
+import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalQsEnabled
 import com.android.systemui.qs.panels.ui.viewmodel.BounceableTileViewModel
 import com.android.systemui.qs.panels.ui.viewmodel.QuickQuickSettingsViewModel
 import com.android.systemui.qs.shared.ui.QuickSettings.Elements.toElementKey
@@ -52,6 +57,7 @@ fun ContentScope.QuickQuickSettings(
     val tiles = sizedTiles.fastMap { it.tile }
     val squishiness by viewModel.squishinessViewModel.squishiness.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
+    val shoal = rememberShoalQsEnabled()
 
     Box(modifier = modifier) {
         GridAnchor()
@@ -68,31 +74,51 @@ fun ContentScope.QuickQuickSettings(
             keys = { sizedTiles[it].tile.spec },
         ) { spanIndex, column, isFirstInColumn, isLastInColumn ->
             val it = sizedTiles[spanIndex]
-            Element(it.tile.spec.toElementKey(), Modifier) {
-                Tile(
-                    tile = it.tile,
-                    iconOnly = true,
-                    // Make the icon tile ~square so its fully-rounded shape reads as a circle.
-                    iconTileHeight = 44.dp,
-                    squishiness = { squishiness },
-                    coroutineScope = scope,
-                    bounceableInfo =
-                        bounceables.bounceableInfo(
-                            it,
-                            index = spanIndex,
-                            column = column,
-                            columns = columns,
-                            isFirstInRow = isFirstInColumn,
-                            isLastInRow = isLastInColumn,
-                        ),
-                    tileHapticsViewModelFactory = viewModel.tileHapticsViewModelFactory,
-                    // There should be no QuickQuickSettings when the details view is enabled.
-                    detailsViewModel = null,
-                    isVisible = listening,
-                )
+            if (shoal) {
+                // The element is the circle itself, centred in its cell, so the transition to
+                // Quick Settings starts from the circle and not from the wider cell.
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(CollapsedCellHeight),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Element(it.tile.spec.toElementKey(), Modifier) {
+                        ShoalCollapsedTile(
+                            tile = it.tile,
+                            squishiness = { squishiness },
+                            tileHapticsViewModelFactory = viewModel.tileHapticsViewModelFactory,
+                        )
+                    }
+                }
+            } else {
+                Element(it.tile.spec.toElementKey(), Modifier) {
+                    Tile(
+                        tile = it.tile,
+                        iconOnly = true,
+                        // Make the icon tile ~square so its fully-rounded shape reads as a circle.
+                        iconTileHeight = CollapsedCellHeight,
+                        squishiness = { squishiness },
+                        coroutineScope = scope,
+                        bounceableInfo =
+                            bounceables.bounceableInfo(
+                                it,
+                                index = spanIndex,
+                                column = column,
+                                columns = columns,
+                                isFirstInRow = isFirstInColumn,
+                                isLastInRow = isLastInColumn,
+                            ),
+                        tileHapticsViewModelFactory = viewModel.tileHapticsViewModelFactory,
+                        // There should be no QuickQuickSettings when the details view is enabled.
+                        detailsViewModel = null,
+                        isVisible = listening,
+                    )
+                }
             }
         }
     }
 
     TileListener(tiles, listening)
 }
+
+/** Height of a cell of the collapsed panel's row. */
+private val CollapsedCellHeight = 44.dp
