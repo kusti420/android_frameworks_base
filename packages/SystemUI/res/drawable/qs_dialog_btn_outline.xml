@@ -29,7 +29,7 @@
                 <corners android:radius="?android:attr/buttonCornerRadius"/>
                 <solid android:color="@android:color/transparent"/>
                 <stroke android:color="@color/qs_dialog_btn_outline"
-                        android:width="1dp"
+                        android:width="@*android:dimen/ichthys_hairline_width"
                 />
                 <padding android:left="@dimen/dialog_button_horizontal_padding"
                          android:top="@dimen/dialog_button_vertical_padding"

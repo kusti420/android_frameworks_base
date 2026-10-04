@@ -594,7 +594,10 @@
     <style name="Theme.SystemUI.DayNightDialog" parent="@android:style/Theme.DeviceDefault.Light.Dialog"/>
 
     <style name="Theme.SystemUI.Dialog" parent="@style/Theme.SystemUI.DayNightDialog">
-        <item name="android:buttonCornerRadius">28dp</item>
+        <!-- Shoal: the framework dialog surface plus a hairline edge. -->
+        <item name="android:windowBackground">@drawable/ichthys_dialog_background</item>
+        <!-- Follows theme.shape (ThemeApplier overlays it), not a fixed pill. -->
+        <item name="android:buttonCornerRadius">@*android:dimen/config_buttonCornerRadius</item>
         <item name="android:buttonBarPositiveButtonStyle">@style/Widget.Dialog.Button</item>
         <item name="android:buttonBarNegativeButtonStyle">@style/Widget.Dialog.Button.BorderButton</item>
         <item name="android:buttonBarNeutralButtonStyle">@style/Widget.Dialog.Button.BorderButton</item>
@@ -628,7 +631,9 @@
         <item name="android:paddingBottom">@dimen/dialog_bottom_padding</item>
     </style>
 
-    <style name="Theme.SystemUI.Dialog.Alert" parent="@*android:style/Theme.DeviceDefault.Light.Dialog.Alert" />
+    <style name="Theme.SystemUI.Dialog.Alert" parent="@*android:style/Theme.DeviceDefault.Light.Dialog.Alert">
+        <item name="android:windowBackground">@drawable/ichthys_dialog_background</item>
+    </style>
 
     <style name="Theme.SystemUI.Dialog.Alert.SensorPrivacy" parent="Theme.SystemUI.Dialog.Alert">
         <item name="android:windowNoTitle">true</item>
@@ -1014,7 +1019,7 @@
 
     <style name="TextAppearance.ScreenRecord.SwitchLabel">
         <item name="android:textAppearance">?android:attr/textAppearanceMedium</item>
-        <item name="android:fontFamily">variable-title-medium-emphasized</item>
+        <item name="android:fontFamily">@*android:string/config_bodyFontFamilyMedium</item>
         <item name="android:textSize">16sp</item>
         <item name="android:textColor">@color/materialColorOnSurface</item>
     </style>
@@ -1258,7 +1263,7 @@
 
     <style name="TextAppearance.PrivacyDialog">
         <item name="android:textSize">14sp</item>
-        <item name="android:fontFamily">@*android:string/config_headlineFontFamily</item>
+        <item name="android:fontFamily">@*android:string/config_bodyFontFamily</item>
         <item name="android:textColor">@color/materialColorOnSurface</item>
     </style>
 
@@ -1266,7 +1271,7 @@
     <style name="Wallet" />
 
     <style name="Wallet.TextAppearance">
-        <item name="android:fontFamily">@*android:string/config_headlineFontFamily</item>
+        <item name="android:fontFamily">@*android:string/config_bodyFontFamily</item>
         <item name="android:textColor">@color/materialColorOnSurface</item>
         <item name="android:singleLine">true</item>
         <item name="android:textSize">14sp</item>
@@ -1347,7 +1352,7 @@
     <style name="TextAppearance.Dialog.Body" parent="@android:style/TextAppearance.DeviceDefault.Medium">
         <item name="android:textColor">@color/materialColorOnSurfaceVariant</item>
         <item name="android:textSize">14sp</item>
-        <item name="android:fontFamily">@*android:string/config_headlineFontFamily</item>
+        <item name="android:fontFamily">@*android:string/config_bodyFontFamily</item>
         <item name="android:lineHeight">20sp</item>
     </style>
 
@@ -1359,7 +1364,7 @@
     <!-- We explicitly overload this because we don't have control over the style or layout for
          the cast dialog items, as it's in `@android:layout/media_route_list_item. -->
     <style name="TextAppearance.CastItem" parent="@android:style/TextAppearance.DeviceDefault.Medium">
-        <item name="android:fontFamily">@*android:string/config_headlineFontFamily</item>
+        <item name="android:fontFamily">@*android:string/config_bodyFontFamily</item>
     </style>
 
     <style name="Theme.SystemUI.Dialog.Cast">
@@ -1371,7 +1376,7 @@
     <style name="Widget" />
     <style name="Widget.Dialog" />
     <style name="Widget.Dialog.Button">
-        <item name="android:buttonCornerRadius">28dp</item>
+        <item name="android:buttonCornerRadius">@*android:dimen/config_buttonCornerRadius</item>
         <item name="android:background">@drawable/qs_dialog_btn_filled</item>
         <item name="android:textColor">@color/qs_dialog_btn_filled_text_color</item>
         <item name="android:textSize">14sp</item>
@@ -1466,7 +1471,7 @@
     </style>
 
     <style name="TextAppearance.InternetDialog">
-        <item name="android:fontFamily">@*android:string/config_headlineFontFamily</item>
+        <item name="android:fontFamily">@*android:string/config_bodyFontFamily</item>
         <item name="android:textSize">16sp</item>
         <item name="android:textColor">@color/materialColorOnSurface</item>
         <item name="android:textDirection">locale</item>
@@ -1523,7 +1528,7 @@
     </style>
 
     <style name="TextAppearance.BluetoothTileDialog">
-        <item name="android:fontFamily">@*android:string/config_headlineFontFamily</item>
+        <item name="android:fontFamily">@*android:string/config_bodyFontFamily</item>
         <item name="android:textDirection">locale</item>
         <item name="android:textAlignment">gravity</item>
         <item name="android:textColor">@color/materialColorOnSurface</item>
@@ -1698,18 +1703,21 @@
     </style>
 
     <style name="Theme.SystemUI.Dialog.StickyKeys" parent="@style/Theme.SystemUI.Dialog">
+        <!-- The indicator draws its own surface: keep the framework background (same inset, no
+             hairline), which the transparent colorBackground below hides. -->
+        <item name="android:windowBackground">@*android:drawable/dialog_background_material</item>
         <item name="android:colorBackground">@color/transparent</item>
     </style>
 
     <!-- Tile Details -->
     <style name="TextAppearance.TileDetailsEntryTitle" parent="TextAppearance.Material3.TitleSmall">
-        <item name="android:fontFamily">variable-title-small-emphasized</item>
+        <item name="android:fontFamily">@*android:string/config_bodyFontFamilyMedium</item>
         <item name="android:textColor">@color/materialColorOnSurface</item>
         <item name="android:textDirection">locale</item>
     </style>
 
     <style name="TextAppearance.TileDetailsEntrySubTitle" parent="TextAppearance.Material3.LabelMedium">
-        <item name="android:fontFamily">variable-label-medium</item>
+        <item name="android:fontFamily">@*android:string/config_bodyFontFamily</item>
         <item name="android:textColor">@color/materialColorOnSurfaceVariant</item>
         <item name="android:textDirection">locale</item>
     </style>

@@ -172,7 +172,9 @@ private fun iconButtonColors(): IconButtonColors {
 
 @Composable
 private fun outlineButtonBorder(): BorderStroke {
-    return BorderStroke(width = 1.dp, color = MaterialTheme.colorScheme.primary)
+    // Shoal: outlineVariant is the role ShoalPalette maps to the hairline token; the accent is
+    // kept for the filled primary button.
+    return BorderStroke(width = 1.dp, color = MaterialTheme.colorScheme.outlineVariant)
 }
 
 @Composable
