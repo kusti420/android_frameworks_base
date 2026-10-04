@@ -912,67 +912,11 @@ public class ExternalStorageProvider extends FileSystemProvider {
         }
     }
 
-    /**
-     * IchthysOS: system_server (IchthysPreinstallController) seeds files into another app's
-     * Android/data directory, which only providers like this one may write (ANDROID_WRITABLE
-     * mount). Used to pre-register the bundled apps in Obtainium, which loads
-     * files/app_data/*.json at startup. Existing files are never overwritten.
-     */
-    private static final String ICHTHYS_SEED_APP_DATA_CALL = "ichthys_seed_app_data";
-    private static final java.util.regex.Pattern ICHTHYS_PACKAGE =
-            java.util.regex.Pattern.compile("[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)+");
-    private static final java.util.regex.Pattern ICHTHYS_SUBDIR =
-            java.util.regex.Pattern.compile("[A-Za-z0-9_]+(/[A-Za-z0-9_]+)*");
-    private static final java.util.regex.Pattern ICHTHYS_FILE_NAME =
-            java.util.regex.Pattern.compile("[A-Za-z0-9_][A-Za-z0-9._-]*");
-
-    private Bundle ichthysSeedAppData(String packageName, Bundle extras) {
-        if (UserHandle.getAppId(Binder.getCallingUid()) != android.os.Process.SYSTEM_UID) {
-            throw new SecurityException(ICHTHYS_SEED_APP_DATA_CALL + " is system-only");
-        }
-        final String subdir = extras == null ? null : extras.getString("subdir");
-        final String[] names = extras == null ? null : extras.getStringArray("names");
-        final String[] contents = extras == null ? null : extras.getStringArray("contents");
-        if (packageName == null || !ICHTHYS_PACKAGE.matcher(packageName).matches()
-                || subdir == null || !ICHTHYS_SUBDIR.matcher(subdir).matches()
-                || names == null || contents == null || names.length != contents.length) {
-            throw new IllegalArgumentException("bad " + ICHTHYS_SEED_APP_DATA_CALL + " request");
-        }
-        final File dir = new File(Environment.getExternalStorageDirectory(),
-                "Android/data/" + packageName + "/" + subdir);
-        if (!dir.isDirectory() && !dir.mkdirs()) {
-            Log.w(TAG, "seed: cannot create " + dir);
-            return null;
-        }
-        int written = 0;
-        for (int i = 0; i < names.length; i++) {
-            if (names[i] == null || !ICHTHYS_FILE_NAME.matcher(names[i]).matches()
-                    || contents[i] == null) {
-                continue;
-            }
-            final File file = new File(dir, names[i]);
-            if (file.exists()) continue;
-            try {
-                Files.write(file.toPath(),
-                        contents[i].getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                written++;
-            } catch (IOException e) {
-                Log.w(TAG, "seed: cannot write " + file, e);
-            }
-        }
-        final Bundle out = new Bundle();
-        out.putInt("written", written);
-        out.putBoolean("ok", true);
-        return out;
-    }
-
     @Override
     public Bundle call(String method, String arg, Bundle extras) {
         Bundle bundle = super.call(method, arg, extras);
         if (bundle == null && !TextUtils.isEmpty(method)) {
             switch (method) {
-                case ICHTHYS_SEED_APP_DATA_CALL:
-                    return ichthysSeedAppData(arg, extras);
                 case "getDocIdForFileCreateNewDir": {
                     getContext().enforceCallingPermission(
                             android.Manifest.permission.MANAGE_DOCUMENTS, null);

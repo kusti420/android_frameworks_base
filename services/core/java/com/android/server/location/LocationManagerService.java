@@ -429,6 +429,9 @@ public class LocationManagerService extends ILocationManager.Stub implements
     }
 
     void onSystemReady() {
+        // IchthysOS "No location" (per-app, Settings.Secure ichthys_location_nofix_pkgs).
+        IchthysLocationNoFix.init(mContext, FgThread.getHandler());
+
         if (Build.IS_DEBUGGABLE) {
             // on debug builds, watch for location noteOps while location is off. there are some
             // scenarios (emergency location) where this is expected, but generally this should

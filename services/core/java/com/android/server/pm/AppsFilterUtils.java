@@ -225,7 +225,11 @@ final class AppsFilterUtils {
                 for (int i = mExistingSettings.size() - 1; i >= 0; i--) {
                     final PackageStateInternal setting = mExistingSettings.valueAt(i);
                     final AndroidPackage pkg = setting.getPkg();
-                    if (pkg == null || requestsQueryAllPackages(pkg)) {
+                    // IchthysOS: apps requesting QUERY_ALL_PACKAGES are no longer skipped. The
+                    // user can withhold the permission (decision 2), and such an app then needs
+                    // its <queries> visibility like any other, the same as addPackageInternal()
+                    // computes it.
+                    if (pkg == null) {
                         continue;
                     }
                     if (pkg.getQueriesIntents().isEmpty()

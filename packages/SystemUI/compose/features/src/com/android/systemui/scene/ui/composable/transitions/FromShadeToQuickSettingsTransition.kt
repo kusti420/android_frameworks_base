@@ -32,6 +32,13 @@ fun TransitionBuilder.shadeToQuickSettingsTransition(
     }
 
     translate(Notifications.Elements.NotificationScrim, Edge.Bottom)
+    // IchthysOS: the Shade scene is drawn above Quick Settings (SceneContainerConfig z-order), so
+    // the notification panel, which leaves through the bottom edge, covered the footer actions
+    // until the last few percent of the gesture and the bar then popped in when the animation
+    // ended. Let the panel's background fade out over the middle of the transition, so the footer
+    // shows through it early and gradually. Reversed (Quick Settings to Shade) it fades back in
+    // over the same stretch.
+    fractionRange(start = 0.3f, end = 0.7f) { fade(Notifications.Elements.NotificationScrim) }
     timestampRange(endMillis = 83) { fade(Elements.FooterActions) }
 
     fractionRange(start = 0.43f, end = 1f - SHARED_TILE_PICKER_THRESHOLD) {

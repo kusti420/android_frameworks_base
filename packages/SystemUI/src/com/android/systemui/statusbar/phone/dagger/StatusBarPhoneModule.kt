@@ -37,6 +37,7 @@ import com.android.systemui.statusbar.domain.interactor.StatusBarIconRefreshInte
 import com.android.systemui.statusbar.domain.interactor.StatusBarIconRefreshPerDisplayInstanceProvider
 import com.android.systemui.statusbar.events.PrivacyDotViewControllerModule
 import com.android.systemui.statusbar.gesture.StatusBarLongPressGestureDetector
+import com.android.systemui.statusbar.ichthys.indicator.ui.IchthysIndicatorsStartable
 import com.android.systemui.statusbar.phone.AutoHideControllerStore
 import com.android.systemui.statusbar.phone.CentralSurfacesCommandQueueCallbacks
 import com.android.systemui.statusbar.phone.MultiDisplayAutoHideControllerStore
@@ -83,6 +84,15 @@ interface StatusBarPhoneModule {
     @IntoMap
     @ClassKey(CommandQueueInitializer::class)
     fun commandQueueInitializerCoreStartable(initializer: CommandQueueInitializer): CoreStartable
+
+    /**
+     * IchthysOS: the notification dot and the privacy ring around the camera cutout. Bound here,
+     * next to the privacy dot it works with (it replaces the cutout ring overlay spike).
+     */
+    @Binds
+    @IntoMap
+    @ClassKey(IchthysIndicatorsStartable::class)
+    fun ichthysIndicatorsStartable(startable: IchthysIndicatorsStartable): CoreStartable
 
     @Binds
     @SysUISingleton

@@ -53,7 +53,6 @@ import com.android.systemui.media.taptotransfer.sender.MediaTttSenderCoordinator
 import com.android.systemui.mediaprojection.taskswitcher.MediaProjectionTaskSwitcherCoreStartable
 import com.android.systemui.shortcut.ShortcutKeyDispatcher
 import com.android.systemui.smartpixels.SmartPixelsController
-import com.android.systemui.statusbar.CutoutRingOverlayStartable
 import com.android.systemui.statusbar.ImmersiveModeConfirmation
 import com.android.systemui.statusbar.gesture.GesturePointerEventListener
 import com.android.systemui.statusbar.notification.InstantAppNotifier
@@ -110,12 +109,6 @@ abstract class SystemUICoreStartableModule {
     @IntoMap
     @ClassKey(SmartPixelsController::class)
     abstract fun bindSmartPixelsController(sysui: SmartPixelsController): CoreStartable
-
-    /** SPIKE (IchthysOS): cutout ring overlay window placeholder. */
-    @Binds
-    @IntoMap
-    @ClassKey(CutoutRingOverlayStartable::class)
-    abstract fun bindCutoutRingOverlayStartable(sysui: CutoutRingOverlayStartable): CoreStartable
 
     /** Inject into GlobalActionsComponent. */
     @Binds

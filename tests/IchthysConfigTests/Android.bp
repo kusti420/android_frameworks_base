@@ -2,13 +2,16 @@ package {
     default_applicable_licenses: ["frameworks_base_license"],
 }
 
-// Host unit tests for the ichthys.nix parser, printer and option schema (tracker#50).
+// Host unit tests for the ichthys.nix parser, printer, option schema and apply rules
+// (tracker#50).
 java_test_host {
     name: "IchthysConfigTests",
     srcs: [
         ":ichthys-config-sources",
         "src/**/*.java",
     ],
+    // default.nix, presets/*.nix and privacy/*.nix, checked against the option defaults.
+    java_resources: [":ichthys-config-etc"],
     static_libs: ["junit"],
     test_options: {
         unit_test: true,

@@ -29,7 +29,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.font.DeviceFontFamilyName
@@ -40,12 +39,14 @@ import org.json.JSONObject
 
 /**
  * IchthysOS "Shoal" quick settings palette and type. Everything here only applies while
- * Settings.Secure ichthys_qs_style = "shoal" (see [rememberShoalQsEnabled]).
+ * Settings.Secure ichthys_qs_style = "shoal" (see [rememberShoalQsEnabled]), with one exception: the
+ * brightness block is the same in every tile layout and takes its colours from the framework
+ * ichthys_* tokens, not from this table (see ShoalBrightnessSlider).
  */
 object ShoalQsColors {
     /** The ground the panel sits on. */
     val Ink = Color(0xFF07090B)
-    /** Recessed track surface (brightness track, footer buttons). */
+    /** Recessed track surface (footer buttons, edit-mode grid). */
     val Track = Color(0xFF0C1013)
     /** 1 dp hairline around recessed surfaces. */
     val Hairline = Color(0xFF20282D)
@@ -61,12 +62,6 @@ object ShoalQsColors {
     val DotInactive = Color(0xFF2A3136)
     /** Fallback when no accent can be resolved (Koi). */
     val KoiAccent = Color(0xFFFF6B3D)
-
-    /** The dark accent tint of the filled part of the brightness track (#3a2418 for koi). */
-    fun fillTint(accent: Color): Color = lerp(Track, accent, 0.20f)
-
-    /** The darker tint of the part of the track below the minimum floor (#1f1511 for koi). */
-    fun belowMinTint(accent: Color): Color = lerp(Track, accent, 0.08f)
 }
 
 // region style setting
@@ -103,8 +98,9 @@ fun rememberShoalQsEnabled(): Boolean {
     return enabled
 }
 
+// Unset means the option's default (quickSettings.style = "shoal"); only "grid" is off.
 private fun readShoal(context: Context): Boolean =
-    "shoal" ==
+    "grid" !=
         Settings.Secure.getStringForUser(
             context.contentResolver,
             ShoalQsSettings.STYLE_SETTING,

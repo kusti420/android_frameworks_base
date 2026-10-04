@@ -65,16 +65,16 @@ public class ThemeOverlayHelper {
     // palette itself lives in ShoalPalette; this class only reads the inputs and writes the output.
     //
     // Mode: ichthys_theme_surface = "stock" | "hairline" | "tonal". Unset means the option's
-    // default, hairline: ichthys.nix never writes a value equal to the default, so "unset" is the
-    // normal state of a koi device. The old crDroid Theme Engine switch (theme_engine_style_mode,
-    // Monet/Abyss) is deliberately NOT consulted any more: honouring an explicit 0 there would turn
-    // Shoal off for anyone who once visited the Theme Engine, and an applied config could never
-    // turn it back on (writing "hairline" is a no-op because it is the default). Plain Monet is
-    // theme.surface = "stock".
+    // default, hairline. A new user gets every default written by the first-boot baseline
+    // (default.nix), but a user from before the baseline can still have a key unset, so every
+    // reader here treats unset as the option's default. The old crDroid Theme Engine switch
+    // (theme_engine_style_mode, Monet/Abyss) is deliberately NOT consulted any more: honouring an
+    // explicit 0 there would turn Shoal off for anyone who once visited the Theme Engine. Plain
+    // Monet is theme.surface = "stock".
     static final String KEY_SURFACE = "ichthys_theme_surface";
-    /** "tinted" (default) | "neutral". */
+    /** "tinted" | "neutral" (default, also when unset). */
     static final String KEY_NEUTRAL = "ichthys_theme_neutral";
-    /** Surface levels 2..5 (default 3). */
+    /** Surface levels 2..5 (default 4). */
     static final String KEY_SURFACES = "ichthys_theme_surfaces";
     /** 1 = ink is pure #000 in dark. */
     static final String KEY_PITCH_BLACK = "custom_pitch_black";
@@ -445,7 +445,7 @@ public class ThemeOverlayHelper {
     private ShoalPalette[] createShoalPalettes(int userId, ColorScheme darkColorScheme) {
         final ShoalPalette.Surface surface =
                 ShoalPalette.Surface.fromSetting(readSecureString(userId, KEY_SURFACE));
-        final boolean tinted = !"neutral".equals(readSecureString(userId, KEY_NEUTRAL));
+        final boolean tinted = "tinted".equals(readSecureString(userId, KEY_NEUTRAL));
         final int levels = readSecureInt(userId, KEY_SURFACES, ShoalPalette.DEFAULT_LEVELS);
         final boolean pitchBlack = readSecureInt(userId, KEY_PITCH_BLACK, 0) == 1;
         final int seed = shoalSeed(darkColorScheme);

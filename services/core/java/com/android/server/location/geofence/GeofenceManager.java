@@ -42,6 +42,7 @@ import android.util.ArraySet;
 import com.android.internal.annotations.GuardedBy;
 import com.android.server.FgThread;
 import com.android.server.PendingIntentUtils;
+import com.android.server.location.IchthysLocationNoFix;
 import com.android.server.location.LocationPermissions;
 import com.android.server.location.injector.Injector;
 import com.android.server.location.injector.LocationPermissionsHelper;
@@ -229,6 +230,11 @@ public class GeofenceManager extends
             // remove expired fences
             if (mGeofence.isExpired()) {
                 remove();
+                return null;
+            }
+
+            // IchthysOS "No location": without a fix the fence never enters or exits.
+            if (IchthysLocationNoFix.isNoFix(mIdentity)) {
                 return null;
             }
 

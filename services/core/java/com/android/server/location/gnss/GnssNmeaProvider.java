@@ -26,6 +26,7 @@ import android.location.util.identity.CallerIdentity;
 import android.util.Log;
 
 import com.android.internal.listeners.ListenerExecutor;
+import com.android.server.location.IchthysLocationNoFix;
 import com.android.server.location.gnss.hal.GnssNative;
 import com.android.server.location.injector.AppOpsHelper;
 import com.android.server.location.injector.Injector;
@@ -102,8 +103,10 @@ class GnssNmeaProvider extends GnssListenerMultiplexer<Void, IGnssNmeaListener, 
                     @Override
                     public ListenerExecutor.ListenerOperation<IGnssNmeaListener> apply(
                             GnssListenerRegistration registration) {
-                        if (mAppOpsHelper.noteOpNoThrow(AppOpsManager.OP_FINE_LOCATION,
-                                registration.getIdentity())) {
+                        // IchthysOS "No location": raw GNSS output would give the position away.
+                        if (!IchthysLocationNoFix.isNoFix(registration.getIdentity())
+                                && mAppOpsHelper.noteOpNoThrow(AppOpsManager.OP_FINE_LOCATION,
+                                        registration.getIdentity())) {
                             if (mNmea == null) {
                                 int length = mGnssNative.readNmea(mNmeaBuffer,
                                         mNmeaBuffer.length);

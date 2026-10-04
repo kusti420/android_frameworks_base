@@ -385,6 +385,9 @@ public class SettingsProvider extends ContentProvider {
                 sReadableGlobalSettingsWithMaxTargetSdk, sReadableGlobalSettingsWithRedactedValue);
     }
 
+    /** IchthysOS Guard: call() method that gives one app a fresh Android ID. */
+    private static final String ICHTHYS_CALL_RESET_SSAID = "ichthys_reset_ssaid";
+
     private final Object mLock = new Object();
 
     @GuardedBy("mLock")
@@ -464,6 +467,16 @@ public class SettingsProvider extends ContentProvider {
         final @CanBeCURRENT @UserIdInt int requestingUserId = getRequestingUserId(args);
         final int callingDeviceId = getDeviceId();
         switch (method) {
+            case ICHTHYS_CALL_RESET_SSAID -> {
+                // Only the system may call it; to anyone else the method doesn't exist.
+                if (UserHandle.getAppId(Binder.getCallingUid()) != Process.SYSTEM_UID) {
+                    Slog.w(LOG_TAG, "call() with invalid method: " + method);
+                    return null;
+                }
+                final Bundle result = new Bundle();
+                result.putBoolean("result", resetSsaidForPackage(name, requestingUserId));
+                return result;
+            }
             case Settings.CALL_METHOD_GET_CONFIG -> {
                 Setting setting = getConfigSetting(name);
                 // Config settings are applicable only for the default device, hence pass
@@ -1818,6 +1831,41 @@ public class SettingsProvider extends ContentProvider {
     private boolean isNewSsaidSetting(String name) {
         return Settings.Secure.ANDROID_ID.equals(name)
                 && UserHandle.getAppId(Binder.getCallingUid()) >= Process.FIRST_APPLICATION_UID;
+    }
+
+    /**
+     * IchthysOS Guard "Reset identity": gives {@code packageName} a fresh random Android ID
+     * (SSAID), so after its data is cleared the app sees a new phone. The derived ID only comes
+     * back if the app is uninstalled and installed again. Only for the system uid, which
+     * {@link #call} checks.
+     */
+    private boolean resetSsaidForPackage(String packageName, int userId) {
+        if (TextUtils.isEmpty(packageName)) {
+            return false;
+        }
+        final int owningUserId = resolveOwningUserIdForSecureSetting(
+                resolveCallingUserIdEnforcingPermissions(userId), Settings.Secure.ANDROID_ID);
+        final long token = Binder.clearCallingIdentity();
+        try {
+            final int uid = getContext().getPackageManager()
+                    .getPackageUidAsUser(packageName, owningUserId);
+            final byte[] bytes = new byte[8];
+            new SecureRandom().nextBytes(bytes);
+            final String ssaid = HexEncoding.encodeToString(bytes, false /* upperCase */);
+            synchronized (mLock) {
+                final SettingsState ssaidSettings = mSettingsRegistry.getSettingsLocked(
+                        SETTINGS_TYPE_SSAID, owningUserId, Context.DEVICE_ID_DEFAULT);
+                if (ssaidSettings == null) {
+                    return false;
+                }
+                return ssaidSettings.insertSettingLocked(Integer.toString(uid), ssaid, null,
+                        true, packageName);
+            }
+        } catch (PackageManager.NameNotFoundException e) {
+            return false;
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
     }
 
     @GuardedBy("mLock")

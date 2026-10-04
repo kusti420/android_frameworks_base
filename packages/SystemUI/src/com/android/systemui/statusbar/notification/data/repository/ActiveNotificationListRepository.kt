@@ -57,6 +57,20 @@ class ActiveNotificationListRepository @Inject constructor(dumpManager: DumpMana
     /** The key of the top unseen notification */
     val topUnseenNotificationKey = MutableStateFlow<String?>(null)
 
+    /**
+     * IchthysOS: keys of the notifications the user has not seen yet, as tracked by
+     * OriginalUnseenKeyguardCoordinator (posted or updated by the app while the shade was closed,
+     * not yet shown as heads-up, shade not opened since). Ongoing and media notifications are
+     * never included.
+     */
+    val unseenNotificationKeys = MutableStateFlow<Set<String>>(emptySet())
+
+    /**
+     * IchthysOS: the subset of [unseenNotificationKeys] that has been on the (awake) lock screen
+     * long enough to count as seen; the coordinator drops them from the unseen set on unlock.
+     */
+    val seenOnLockscreenNotificationKeys = MutableStateFlow<Set<String>>(emptySet())
+
     init {
         dumpManager.registerCriticalDumpable(this)
     }
@@ -66,6 +80,8 @@ class ActiveNotificationListRepository @Inject constructor(dumpManager: DumpMana
             println("hasFilteredOutSeenNotifications", hasFilteredOutSeenNotifications.value)
             println("topOngoingNotificationKey", topOngoingNotificationKey.value)
             println("topUnseenNotificationKey", topUnseenNotificationKey.value)
+            println("unseenNotificationKeys", unseenNotificationKeys.value)
+            println("seenOnLockscreenNotificationKeys", seenOnLockscreenNotificationKeys.value)
             printSection("notifStats") {
                 val stats = notifStats.value
                 println("hasClearableSilentNotifs", stats.hasClearableSilentNotifs)

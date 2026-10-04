@@ -73,7 +73,8 @@ constructor(
     private val controller: VolumeDialogController,
     private val secureSettingsRepository: SecureSettingsRepository,
     private val shadeInteractor: ShadeInteractor,
-    expandedAudioTileDetailsFeatureInteractor: ExpandedAudioTileDetailsFeatureInteractor,
+    private val expandedAudioTileDetailsFeatureInteractor:
+        ExpandedAudioTileDetailsFeatureInteractor,
 ) {
 
     /** @see computeTimeout */
@@ -84,7 +85,12 @@ constructor(
      */
     private val expandedTimeout = 5.seconds
 
-    private val showVolumeSliderInQsShade = expandedAudioTileDetailsFeatureInteractor.isEnabled()
+    // IchthysOS: evaluated per show / per QS expansion rather than cached when the plugin starts,
+    // like VolumeDialogPluginViewModel.isVolumeDialogVertical, so the crDroid
+    // "custom_volume_horizontal" switch changes the dialog layout and its "suppress while QS is
+    // expanded" behaviour together, without a SystemUI restart.
+    private val showVolumeSliderInQsShade: Boolean
+        get() = expandedAudioTileDetailsFeatureInteractor.isEnabled()
 
     @SuppressLint("SharedFlowCreation")
     private val mutableDismissDialogEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
@@ -136,19 +142,20 @@ constructor(
             .onEach { resetDismissTimeout() }
             .launchIn(coroutineScope)
 
-        if (showVolumeSliderInQsShade) {
-            // Dismiss the volume dialog if QS becomes expanded while the dialog is visible
-            combine(shadeInteractor.isQsExpanded, dialogVisibility) {
-                    isQsExpandedNow,
-                    currentDialogVisibility ->
-                    when {
-                        isQsExpandedNow && currentDialogVisibility is Visible -> {
-                            dismissDialog(Events.DISMISS_REASON_QUICK_SETTINGS_EXPANDED)
-                        }
+        // Dismiss the volume dialog if QS becomes expanded while the dialog is visible (only while
+        // the volume slider lives in the QS shade; checked each time, see above).
+        combine(shadeInteractor.isQsExpanded, dialogVisibility) {
+                isQsExpandedNow,
+                currentDialogVisibility ->
+                when {
+                    isQsExpandedNow &&
+                        currentDialogVisibility is Visible &&
+                        showVolumeSliderInQsShade -> {
+                        dismissDialog(Events.DISMISS_REASON_QUICK_SETTINGS_EXPANDED)
                     }
                 }
-                .launchIn(coroutineScope)
-        }
+            }
+            .launchIn(coroutineScope)
     }
 
     /**

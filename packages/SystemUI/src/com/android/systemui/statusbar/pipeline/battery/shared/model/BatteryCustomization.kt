@@ -38,8 +38,11 @@ data class BatteryCustomization(
     val showPowerSaveIndicator: Boolean = true,
     /** [FILL_MODE_TINT], [FILL_MODE_CUSTOM] or [FILL_MODE_ACCENT]. */
     val fillMode: Int = FILL_MODE_TINT,
-    /** ARGB used when [fillMode] is [FILL_MODE_CUSTOM]. */
-    val fillColor: Int = DEFAULT_FILL_COLOR,
+    /**
+     * ARGB used when [fillMode] is [FILL_MODE_CUSTOM]; [FILL_COLOR_UNSET] while the user never
+     * picked one, in which case the accent is used (same as [FILL_MODE_ACCENT]).
+     */
+    val fillColor: Int = FILL_COLOR_UNSET,
     /** [STATE_COLORS_OFF], [STATE_COLORS_THEME] or [STATE_COLORS_CUSTOM]. */
     val stateColorMode: Int = STATE_COLORS_THEME,
     val chargingColor: Int = DEFAULT_CHARGING_COLOR,
@@ -78,7 +81,8 @@ data class BatteryCustomization(
         const val STATE_COLORS_THEME = 1
         const val STATE_COLORS_CUSTOM = 2
 
-        const val DEFAULT_FILL_COLOR = 0xFF4CAF50.toInt()
+        /** `ichthys_battery_fill_color` not written yet: follow the accent, not a fixed hue. */
+        const val FILL_COLOR_UNSET = 0
         const val DEFAULT_CHARGING_COLOR = 0xFF18CC47.toInt()
         const val DEFAULT_POWER_SAVE_COLOR = 0xFFFFC917.toInt()
         const val DEFAULT_LOW_COLOR = 0xFFFF0E01.toInt()

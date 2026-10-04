@@ -7,6 +7,5 @@
     surfaces = 4;
     shape.radius = 16;
     shape.style = "squircle";
-    density = "comfortable";
   };
 }

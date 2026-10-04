@@ -21,6 +21,8 @@ import android.graphics.Color;
 import android.os.UserHandle;
 import android.provider.Settings;
 
+import com.android.systemui.statusbar.phone.IchthysZigzag;
+
 /**
  * IchthysOS: keys and defaults of the fingerprint (UDFPS) customisation options. All keys live in
  * Settings.System for the current user. The crDroid Settings "Fingerprint effects" page writes
@@ -50,8 +52,8 @@ public final class IchthysUdfpsSettings {
     /** 0 accent, 1 white, 2 custom, 3 rainbow. */
     public static final String ANIM_COLOR_MODE = "ichthys_udfps_anim_color_mode";
     public static final int ANIM_COLOR_MODE_DEFAULT = 0;
+    /** Custom colour (mode 2); the Shoal accent while never picked. */
     public static final String ANIM_COLOR = "ichthys_udfps_anim_color";
-    public static final int ANIM_COLOR_DEFAULT = 0xFF5CC8C2;
     /** Effect size in percent of the default (50..250). */
     public static final String ANIM_SCALE = "ichthys_udfps_anim_scale";
     public static final int ANIM_SCALE_DEFAULT = 100;
@@ -72,8 +74,8 @@ public final class IchthysUdfpsSettings {
     /** 0 accent, 1 white, 2 custom. */
     public static final String PRESSED_COLOR_MODE = "ichthys_udfps_pressed_color_mode";
     public static final int PRESSED_COLOR_MODE_DEFAULT = 0;
+    /** Custom colour (mode 2); the Shoal accent while never picked. */
     public static final String PRESSED_COLOR = "ichthys_udfps_pressed_color";
-    public static final int PRESSED_COLOR_DEFAULT = 0xFF5CC8C2;
     /** Size in percent of the sensor radius (100..200). */
     public static final String PRESSED_SIZE = "ichthys_udfps_pressed_size";
     public static final int PRESSED_SIZE_DEFAULT = 120;
@@ -116,6 +118,28 @@ public final class IchthysUdfpsSettings {
                 UserHandle.USER_CURRENT);
     }
 
+    /** The Shoal accent, the one the status bar and the notification dot draw with. */
+    public static int accent(Context context) {
+        return IchthysZigzag.accent(context);
+    }
+
+    /**
+     * A stored colour (the picker persists an ARGB int), or the Shoal accent while the key was
+     * never written, so an untouched "custom" colour follows the theme instead of a fixed hue.
+     */
+    public static int getColorOrAccent(Context context, String key) {
+        final String stored = Settings.System.getStringForUser(context.getContentResolver(), key,
+                UserHandle.USER_CURRENT);
+        if (stored != null) {
+            try {
+                return Integer.parseInt(stored.trim());
+            } catch (NumberFormatException ignored) {
+                // Not a persisted int: treat as unset.
+            }
+        }
+        return accent(context);
+    }
+
     /** Resolves a color mode: 0 accent, 1 white, 2 custom (3 rainbow is handled by callers). */
     public static int resolveColor(Context context, int mode, int custom) {
         switch (mode) {
@@ -124,7 +148,7 @@ public final class IchthysUdfpsSettings {
             case 2:
                 return custom;
             default:
-                return com.android.settingslib.Utils.getColorAccentDefaultColor(context);
+                return accent(context);
         }
     }
 }

@@ -18,6 +18,7 @@ package com.android.server.pm;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.annotation.UserIdInt;
 import android.os.Process;
 import android.util.ArrayMap;
 import android.util.SparseArray;
@@ -73,6 +74,17 @@ public interface AppsFilterSnapshot {
      * @param potentialTarget the package name of the target package
      */
     boolean canQueryPackage(@NonNull AndroidPackage querying, String potentialTarget);
+
+    /**
+     * IchthysOS: as {@link #canQueryPackage(AndroidPackage, String)}, for the querying package as
+     * installed for {@code userId}: the user-controlled QUERY_ALL_PACKAGES grant is per user.
+     *
+     * @param querying        the querying package
+     * @param potentialTarget the package name of the target package
+     * @param userId          the user the querying package runs as
+     */
+    boolean canQueryPackage(@NonNull AndroidPackage querying, String potentialTarget,
+            @UserIdInt int userId);
 
     /**
      * Dump the packages that are queryable by the querying package.

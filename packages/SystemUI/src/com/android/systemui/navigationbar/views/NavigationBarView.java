@@ -35,22 +35,16 @@ import android.animation.ValueAnimator;
 import android.annotation.DrawableRes;
 import android.app.StatusBarManager.NavbarFlags;
 import android.content.Context;
-import android.content.om.OverlayInfo;
-import android.content.om.OverlayManager;
-import android.content.pm.PackageManager;
 import android.content.res.Configuration;
-import android.content.res.Resources;
 import android.database.ContentObserver;
 import android.graphics.Canvas;
 import android.graphics.Point;
 import android.graphics.Rect;
-import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.RemoteException;
-import android.app.ActivityManager;
 import android.os.UserHandle;
 import android.provider.Settings;
 import android.util.AttributeSet;
@@ -92,7 +86,6 @@ import com.android.systemui.res.R;
 import com.android.systemui.rotation.RotationPolicyWrapper;
 import com.android.systemui.settings.DisplayTracker;
 import com.android.systemui.shade.ShadeViewController;
-import com.android.systemui.shade.ui.ShoalShade;
 import com.android.systemui.shade.domain.interactor.PanelExpansionInteractor;
 import com.android.systemui.shared.rotation.FloatingRotationButton;
 import com.android.systemui.shared.rotation.RotationButton.RotationButtonUpdatesCallback;
@@ -106,7 +99,6 @@ import com.android.wm.shell.back.BackAnimation;
 import com.android.wm.shell.pip.Pip;
 
 import java.io.PrintWriter;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Executor;
@@ -183,8 +175,8 @@ public class NavigationBarView extends FrameLayout {
         }
     };
     // IchthysOS navBar.style (Settings.Secure ichthys_navbar_style): code-drawn 3-button keys.
-    // Null when the style is stock/gestures, in which case the stock (or RRO-styled) icons are
-    // used unchanged.
+    // The key drawables are null when the style is stock/gestures, in which case the plain AOSP
+    // glyphs are used. This is the only navbar style system (the overlay icon packs are gone).
     private int mIchthysStyle = IchthysNavStyle.DEFAULT;
     @Nullable private KeyButtonDrawable mIchthysBack;
     @Nullable private KeyButtonDrawable mIchthysHome;
@@ -512,8 +504,6 @@ public class NavigationBarView extends FrameLayout {
         final boolean orientationChange = oldConfig.orientation != mConfiguration.orientation;
         final boolean densityChange = oldConfig.densityDpi != mConfiguration.densityDpi;
         final boolean dirChange = oldConfig.getLayoutDirection() != mConfiguration.getLayoutDirection();
-        Log.i(TAG, "navbar dbg: updateIcons orient=" + orientationChange + " dens=" + densityChange
-                + " dir=" + dirChange);
 
         if (orientationChange || densityChange) {
             mDockedIcon = getDrawable(R.drawable.ic_sysbar_docked);
@@ -583,100 +573,8 @@ public class NavigationBarView extends FrameLayout {
     }
 
     private KeyButtonDrawable getDrawable(@DrawableRes int icon) {
-        Log.i(TAG, "navbar dbg: getDrawable icon=" + icon + " (back=" + R.drawable.ic_sysbar_back
-                + " home=" + R.drawable.ic_sysbar_home + " recent=" + R.drawable.ic_sysbar_recent + ")");
-        final Drawable styled = getNavbarStyleIcon(icon);
-        if (styled != null) {
-            return KeyButtonDrawable.create(mLightContext, mLightIconColor, mDarkIconColor, styled,
-                    true /* hasShadow */, null /* ovalBackgroundColor */);
-        }
         return KeyButtonDrawable.create(mLightContext, mLightIconColor, mDarkIconColor, icon,
                 true /* hasShadow */, null /* ovalBackgroundColor */);
-    }
-
-    // IchthysOS: the navbar button glyph styles ship as toggleable RROs (category
-    // android.theme.customization.navbar, target com.android.systemui) picked in the
-    // crDroidSettings "Navbar style" screen (NavbarStyles.java). Instead of relying on the RRO
-    // overriding SystemUI's own ic_sysbar_* drawables at runtime, load the selected style's glyph
-    // directly from the enabled overlay package by name -- the same mechanism used for the UDFPS
-    // icon/animation packs and the picker's own preview. Returns null for the default (no overlay
-    // enabled) style, for icons the styles don't provide, or on any failure, so the caller falls
-    // back to SystemUI's built-in resource.
-    @Nullable
-    private Drawable getNavbarStyleIcon(@DrawableRes int icon) {
-        final String name;
-        if (icon == R.drawable.ic_sysbar_back) {
-            name = "ic_sysbar_back";
-        } else if (icon == R.drawable.ic_sysbar_home
-                || icon == R.drawable.ic_sysbar_home_quick_step) {
-            // The styles only ship a single home glyph; use it for the quickstep variant too so
-            // Home actually changes in 3-button mode (getHomeDrawable() picks quick_step there).
-            name = "ic_sysbar_home";
-        } else if (icon == R.drawable.ic_sysbar_recent) {
-            name = "ic_sysbar_recent";
-        } else {
-            return null;
-        }
-        final String pkg = getEnabledNavbarStylePackage();
-        if (pkg == null) {
-            return null;
-        }
-        try {
-            final PackageManager pm = mContext.getPackageManager();
-            final Resources overlayRes = pm.getResourcesForApplication(pkg);
-            final int id = overlayRes.getIdentifier(name, "drawable", pkg);
-            if (id != 0) {
-                // The overlay art uses fixed colors; KeyButtonDrawable re-tints via SRC_ATOP for
-                // light/dark, so no theme is needed here.
-                Log.i(TAG, "navbar style: loaded " + name + " from " + pkg);
-                return overlayRes.getDrawable(id, null /* theme */);
-            }
-            Log.w(TAG, "navbar style: " + name + " not found in " + pkg);
-        } catch (Exception e) {
-            Log.w(TAG, "Failed to load navbar style icon " + name + " from " + pkg, e);
-        }
-        return null;
-    }
-
-    @Nullable
-    private String getEnabledNavbarStylePackage() {
-        // Primary signal: the crDroidSettings navbar picker (NavbarStyles) writes the chosen
-        // overlay package here. Reading a Settings key is reliable from SystemUI's context, unlike
-        // the OverlayManager query below which returned null and left the style unapplied.
-        try {
-            // USER_CURRENT (not mContext.getUserId()): the per-display navbar window context is not
-            // reliably the foreground user, so getUserId() read the setting under the wrong user and
-            // silently missed it. USER_CURRENT matches the rest of SystemUI and the `settings` shell.
-            final String pkg = Settings.System.getStringForUser(mContext.getContentResolver(),
-                    "navbar_style_pkg", UserHandle.USER_CURRENT);
-            Log.i(TAG, "navbar style: navbar_style_pkg=" + pkg);
-            if (pkg != null && !pkg.isEmpty()) {
-                return "com.android.systemui".equals(pkg) ? null : pkg;
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "Failed to read navbar_style_pkg", e);
-        }
-        // Fallback (first boot after update, key not yet written): query OverlayManager.
-        try {
-            final OverlayManager om = mContext.getSystemService(OverlayManager.class);
-            if (om == null) {
-                return null;
-            }
-            final List<OverlayInfo> infos = om.getOverlayInfosForTarget(
-                    "com.android.systemui", UserHandle.of(ActivityManager.getCurrentUser()));
-            // List is ordered by priority (lowest first); the highest-priority enabled overlay in
-            // the navbar category wins, so walk from the end.
-            for (int i = infos.size() - 1; i >= 0; i--) {
-                final OverlayInfo info = infos.get(i);
-                if (info.isEnabled()
-                        && "android.theme.customization.navbar".equals(info.category)) {
-                    return info.packageName;
-                }
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "Failed to query enabled navbar style overlay", e);
-        }
-        return null;
     }
 
     /** To be called when screen lock/unlock state changes */
@@ -749,28 +647,8 @@ public class NavigationBarView extends FrameLayout {
         final boolean isBackDismissIme = (mNavbarFlags & NAVBAR_BACK_DISMISS_IME) != 0;
         KeyButtonDrawable backIcon = mBackIcon;
         KeyButtonDrawable homeIcon = mHomeDefaultIcon;
-        // IchthysOS: apply the selected navbar style glyph directly here. updateNavButtonIcons() is
-        // the guaranteed display path (it calls setImageDrawable on the actual buttons), so styling
-        // here works even if updateIcons()/mBackIcon were never refreshed for the current style.
-        Log.i(TAG, "navbar dbg: updateNavButtonIcons mBackIcon="
-                + (mBackIcon == null ? "null" : "set") + " mHome="
-                + (mHomeDefaultIcon == null ? "null" : "set"));
-        final boolean ichthysKeys = mIchthysBack != null && mIchthysHome != null
-                && !mUseCarModeUi;
-        final Drawable styledBack = ichthysKeys ? null
-                : getNavbarStyleIcon(R.drawable.ic_sysbar_back);
-        if (styledBack != null) {
-            backIcon = KeyButtonDrawable.create(mLightContext, mLightIconColor, mDarkIconColor,
-                    styledBack, true /* hasShadow */, null /* ovalBackgroundColor */);
-        }
-        final Drawable styledHome = ichthysKeys ? null : getNavbarStyleIcon(mShowSwipeUpUi
-                ? R.drawable.ic_sysbar_home_quick_step : R.drawable.ic_sysbar_home);
-        if (styledHome != null) {
-            homeIcon = KeyButtonDrawable.create(mLightContext, mLightIconColor, mDarkIconColor,
-                    styledHome, true /* hasShadow */, null /* ovalBackgroundColor */);
-        }
-        // IchthysOS navBar.style: code-drawn keys win over stock and RRO glyphs.
-        if (ichthysKeys) {
+        // IchthysOS navBar.style: code-drawn keys replace the stock glyphs.
+        if (mIchthysBack != null && mIchthysHome != null && !mUseCarModeUi) {
             backIcon = mIchthysBack;
             homeIcon = mIchthysHome;
         }
@@ -782,13 +660,6 @@ public class NavigationBarView extends FrameLayout {
         getBackButton().setImageDrawable(backIcon);
 
         updateRecentsIcon();
-        final Drawable styledRecent = mIchthysRecent != null ? null
-                : getNavbarStyleIcon(R.drawable.ic_sysbar_recent);
-        if (styledRecent != null) {
-            getRecentsButton().setImageDrawable(KeyButtonDrawable.create(mLightContext,
-                    mLightIconColor, mDarkIconColor, styledRecent, true /* hasShadow */,
-                    null /* ovalBackgroundColor */));
-        }
 
         // Update IME switcher button visibility, a11y and rotate button always overrides
         // the appearance.
@@ -1136,15 +1007,15 @@ public class NavigationBarView extends FrameLayout {
         final Context ctx = getContext();
         mIchthysStyle = IchthysNavStyle.read(ctx);
         if (IchthysNavStyle.isKeyStyle(mIchthysStyle)) {
-            final int accent = ShoalShade.accent(ctx);
+            final IchthysNavStyle.Tokens tokens = IchthysNavStyle.tokens(ctx);
             final android.graphics.Typeface mono = mIchthysStyle == IchthysNavStyle.MONO
                     ? IchthysNavStyle.monoTypeface(ctx) : null;
             mIchthysBack = new IchthysKeyDrawable(ctx, mIchthysStyle,
-                    IchthysKeyDrawable.KEY_BACK, accent, mono);
+                    IchthysKeyDrawable.KEY_BACK, tokens, mono);
             mIchthysHome = new IchthysKeyDrawable(ctx, mIchthysStyle,
-                    IchthysKeyDrawable.KEY_HOME, accent, mono);
+                    IchthysKeyDrawable.KEY_HOME, tokens, mono);
             mIchthysRecent = new IchthysKeyDrawable(ctx, mIchthysStyle,
-                    IchthysKeyDrawable.KEY_RECENTS, accent, mono);
+                    IchthysKeyDrawable.KEY_RECENTS, tokens, mono);
         } else {
             mIchthysBack = null;
             mIchthysHome = null;
@@ -1256,8 +1127,10 @@ public class NavigationBarView extends FrameLayout {
 
         boolean uiCarModeChanged = updateCarMode();
         updateIcons(mTmpLastConfiguration);
+        // CONFIG_ASSETS_PATHS: the theme engine rewrote the Shoal token overlay (palette / accent).
         final boolean ichthysRestyle = ((mTmpLastConfiguration.uiMode ^ mConfiguration.uiMode)
                 & Configuration.UI_MODE_NIGHT_MASK) != 0
+                || (changes & android.content.pm.ActivityInfo.CONFIG_ASSETS_PATHS) != 0
                 || mTmpLastConfiguration.densityDpi != mConfiguration.densityDpi
                 || mTmpLastConfiguration.fontScale != mConfiguration.fontScale
                 || mTmpLastConfiguration.getLayoutDirection()

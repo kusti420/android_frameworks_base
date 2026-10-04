@@ -16,6 +16,7 @@
 
 package com.android.compose.animation.scene
 
+import android.util.Log
 import androidx.compose.foundation.OverscrollEffect
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.ui.geometry.Offset
@@ -400,6 +401,18 @@ private class DragControllerImpl(
                     )
             }
 
+        // IchthysOS: one line per finished swipe, so a swipe that snaps back can be told apart
+        // (too short, wrong direction, opposing fling) from one that was rejected later. Quiet by
+        // default; enable with `adb shell setprop log.tag.DraggableHandler DEBUG`.
+        if (Log.isLoggable(TAG, Log.DEBUG)) {
+            Log.d(
+                TAG,
+                "swipe stopped: ${swipeAnimation.fromContent} -> $toContent" +
+                    " offset=$effectiveDragOffset distance=$distance velocity=$velocity" +
+                    " commit=$shouldCommitSwipe",
+            )
+        }
+
         // Compute the destination content (and therefore offset) to settle in.
         val targeContent =
             if (shouldCommitSwipe) swipeAnimation.toContent else swipeAnimation.fromContent
@@ -617,3 +630,5 @@ private object NoOpDragController : NestedDraggable.Controller {
 
     override suspend fun onDragStopped(velocity: Float, awaitFling: suspend () -> Unit): Float = 0f
 }
+
+private const val TAG = "DraggableHandler"

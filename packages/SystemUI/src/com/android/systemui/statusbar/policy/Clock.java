@@ -514,7 +514,8 @@ public class Clock extends TextView implements
                 applyBoldClockStyle();
                 break;
             case ICHTHYS_STATUSBAR_LAYOUT:
-                mShoalLayout = "zigzag".equals(newValue);
+                // Unset means the default, zigzag (see IchthysZigzag.isEnabled).
+                mShoalLayout = !"single".equals(newValue);
                 applyShoalClockTypeface();
                 break;
             case ICHTHYS_FONT_MONO:

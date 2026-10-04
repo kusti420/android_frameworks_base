@@ -109,6 +109,7 @@ import com.android.systemui.process.condition.SystemProcessCondition;
 import com.android.systemui.qs.FgsManagerController;
 import com.android.systemui.qs.FgsManagerControllerImpl;
 import com.android.systemui.qs.footer.dagger.FooterActionsModule;
+import com.android.systemui.qs.tiles.impl.guard.ui.model.GuardTilesModule;
 import com.android.systemui.qs.tiles.impl.qr.ui.model.QRCodeScannerModule;
 import com.android.systemui.recents.Recents;
 import com.android.systemui.recordissue.RecordIssueModule;
@@ -250,6 +251,8 @@ import javax.inject.Named;
         GestureModule.class,
         GlobalActionsModule.class,
         GrowthModule.class,
+        // IchthysOS: native Ichthys Guard QS tiles (Lockdown, Pause).
+        GuardTilesModule.class,
         InputMethodModule.class,
         KeyEventRepositoryModule.class,
         KeyboardModule.class,

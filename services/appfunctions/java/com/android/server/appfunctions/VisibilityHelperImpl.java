@@ -31,6 +31,8 @@ import android.content.pm.PackageManagerInternal;
 import android.os.Binder;
 import android.util.ArraySet;
 
+import com.android.server.pm.AppsFilterQueryAllPackages;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -80,8 +82,9 @@ public final class VisibilityHelperImpl implements VisibilityHelper {
         try {
             if (hasPermissionsToQueryRuntimeMetadata(
                     callerIdentity.getCallingUid(), callerIdentity.getCallingPid())) {
-                if (mContext.checkPermission(
-                                Manifest.permission.QUERY_ALL_PACKAGES,
+                // IchthysOS: never granted while the user withholds it.
+                if (AppsFilterQueryAllPackages.checkPermission(
+                                mContext,
                                 callerIdentity.getCallingPid(),
                                 callerIdentity.getCallingUid())
                         == PackageManager.PERMISSION_GRANTED) {
@@ -117,8 +120,9 @@ public final class VisibilityHelperImpl implements VisibilityHelper {
         try {
             if (hasPermissionsToQueryRuntimeMetadata(
                     callerIdentity.getCallingUid(), callerIdentity.getCallingPid())) {
-                if (mContext.checkPermission(
-                                Manifest.permission.QUERY_ALL_PACKAGES,
+                // IchthysOS: never granted while the user withholds it.
+                if (AppsFilterQueryAllPackages.checkPermission(
+                                mContext,
                                 callerIdentity.getCallingPid(),
                                 callerIdentity.getCallingUid())
                         == PackageManager.PERMISSION_GRANTED) {

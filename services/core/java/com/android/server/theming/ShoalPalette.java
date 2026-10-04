@@ -86,7 +86,7 @@ public final class ShoalPalette {
 
     public static final int MIN_LEVELS = 2;
     public static final int MAX_LEVELS = 5;
-    public static final int DEFAULT_LEVELS = 3;
+    public static final int DEFAULT_LEVELS = 4;
 
     // ---------------------------------------------------------------------------------------------
     // Token names: resources are "ichthys_<token>_dark" / "ichthys_<token>_light" (colors).

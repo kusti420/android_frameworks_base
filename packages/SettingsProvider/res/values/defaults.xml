@@ -18,8 +18,10 @@
 -->
 <resources>
     <bool name="def_dim_screen">true</bool>
-    <!-- IchthysOS: default screen-off timeout to 10 minutes (was 60000 = 1 min). -->
-    <integer name="def_screen_off_timeout">600000</integer>
+    <!-- IchthysOS: screen-off timeout 2 minutes (AOSP: 60000 = 1 min; IchthysOS had 10 min,
+         too long for a phone left on a table). Only new users get it; an existing user keeps
+         the stored value. -->
+    <integer name="def_screen_off_timeout">120000</integer>
     <integer name="def_sleep_timeout">-1</integer>
     <bool name="def_airplane_mode_on">false</bool>
     <bool name="def_theater_mode_on">false</bool>

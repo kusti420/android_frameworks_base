@@ -17,6 +17,10 @@
 package com.android.systemui.qs.footer.ui.viewmodel
 
 import android.content.Context
+import android.database.ContentObserver
+import android.os.Handler
+import android.os.Looper
+import android.os.UserHandle
 import android.provider.Settings
 import android.util.Log
 import android.view.ContextThemeWrapper
@@ -48,12 +52,14 @@ import com.android.systemui.res.R
 import com.android.systemui.shade.ShadeDisplayAware
 import com.android.systemui.user.domain.interactor.SelectedUserInteractor
 import com.android.systemui.util.icuMessageFormat
+import com.android.systemui.utils.coroutines.flow.conflatedCallbackFlow
 import javax.inject.Inject
 import javax.inject.Named
 import javax.inject.Provider
 import kotlin.math.max
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -258,23 +264,16 @@ fun createFooterActionsViewModel(
 
     val qsThemedContext = ContextThemeWrapper(appContext, R.style.Theme_SystemUI_QuickSettings)
 
-    // IchthysOS: crDroid QS footer visibility toggles (Settings.System, default 1 = show). Read
-    // once when the footer view-model is built, so they apply on a SystemUI restart (matching the
-    // non-reactive tile customizations in CommonTile.kt). Each null-out below is consumed by
-    // FooterActions.kt's `IconButton(model) { val vm = model() ?: return ... }` which simply skips
-    // rendering the button when the model is null.
-    val showFooterSettings =
-        Settings.System.getInt(appContext.contentResolver, "qs_footer_show_settings", 1) == 1
-    val showFooterPowerMenu =
-        Settings.System.getInt(appContext.contentResolver, "qs_footer_show_power_menu", 1) == 1
+    // IchthysOS: crDroid QS footer visibility toggles (Settings.System, default 1 = show),
+    // observed so they apply as soon as the switch is flipped. A hidden button is a null model,
+    // which FooterActions.kt's `IconButton(model) { val vm = model() ?: return ... }` skips.
+    // qs_footer_show_power_menu is applied in FooterActions.kt, because `power` is not a flow.
+    val showFooterSettings = footerToggle(appContext, "qs_footer_show_settings")
     // qs_footer_show_user pref is currently commented out in crdroid_settings_quicksettings.xml;
     // wired here so it takes effect immediately if that pref is re-enabled (default 1 = no change).
-    val showFooterUser =
-        Settings.System.getInt(appContext.contentResolver, "qs_footer_show_user", 1) == 1
-    val showFooterWarnings =
-        Settings.System.getInt(appContext.contentResolver, "qs_footer_warnings", 1) == 1
-    val showFooterServices =
-        Settings.System.getInt(appContext.contentResolver, "qs_footer_show_services", 1) == 1
+    val showFooterUser = footerToggle(appContext, "qs_footer_show_user")
+    val showFooterWarnings = footerToggle(appContext, "qs_footer_warnings")
+    val showFooterServices = footerToggle(appContext, "qs_footer_show_services")
 
     val security =
         footerActionsInteractor.securityButtonConfig
@@ -304,33 +303,37 @@ fun createFooterActionsViewModel(
                 )
             }
             // IchthysOS: crDroid qs_footer_show_services
-            .map { it.takeIf { showFooterServices } }
+            .combine(showFooterServices) { model, show -> model.takeIf { show } }
             .distinctUntilChanged()
 
     // IchthysOS: crDroid qs_footer_warnings. Gated separately from `security` above so the
     // ungated flow still feeds `foregroundServices`, which folds the security text into the
     // "N apps are active" chip.
-    val securityButton = security.map { it.takeIf { showFooterWarnings } }.distinctUntilChanged()
+    val securityButton =
+        security
+            .combine(showFooterWarnings) { model, show -> model.takeIf { show } }
+            .distinctUntilChanged()
 
     val userSwitcher =
         userSwitcherViewModel(qsThemedContext, footerActionsInteractor, ::onUserSwitcherClicked)
             // IchthysOS: crDroid qs_footer_show_user
-            .map { it.takeIf { showFooterUser } }
+            .combine(showFooterUser) { model, show -> model.takeIf { show } }
             .distinctUntilChanged()
 
     val settings =
         selectedUserInteractor.isCurrentUserHeadlessSystemUser
-            .map { isHeadlessSystemUser ->
+            // IchthysOS: crDroid qs_footer_show_settings
+            .combine(showFooterSettings) { isHeadlessSystemUser, show ->
                 SettingsActionViewModel(qsThemedContext, ::onSettingsButtonClicked)
                     .takeUnless { hsuQsChanges() && isHeadlessSystemUser }
-                    // IchthysOS: crDroid qs_footer_show_settings
-                    .takeIf { showFooterSettings }
+                    .takeIf { show }
             }
             .distinctUntilChanged()
 
     val power =
-        // IchthysOS: crDroid qs_footer_show_power_menu (in addition to the PM_LITE build flag)
-        if (showPowerButton && showFooterPowerMenu) {
+        // IchthysOS: crDroid qs_footer_show_power_menu is applied on top of this in
+        // FooterActions.kt, where it can be observed.
+        if (showPowerButton) {
             PowerActionViewModel(qsThemedContext, ::onPowerButtonClicked)
         } else {
             null
@@ -347,6 +350,33 @@ fun createFooterActionsViewModel(
         observeDeviceMonitoringDialogRequests = ::observeDeviceMonitoringDialogRequests,
         textFeedback = textFeedback,
     )
+}
+
+/**
+ * IchthysOS: a crDroid QS footer switch (Settings.System, 1 = show, unset = show) as a flow that
+ * emits the current value on collection and again whenever the setting is written.
+ */
+private fun footerToggle(context: Context, key: String): Flow<Boolean> {
+    val resolver = context.contentResolver
+    // USER_CURRENT: the shade's per-display context is not necessarily the foreground user's.
+    fun read() = Settings.System.getIntForUser(resolver, key, 1, UserHandle.USER_CURRENT) == 1
+    return conflatedCallbackFlow {
+            val observer =
+                object : ContentObserver(Handler(Looper.getMainLooper())) {
+                    override fun onChange(selfChange: Boolean) {
+                        trySend(read())
+                    }
+                }
+            resolver.registerContentObserver(
+                Settings.System.getUriFor(key),
+                /* notifyForDescendants= */ false,
+                observer,
+                UserHandle.USER_ALL,
+            )
+            trySend(read())
+            awaitClose { resolver.unregisterContentObserver(observer) }
+        }
+        .distinctUntilChanged()
 }
 
 fun userSwitcherViewModel(

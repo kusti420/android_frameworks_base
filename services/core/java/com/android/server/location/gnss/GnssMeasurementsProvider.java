@@ -35,6 +35,7 @@ import android.stats.location.LocationStatsEnums;
 import android.util.Log;
 
 import com.android.internal.annotations.GuardedBy;
+import com.android.server.location.IchthysLocationNoFix;
 import com.android.server.location.gnss.GnssConfiguration.HalInterfaceVersion;
 import com.android.server.location.gnss.hal.GnssNative;
 import com.android.server.location.injector.AppOpsHelper;
@@ -262,8 +263,10 @@ public final class GnssMeasurementsProvider extends
     @Override
     public void onReportMeasurements(GnssMeasurementsEvent event) {
         deliverToListeners(registration -> {
-            if (mAppOpsHelper.noteOpNoThrow(AppOpsManager.OP_FINE_LOCATION,
-                    registration.getIdentity())) {
+            // IchthysOS "No location": raw GNSS output would give the position away.
+            if (!IchthysLocationNoFix.isNoFix(registration.getIdentity())
+                    && mAppOpsHelper.noteOpNoThrow(AppOpsManager.OP_FINE_LOCATION,
+                            registration.getIdentity())) {
                 EVENT_LOG.logGnssMeasurementsDelivered(event.getMeasurements().size(),
                         registration.getIdentity());
                 return listener -> listener.onGnssMeasurementsReceived(event);

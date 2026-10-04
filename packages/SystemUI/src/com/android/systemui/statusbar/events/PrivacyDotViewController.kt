@@ -39,6 +39,7 @@ import com.android.systemui.display.dagger.SystemUIDisplaySubcomponent
 import com.android.systemui.plugins.statusbar.StatusBarStateController
 import com.android.systemui.privacy.PrivacyConfig
 import com.android.systemui.privacy.PrivacyItem
+import com.android.systemui.privacy.PrivacyType
 import com.android.systemui.res.R
 import com.android.systemui.shade.domain.interactor.ShadeDisplaysInteractor
 import com.android.systemui.shade.domain.interactor.ShadeInteractor
@@ -65,6 +66,8 @@ import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import java.util.concurrent.Executor
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOf
 
@@ -109,6 +112,25 @@ interface PrivacyDotViewController {
 
     @UiThread fun updateDotView(state: ViewState)
 
+    /**
+     * IchthysOS: whether a privacy indicator should be on screen right now and for what, whichever
+     * way it is drawn (the corner dot here, or the ring around the camera cutout drawn by
+     * IchthysIndicatorsStartable). True exactly when the stock dot would show.
+     */
+    val indicatorState: StateFlow<PrivacyIndicatorState>
+        get() = NO_PRIVACY_INDICATOR
+
+    /**
+     * IchthysOS: how the corner dot is laid out.
+     *
+     * @param replacedByCutoutRing the indicator is drawn as a ring around the camera cutout, so
+     *   the corner dot stays hidden
+     * @param dotInnerOffset pixels the dot moves away from the status bar content, to stay where
+     *   it always was while the notification dot takes the slot beside it (see
+     *   [StatusBarContentInsetsProvider.setReservedEndPadding])
+     */
+    fun setIchthysIndicatorLayout(replacedByCutoutRing: Boolean, dotInnerOffset: Int) {}
+
     interface ShowingListener {
         fun onPrivacyDotShown(v: View?)
 
@@ -139,12 +161,28 @@ constructor(
     // Only can be modified on @UiThread
     override var currentViewState: ViewState = ViewState()
 
+    private val _indicatorState = MutableStateFlow(PrivacyIndicatorState())
+    override val indicatorState: StateFlow<PrivacyIndicatorState> = _indicatorState
+
     @GuardedBy("lock")
     private var nextViewState: ViewState = currentViewState.copy()
         set(value) {
             field = value
+            // IchthysOS: published for the cutout ring, which is not one of this class's views.
+            _indicatorState.value =
+                PrivacyIndicatorState(value.shouldShowIndicator(), value.privacyTypes)
             scheduleUpdate()
         }
+
+    override fun setIchthysIndicatorLayout(replacedByCutoutRing: Boolean, dotInnerOffset: Int) {
+        synchronized(lock) {
+            nextViewState =
+                nextViewState.copy(
+                    replacedByCutoutRing = replacedByCutoutRing,
+                    dotInnerOffset = dotInnerOffset,
+                )
+        }
+    }
 
     private val lock = Object()
     private var cancelRunnable: Runnable? = null
@@ -386,6 +424,19 @@ constructor(
             } else {
                 width = displayWidth - contentInsets.right
             }
+        }
+
+        // IchthysOS: when the notification dot sits beside the corner dot, the content rects
+        // above are narrower by the notification dot's slot and each container is that much
+        // wider. The slot is on the content side (the dot's inner gravity), so pushing the dot
+        // out by the same amount leaves it exactly where it is without a notification dot.
+        views.forEach { corner ->
+            (corner.requireViewById<View>(R.id.privacy_dot).layoutParams
+                    as FrameLayout.LayoutParams)
+                .apply {
+                    leftMargin = state.dotInnerOffset
+                    rightMargin = state.dotInnerOffset
+                }
         }
     }
 
@@ -632,12 +683,14 @@ constructor(
                                     PrivacyConfig.Companion.privacyItemsAreLocationOnly(
                                         privacyItems ?: emptyList()
                                     ),
+                                privacyTypes = privacyItems.types(),
                                 contentDescription = contentDescription,
                             )
                     } else {
                         nextViewState =
                             nextViewState.copy(
                                 systemPrivacyEventIsActive = true,
+                                privacyTypes = privacyItems.types(),
                                 contentDescription = contentDescription,
                             )
                     }
@@ -658,6 +711,9 @@ constructor(
                 return null
             }
         }
+
+    private fun List<PrivacyItem>?.types(): Set<PrivacyType> =
+        this?.mapTo(mutableSetOf()) { it.privacyType } ?: emptySet()
 
     private fun View?.corner(): PrivacyDotCorner? {
         if (this != null) {
@@ -737,16 +793,28 @@ data class ViewState(
     val corner: PrivacyDotCorner? = null,
     val designatedCorner: View? = null,
     val contentDescription: String? = null,
+    /** IchthysOS: what is in use, from the last persistent-dot event (kept after it ends). */
+    val privacyTypes: Set<PrivacyType> = emptySet(),
+    /** IchthysOS: see [PrivacyDotViewController.setIchthysIndicatorLayout]. */
+    val replacedByCutoutRing: Boolean = false,
+    val dotInnerOffset: Int = 0,
 ) {
-    fun shouldShowDot(): Boolean {
+    /** Whether a privacy indicator should be visible, however it is drawn. */
+    fun shouldShowIndicator(): Boolean {
         return systemPrivacyEventIsActive &&
             !shadeExpanded &&
             !qsExpanded &&
             !dotDuplicatedByAvControlsChip
     }
 
+    /** Whether the corner dot itself should be visible. */
+    fun shouldShowDot(): Boolean {
+        return shouldShowIndicator() && !replacedByCutoutRing
+    }
+
     fun needsLayout(other: ViewState): Boolean {
         return rotation != other.rotation ||
+            dotInnerOffset != other.dotInnerOffset ||
             layoutRtl != other.layoutRtl ||
             portraitRect != other.portraitRect ||
             landscapeRect != other.landscapeRect ||
@@ -764,6 +832,16 @@ data class ViewState(
         }
     }
 }
+
+/** IchthysOS: see [PrivacyDotViewController.indicatorState]. */
+data class PrivacyIndicatorState(
+    val visible: Boolean = false,
+    /** What is in use. Not cleared when the indicator hides, so it can fade out unchanged. */
+    val types: Set<PrivacyType> = emptySet(),
+)
+
+private val NO_PRIVACY_INDICATOR: StateFlow<PrivacyIndicatorState> =
+    MutableStateFlow(PrivacyIndicatorState())
 
 @Module
 object PrivacyDotViewControllerModule {

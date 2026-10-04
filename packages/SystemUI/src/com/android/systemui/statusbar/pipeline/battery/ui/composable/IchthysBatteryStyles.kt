@@ -90,7 +90,10 @@ internal fun BatteryColors.customizedFor(
 ): BatteryPalette {
     val base =
         when (custom.fillMode) {
-            BatteryCustomization.FILL_MODE_CUSTOM -> Color(custom.fillColor)
+            BatteryCustomization.FILL_MODE_CUSTOM ->
+                // No colour picked yet: the accent drives it, like every other default.
+                if (custom.fillColor == BatteryCustomization.FILL_COLOR_UNSET) accent
+                else Color(custom.fillColor)
             BatteryCustomization.FILL_MODE_ACCENT -> accent
             // Follow the tint of the other status bar icons
             else -> attribution

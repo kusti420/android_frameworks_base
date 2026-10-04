@@ -16,11 +16,15 @@
 
 package com.android.systemui.brightness.ui.compose
 
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.DragInteraction
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,10 +33,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -48,21 +54,29 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.res.colorResource
+import androidx.compose.ui.res.dimensionResource
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.android.systemui.qs.panels.ui.compose.infinitegrid.ShoalQsColors
-import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalAccent
+import com.android.systemui.brightness.QsSliderShape
+import com.android.systemui.compose.modifiers.sysuiResTag
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalQsFonts
 import com.android.systemui.res.R
 import kotlin.math.PI
@@ -72,18 +86,32 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
- * IchthysOS "Shoal" brightness block (ichthys_qs_style = "shoal"):
- * - a label row: "Brightness", the value in the mono face, then the "min NN%" (floor) and "Auto"
- *   pills;
- * - a 56 dp pill track (#0c1013 + 1 dp hairline) whose filled part is a dark accent tint, the part
- *   below the auto-brightness floor a darker tint, the floor itself a 4 dp accent bar drawn INSIDE
- *   the track, and an accent sun glyph at the start.
+ * IchthysOS brightness block. The ONE brightness slider: every quick settings tile layout
+ * (Settings.Secure ichthys_qs_style = "grid" and "shoal") and the brightness dialog draw this same
+ * composable through [BrightnessSliderContainer], so they cannot drift apart again.
+ * - a label row: "Brightness", the value in the mono face, then three glyph pills: Night Light,
+ *   the floor (with its "NN%" while on) and auto brightness;
+ * - a 56 dp pill track (card surface + hairline) whose filled part is the accent fill tint, the
+ *   part below the auto-brightness floor the dimmer accent tint, the floor itself a 4 dp accent bar
+ *   drawn INSIDE the track, and an accent sun glyph at the start.
+ *
+ * Colours are the framework Shoal tokens (com.android.internal.R.color.ichthys_*, see
+ * [rememberShoalBrightnessColors]), so the block follows the theme in light and dark and falls back
+ * to the Material roles when the Shoal palette is not applied. Nothing here is a literal colour.
  *
  * Gestures: a horizontal drag that starts on (or near) the floor bar moves the floor; any other
  * drag or a tap sets the brightness. Taps are handled separately from drags so a vertical swipe
  * that starts on the slider still scrolls / collapses the shade.
  *
  * All values are in the slider's gamma space ([minGamma]..[maxGamma]).
+ *
+ * @param shape the crDroid `qs_brightness_slider_shape` value ([QsSliderShape]). The default is the
+ *   pill; "rounded square" and "square" only change the track's corners.
+ * @param interactionSource receives a [DragInteraction] for every brightness (not floor) drag, which
+ *   is what the slider haptics listen to.
+ * @param ownPanel draw a Shoal panel (ground + hairline) behind the whole block. For hosts with
+ *   nothing of their own behind the slider - the brightness dialog's window is transparent. Quick
+ *   settings sits on the shade panel and leaves this off.
  */
 @Composable
 internal fun ShoalBrightnessSlider(
@@ -102,15 +130,41 @@ internal fun ShoalBrightnessSlider(
     onToggleAuto: () -> Unit,
     onToggleFloor: () -> Unit,
     onFloorFinished: (Int) -> Unit,
+    // Night Light: null when the device has no night display, which hides the pill.
+    nightLight: Boolean?,
+    onToggleNightLight: () -> Unit,
     onDrag: (Int) -> Unit,
     onStop: (Int) -> Unit,
     modifier: Modifier = Modifier,
     sliderModifier: Modifier = Modifier,
+    shape: Int = QsSliderShape.DEFAULT,
+    interactionSource: MutableInteractionSource? = null,
+    ownPanel: Boolean = false,
 ) {
-    val accent = rememberShoalAccent()
+    val colors = rememberShoalBrightnessColors()
     val fonts = rememberShoalQsFonts()
+    val hairlineWidth = dimensionResource(com.android.internal.R.dimen.ichthys_hairline_width)
+    val panelModifier =
+        if (ownPanel) {
+            val panelShape =
+                RoundedCornerShape(dimensionResource(com.android.internal.R.dimen.ichthys_radius))
+            Modifier.background(colors.ground, panelShape)
+                .border(hairlineWidth, colors.hairline, panelShape)
+                .padding(PanelPadding)
+        } else {
+            Modifier
+        }
     val range = (maxGamma - minGamma).coerceAtLeast(1)
     val showFloor = floorEnabled && autoMode
+    // The pill is this slider's own default; QsSliderShape.DEFAULT's 12 dp is the stock 16 dp
+    // track's radius and would square off a 56 dp one.
+    val trackCorner =
+        QsSliderShape.cornerDp(
+                if (QsSliderShape.sanitize(shape) == QsSliderShape.DEFAULT) QsSliderShape.CIRCLE
+                else shape,
+                TrackHeight.value,
+            )
+            .dp
 
     // Stable state objects (never re-keyed) so a running gesture never writes into an orphaned
     // state; external changes are adopted by the effects below while no drag is in progress.
@@ -133,9 +187,14 @@ internal fun ShoalBrightnessSlider(
     val currentShowToast by rememberUpdatedState(showToast)
     val currentOverridden by rememberUpdatedState(overriddenByAppState)
     val currentShowFloor by rememberUpdatedState(showFloor)
+    val currentInteractionSource by rememberUpdatedState(interactionSource)
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val sliderDescription = stringResource(R.string.accessibility_brightness)
 
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(
+        modifier = modifier.then(panelModifier),
+        verticalArrangement = Arrangement.spacedBy(LabelRowGap),
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -144,7 +203,7 @@ internal fun ShoalBrightnessSlider(
                 text = stringResource(R.string.quick_settings_brightness_dialog_title),
                 style =
                     TextStyle(
-                        color = ShoalQsColors.Label,
+                        color = colors.label,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
                         fontFamily = fonts.text,
@@ -155,19 +214,40 @@ internal fun ShoalBrightnessSlider(
                 text = "$percent%",
                 style =
                     TextStyle(
-                        color = ShoalQsColors.Muted,
+                        color = colors.value,
                         fontSize = 12.5.sp,
                         fontFamily = fonts.mono,
                     ),
             )
             Spacer(Modifier.weight(1f))
             if (showToggles) {
+                if (nightLight != null) {
+                    val nightLabel = stringResource(R.string.quick_settings_night_display_label)
+                    val nightState =
+                        stringResource(
+                            if (nightLight) R.string.switch_bar_on else R.string.switch_bar_off
+                        )
+                    ShoalPill(
+                        icon = ShoalPillIcon.Night,
+                        text = null,
+                        filled = false,
+                        active = nightLight,
+                        enabled = true,
+                        colors = colors,
+                        textStyle = TextStyle(fontSize = 12.sp, fontFamily = fonts.mono),
+                        contentDescription = "$nightLabel, $nightState",
+                        onClick = onToggleNightLight,
+                    )
+                    Spacer(Modifier.width(6.dp))
+                }
                 ShoalPill(
-                    text = if (floorEnabled) "min $floorPercent%" else "min",
+                    icon = ShoalPillIcon.Floor,
+                    // The floor value stays readable next to its glyph while the floor is on.
+                    text = if (floorEnabled) "$floorPercent%" else null,
                     filled = false,
                     active = floorEnabled,
                     enabled = enabled && autoMode,
-                    accent = accent,
+                    colors = colors,
                     textStyle =
                         TextStyle(fontSize = 12.sp, fontFamily = fonts.mono),
                     contentDescription =
@@ -179,11 +259,12 @@ internal fun ShoalBrightnessSlider(
                 )
                 Spacer(Modifier.width(6.dp))
                 ShoalPill(
-                    text = "Auto",
+                    icon = ShoalPillIcon.Auto,
+                    text = null,
                     filled = true,
                     active = autoMode,
                     enabled = enabled,
-                    accent = accent,
+                    colors = colors,
                     textStyle =
                         TextStyle(
                             fontSize = 12.sp,
@@ -200,15 +281,31 @@ internal fun ShoalBrightnessSlider(
             }
         }
 
-        val trackShape = RoundedCornerShape(TrackHeight / 2)
         Box(
             modifier =
                 sliderModifier
                     .fillMaxWidth()
                     .height(TrackHeight)
-                    .clip(trackShape)
+                    .sysuiResTag("slider")
+                    .clip(RoundedCornerShape(trackCorner))
                     .semantics {
-                        contentDescription = "$percent%"
+                        contentDescription = sliderDescription
+                        stateDescription = "$percent%"
+                        progressBarRangeInfo =
+                            ProgressBarRangeInfo(
+                                value.toFloat(),
+                                minGamma.toFloat()..maxGamma.toFloat(),
+                            )
+                        if (enabled && !overriddenByAppState) {
+                            setProgress { target ->
+                                var g = target.roundToInt().coerceIn(minGamma, maxGamma)
+                                if (currentShowFloor) g = maxOf(g, floorState.intValue)
+                                valueState.intValue = g
+                                currentOnDrag(g)
+                                currentOnStop(g)
+                                true
+                            }
+                        }
                     }
                     .pointerInput(enabled, isRestricted, minGamma, maxGamma, rtl) {
                         fun fracAt(x: Float): Float {
@@ -246,6 +343,23 @@ internal fun ShoalBrightnessSlider(
                             return if (rtl) size.width - x else x
                         }
                         val grab = FloorGrab.toPx()
+                        // The interaction of the brightness drag in progress, if any.
+                        var dragInteraction: DragInteraction.Start? = null
+                        fun finishDrag(cancelled: Boolean) {
+                            when (dragMode) {
+                                DragMode.Main -> currentOnStop(valueState.intValue)
+                                DragMode.Floor -> currentOnFloorFinished(floorState.intValue)
+                                DragMode.None -> {}
+                            }
+                            dragInteraction?.let { start ->
+                                currentInteractionSource?.tryEmit(
+                                    if (cancelled) DragInteraction.Cancel(start)
+                                    else DragInteraction.Stop(start)
+                                )
+                            }
+                            dragInteraction = null
+                            dragMode = DragMode.None
+                        }
                         detectHorizontalDragGestures(
                             onDragStart = { offset ->
                                 dragMode =
@@ -264,6 +378,9 @@ internal fun ShoalBrightnessSlider(
                                         else -> DragMode.Main
                                     }
                                 if (dragMode == DragMode.Main) {
+                                    val start = DragInteraction.Start()
+                                    dragInteraction = start
+                                    currentInteractionSource?.tryEmit(start)
                                     val g = maxOf(
                                         gammaAt(offset.x),
                                         if (currentShowFloor) floorState.intValue else minGamma,
@@ -272,22 +389,8 @@ internal fun ShoalBrightnessSlider(
                                     currentOnDrag(g)
                                 }
                             },
-                            onDragEnd = {
-                                when (dragMode) {
-                                    DragMode.Main -> currentOnStop(valueState.intValue)
-                                    DragMode.Floor -> currentOnFloorFinished(floorState.intValue)
-                                    DragMode.None -> {}
-                                }
-                                dragMode = DragMode.None
-                            },
-                            onDragCancel = {
-                                when (dragMode) {
-                                    DragMode.Main -> currentOnStop(valueState.intValue)
-                                    DragMode.Floor -> currentOnFloorFinished(floorState.intValue)
-                                    DragMode.None -> {}
-                                }
-                                dragMode = DragMode.None
-                            },
+                            onDragEnd = { finishDrag(cancelled = false) },
+                            onDragCancel = { finishDrag(cancelled = true) },
                         ) { change, _ ->
                             when (dragMode) {
                                 DragMode.Main -> {
@@ -314,11 +417,66 @@ internal fun ShoalBrightnessSlider(
                                 if (showFloor)
                                     (floorState.intValue - minGamma).toFloat() / range
                                 else null,
-                            accent = accent,
+                            colors = colors,
+                            corner = trackCorner.toPx(),
+                            hairline = hairlineWidth.toPx(),
                             rtl = rtl,
                             alpha = if (enabled) 1f else 0.5f,
                         )
                     }
+        )
+    }
+}
+
+/**
+ * The colours of the brightness block, all of them framework Shoal tokens. The tokens resolve by
+ * the night mode of the context they are read through and are rewritten by the theme engine
+ * (ShoalPalette) when the accent or the surface style changes, so there is nothing to observe here.
+ */
+@Immutable
+private class ShoalBrightnessColors(
+    /** Ground of the block's own panel, where it draws one. */
+    val ground: Color,
+    /** Track surface, and the surface the accent tints are mixed over. */
+    val track: Color,
+    /** Outline of the track and of an inactive pill. */
+    val hairline: Color,
+    /** "Brightness" and inactive pill text. */
+    val label: Color,
+    /** The percentage. */
+    val value: Color,
+    /** Sun glyph, floor bar, active pill. */
+    val accent: Color,
+    /** Text on an accent-filled pill. */
+    val onAccent: Color,
+    /** Filled part of the track. */
+    val fill: Color,
+    /** Part of the track below the auto-brightness floor. */
+    val belowFloor: Color,
+)
+
+@Composable
+private fun rememberShoalBrightnessColors(): ShoalBrightnessColors {
+    val ground = colorResource(com.android.internal.R.color.ichthys_ink)
+    val track = colorResource(com.android.internal.R.color.ichthys_card)
+    val hairline = colorResource(com.android.internal.R.color.ichthys_hairline)
+    val label = colorResource(com.android.internal.R.color.ichthys_body)
+    val value = colorResource(com.android.internal.R.color.ichthys_muted)
+    val accent = colorResource(com.android.internal.R.color.ichthys_accent)
+    val onAccent = colorResource(com.android.internal.R.color.ichthys_on_accent)
+    val fill = colorResource(com.android.internal.R.color.ichthys_accent_fill)
+    val belowFloor = colorResource(com.android.internal.R.color.ichthys_accent_dim)
+    return remember(ground, track, hairline, label, value, accent, onAccent, fill, belowFloor) {
+        ShoalBrightnessColors(
+            ground = ground,
+            track = track,
+            hairline = hairline,
+            label = label,
+            value = value,
+            accent = accent,
+            onAccent = onAccent,
+            fill = fill,
+            belowFloor = belowFloor,
         )
     }
 }
@@ -329,7 +487,10 @@ private enum class DragMode {
     Floor,
 }
 
+// Sizes are dp constants on purpose: a new SystemUI <dimen> shifts the dimen resource-ID table.
 private val TrackHeight = 56.dp
+private val LabelRowGap = 10.dp
+private val PanelPadding = 14.dp
 private val MarkerWidth = 4.dp
 private val MarkerInset = 7.dp
 private val SunStart = 18.dp
@@ -339,52 +500,56 @@ private val FloorGrab = 20.dp
 private fun DrawScope.drawShoalTrack(
     valueFrac: Float,
     floorFrac: Float?,
-    accent: Color,
+    colors: ShoalBrightnessColors,
+    corner: Float,
+    hairline: Float,
     rtl: Boolean,
     alpha: Float,
 ) {
     val w = size.width
     val h = size.height
-    val radius = CornerRadius(h / 2f)
     fun xOf(frac: Float): Float {
         val x = frac.coerceIn(0f, 1f) * w
         return if (rtl) w - x else x
     }
     // Track.
-    drawRoundRect(color = ShoalQsColors.Track, cornerRadius = radius, alpha = alpha)
-    // Filled part (dark accent tint). The box is clipped to the pill, so a plain rect is enough.
+    drawRoundRect(color = colors.track, cornerRadius = CornerRadius(corner), alpha = alpha)
+    // Filled part (accent fill tint). The box is clipped to the track shape, so a plain rect is
+    // enough.
     val valueX = xOf(valueFrac)
     val fillLeft = if (rtl) valueX else 0f
     val fillRight = if (rtl) w else valueX
     if (fillRight > fillLeft) {
         drawRect(
-            color = ShoalQsColors.fillTint(accent),
+            color = colors.fill,
             topLeft = Offset(fillLeft, 0f),
             size = Size(fillRight - fillLeft, h),
             alpha = alpha,
         )
     }
-    // Region below the floor (darker tint, drawn over the fill from the start edge, x = 0 in
-    // LTR) and the floor marker itself, inside the track. The marker is kept clear of the rounded
-    // ends, and the darker region always ends exactly at the marker, so everything between the
-    // start edge and the bar is the below-min tint.
+    // Region below the floor (dimmer tint, drawn over the fill from the start edge, x = 0 in
+    // LTR) and the floor marker itself, inside the track. The marker is kept clear of the track's
+    // ends (of the rounding, or of the outline on a square track), and the dimmer region always
+    // ends exactly at the marker, so everything between the start edge and the bar is the
+    // below-min tint.
     if (floorFrac != null) {
         val floorX = xOf(floorFrac)
         val mw = MarkerWidth.toPx()
         val inset = MarkerInset.toPx()
-        val cx = floorX.coerceIn(h / 2f, (w - h / 2f).coerceAtLeast(h / 2f))
+        val edge = maxOf(corner, inset + mw / 2f)
+        val cx = floorX.coerceIn(edge, (w - edge).coerceAtLeast(edge))
         val belowLeft = if (rtl) cx else 0f
         val belowRight = if (rtl) w else cx
         if (belowRight > belowLeft) {
             drawRect(
-                color = ShoalQsColors.belowMinTint(accent),
+                color = colors.belowFloor,
                 topLeft = Offset(belowLeft, 0f),
                 size = Size(belowRight - belowLeft, h),
                 alpha = alpha,
             )
         }
         drawRoundRect(
-            color = accent,
+            color = colors.accent,
             topLeft = Offset(cx - mw / 2f, inset),
             size = Size(mw, h - inset * 2f),
             cornerRadius = CornerRadius(mw / 2f),
@@ -394,16 +559,17 @@ private fun DrawScope.drawShoalTrack(
     // Sun glyph at the start.
     val sun = SunSize.toPx()
     val sunCx = if (rtl) w - SunStart.toPx() - sun / 2f else SunStart.toPx() + sun / 2f
-    drawSun(Offset(sunCx, h / 2f), sun, accent, alpha)
-    // 1 dp hairline.
-    val stroke = 1.dp.toPx()
-    drawRoundRect(
-        color = ShoalQsColors.Hairline,
-        topLeft = Offset(stroke / 2f, stroke / 2f),
-        size = Size(w - stroke, h - stroke),
-        cornerRadius = CornerRadius(h / 2f - stroke / 2f),
-        style = Stroke(width = stroke),
-    )
+    drawSun(Offset(sunCx, h / 2f), sun, colors.accent, alpha)
+    // Hairline.
+    if (hairline > 0f) {
+        drawRoundRect(
+            color = colors.hairline,
+            topLeft = Offset(hairline / 2f, hairline / 2f),
+            size = Size(w - hairline, h - hairline),
+            cornerRadius = CornerRadius((corner - hairline / 2f).coerceAtLeast(0f)),
+            style = Stroke(width = hairline),
+        )
+    }
 }
 
 private fun DrawScope.drawSun(center: Offset, size: Float, color: Color, alpha: Float) {
@@ -427,47 +593,122 @@ private fun DrawScope.drawSun(center: Offset, size: Float, color: Color, alpha: 
     }
 }
 
-/** 28 dp pill: outlined (accent when [active]) or accent-filled with ink text when [filled]. */
+/** 28 dp pill: outlined (accent when [active]) or accent-filled with on-accent text when [filled]. */
 @Composable
 private fun ShoalPill(
-    text: String,
+    icon: ShoalPillIcon,
+    text: String?,
     filled: Boolean,
     active: Boolean,
     enabled: Boolean,
-    accent: Color,
+    colors: ShoalBrightnessColors,
     textStyle: TextStyle,
     contentDescription: String,
     onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(14.dp)
     val fill = filled && active
-    val textColor =
+    val contentColor =
         when {
-            fill -> ShoalQsColors.Ink
-            active -> accent
-            else -> ShoalQsColors.Label
-        }
+            fill -> colors.onAccent
+            active -> colors.accent
+            else -> colors.label
+        }.copy(alpha = if (enabled) 1f else 0.4f)
     val outline =
         when {
             fill -> Color.Transparent
-            active -> accent
-            else -> ShoalQsColors.Hairline
+            active -> colors.accent
+            else -> colors.hairline
         }
     val outlineWidth = if (active) 1.5.dp else 1.dp
-    Box(
+    Row(
         modifier =
             Modifier.height(28.dp)
                 .clip(shape)
-                .background(if (fill) accent else Color.Transparent, shape)
+                .background(if (fill) colors.accent else Color.Transparent, shape)
                 .border(outlineWidth, outline, shape)
                 .clickable(enabled = enabled, onClick = onClick)
                 .semantics { this.contentDescription = contentDescription }
-                .padding(horizontal = 12.dp),
-        contentAlignment = Alignment.Center,
+                .padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        BasicText(
-            text = text,
-            style = textStyle.copy(color = textColor.copy(alpha = if (enabled) 1f else 0.4f)),
-        )
+        if (icon == ShoalPillIcon.Night) {
+            // The Night Light tile's own glyph (NightDisplayTileMapper), so the pill and the tile
+            // can never show two different pictures for the same thing.
+            Image(
+                painter =
+                    painterResource(
+                        if (active) R.drawable.ic_qs_ichthys_nightlight
+                        else R.drawable.ic_qs_ichthys_nightlight_off
+                    ),
+                contentDescription = null,
+                colorFilter = ColorFilter.tint(contentColor),
+                modifier = Modifier.size(ShoalPillIconSize),
+            )
+        } else {
+            Canvas(Modifier.size(ShoalPillIconSize)) { drawShoalPillIcon(icon, contentColor) }
+        }
+        if (text != null) {
+            Spacer(Modifier.width(5.dp))
+            BasicText(text = text, style = textStyle.copy(color = contentColor))
+        }
+    }
+}
+
+/** The glyphs of the brightness row's pills. */
+private enum class ShoalPillIcon {
+    /** Night Light: the tile's drawable (ic_qs_ichthys_nightlight / _off), not drawn here. */
+    Night,
+    /** Brightness floor: a sun resting on a bar it cannot go below. */
+    Floor,
+    /** Auto brightness: a sun with an "A" in it. */
+    Auto,
+}
+
+private val ShoalPillIconSize = 16.dp
+
+/** Draws [icon] in the 16 dp box of this scope, in one colour, as 1.5 dp round strokes. */
+private fun DrawScope.drawShoalPillIcon(icon: ShoalPillIcon, color: Color) {
+    val u = size.minDimension / 16f
+    val w = 1.5f * u
+    fun line(x1: Float, y1: Float, x2: Float, y2: Float, width: Float = w) =
+        drawLine(color, Offset(x1 * u, y1 * u), Offset(x2 * u, y2 * u), width, StrokeCap.Round)
+    // Rays of a sun centred on (cx, cy), from radius r1 to r2, for the given angles (degrees,
+    // 0 = right, counter-clockwise on screen being negative y).
+    fun rays(cx: Float, cy: Float, r1: Float, r2: Float, vararg degrees: Int) {
+        for (d in degrees) {
+            val a = d * PI / 180.0
+            val dx = cos(a).toFloat()
+            val dy = -sin(a).toFloat()
+            line(cx + dx * r1, cy + dy * r1, cx + dx * r2, cy + dy * r2)
+        }
+    }
+    when (icon) {
+        ShoalPillIcon.Night -> Unit // a drawable, see ShoalPill
+        ShoalPillIcon.Floor -> {
+            drawCircle(
+                color = color,
+                radius = 2.6f * u,
+                center = Offset(8f * u, 7.4f * u),
+                style = Stroke(width = w),
+            )
+            rays(8f, 7.4f, 4.3f, 5.8f, 0, 45, 90, 135, 180)
+            // The floor.
+            line(2f, 13.6f, 14f, 13.6f, 2f * u)
+        }
+        ShoalPillIcon.Auto -> {
+            drawCircle(
+                color = color,
+                radius = 4.6f * u,
+                center = Offset(8f * u, 8f * u),
+                style = Stroke(width = w),
+            )
+            rays(8f, 8f, 6.2f, 7.4f, 0, 45, 90, 135, 180, 225, 270, 315)
+            // "A"
+            val a = 1.2f * u
+            line(6.1f, 10.2f, 8f, 5.6f, a)
+            line(8f, 5.6f, 9.9f, 10.2f, a)
+            line(6.8f, 8.6f, 9.2f, 8.6f, a)
+        }
     }
 }

@@ -52,7 +52,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.android.app.animation.Interpolators
 import com.android.app.displaylib.PerDisplayRepository
 import com.android.compose.theme.PlatformTheme
-import com.android.systemui.brightness.ui.compose.BrightnessToggleButtons
 import com.android.keyguard.AlphaOptimizedLinearLayout
 import com.android.systemui.Dumpable
 import com.android.systemui.Flags
@@ -173,11 +172,6 @@ constructor(
     private val mShadeCarrierGroup: ShadeCarrierGroup = header.requireViewById(R.id.carrier_group)
     private val systemIconsHoverContainer: View =
         header.requireViewById(R.id.hover_system_icons_container)
-
-    // IchthysOS: adaptive-brightness / brightness-floor toggles, hosted in the gap between the date
-    // and the status icons of the expanded QS header. @xml/qs_header constrains and shows it;
-    // @xml/qqs_header and @xml/large_screen_shade_header keep it GONE.
-    private val brightnessToggles: ComposeView = header.requireViewById(R.id.brightness_toggles)
 
     private var roundedCorners = 0
     private var cutout: DisplayCutout? = null
@@ -369,20 +363,6 @@ constructor(
         // Configure the correct margins for the system icon container
         val statusIcons = mView.requireViewById<AlphaOptimizedLinearLayout>(R.id.statusIcons)
         SystemStatusIconsLayoutHelper.configurePaddingForNewStatusBarIcons(statusIcons)
-
-        // IchthysOS: brightness toggles in the expanded header's dead space. Same Compose hosting
-        // pattern as the battery view below; BrightnessToggleButtons reads its own settings and
-        // emits nothing when qs_show_auto_brightness is off, so no extra plumbing is needed.
-        brightnessToggles.setContent {
-            PlatformTheme {
-                BrightnessToggleButtons(
-                    tint =
-                        if (notificationShadeBlur())
-                            Color(context.getColor(R.color.shade_header_text_color))
-                        else Color.White
-                )
-            }
-        }
 
         // Configure the compose battery view
         val batteryComposeView = createBatteryComposeView()

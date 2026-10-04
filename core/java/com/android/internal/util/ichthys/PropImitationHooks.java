@@ -284,7 +284,7 @@ public final class PropImitationHooks {
 
     private static boolean isPhotosSpoofEnabled(Context context) {
         final ContentResolver cr = context.getContentResolver();
-        return Settings.Secure.getIntForUser(cr, KEY_SPOOF_PHOTOS, 1, UserHandle.myUserId()) != 0;
+        return Settings.Secure.getIntForUser(cr, KEY_SPOOF_PHOTOS, 0, UserHandle.myUserId()) != 0;
     }
 
     /** Reads the stored pif.json into a flat map. Returns empty for missing or malformed config. */

@@ -38,14 +38,6 @@ final class PitchBlackTheme {
     }
 
     /**
-     * Whether to draw the accent-colored border around each notification row.
-     * <p>
-     * IchthysOS: this is an Abyss-palette flourish, so it requires the Abyss palette to be selected
-     * as well as its own switch (Settings.System "notification_accent_border", default on).
-     * Previously it checked only its own switch, so the border bled through onto Monet, where it
-     * looks out of place against Monet's tonal notification surfaces.
-     */
-    /**
      * IchthysOS "Shoal": theme.surface = hairline (Settings.Secure ichthys_theme_surface) draws a
      * 1 dp outline around each notification card instead of relying on a tonal fill. Unset keeps
      * the stock look.
@@ -55,9 +47,15 @@ final class PitchBlackTheme {
         return com.android.systemui.shade.ui.ShoalShade.isActive(context);
     }
 
+    /**
+     * Whether to draw the accent-colored border around each notification row.
+     * <p>
+     * IchthysOS: this is an Abyss-palette flourish, so it follows the Abyss palette and nothing
+     * else. It used to have its own switch as well (Settings.System "notification_accent_border"),
+     * but no screen or option ever wrote that key, so the read is gone.
+     */
     static boolean borderEnabled(Context context) {
-        return isEnabled(context) && Settings.System.getInt(context.getContentResolver(),
-                "notification_accent_border", 1) == 1;
+        return isEnabled(context);
     }
 
     /**

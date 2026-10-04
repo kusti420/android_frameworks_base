@@ -22,7 +22,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.TreeSet;
 
-/** The option changes between two states ({path → value}, null = unset/default). */
+/**
+ * The option changes between two states ({path → value}). In {@code before} null is "nothing
+ * stored"; in {@code after} null is "reset to the default".
+ */
 public final class ConfigDiff {
 
     public static final class Change {
@@ -36,13 +39,11 @@ public final class ConfigDiff {
             this.after = after;
         }
 
+        /** "path: old -> new"; an unset value shows as (unset), a reset as (default). */
         @Override
         public String toString() {
-            return path + ": " + show(before) + " -> " + show(after);
-        }
-
-        private static String show(Object v) {
-            return v == null ? "(default)" : NixPrinter.value(v);
+            return path + ": " + (before == null ? "(unset)" : NixPrinter.value(before))
+                    + " -> " + (after == null ? "(default)" : NixPrinter.value(after));
         }
     }
 
@@ -84,15 +85,29 @@ public final class ConfigDiff {
         return sb.toString();
     }
 
-    /** Short summary for generation metadata, e.g. "theme.accent, privacy.sensorShield +3". */
-    public String summary() {
-        if (changes.isEmpty()) return "no changes";
-        final StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < Math.min(2, changes.size()); i++) {
-            if (i > 0) sb.append(", ");
-            sb.append(changes.get(i).path);
+    /** The paths that change, in order. */
+    public List<String> paths() {
+        final List<String> out = new ArrayList<>();
+        for (Change c : changes) {
+            out.add(c.path);
         }
-        if (changes.size() > 2) sb.append(" +").append(changes.size() - 2);
+        return out;
+    }
+
+    /** Short summary for generation metadata, e.g. "theme.accent, theme.style +3". */
+    public String summary() {
+        return summary(paths());
+    }
+
+    /** {@link #summary()} for a list of changed paths. */
+    public static String summary(List<String> paths) {
+        if (paths.isEmpty()) return "no changes";
+        final StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < Math.min(2, paths.size()); i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(paths.get(i));
+        }
+        if (paths.size() > 2) sb.append(" +").append(paths.size() - 2);
         return sb.toString();
     }
 }

@@ -17,7 +17,6 @@
 package com.android.systemui.qs.panels.ui.compose.infinitegrid
 
 import android.content.Context
-import android.provider.Settings
 import android.graphics.drawable.Animatable
 import android.graphics.drawable.AnimatedVectorDrawable
 import android.graphics.drawable.Drawable
@@ -116,6 +115,9 @@ import com.android.systemui.qs.panels.ui.compose.infinitegrid.CommonTileDefaults
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.CommonTileDefaults.TileLabelBlurWidth
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.CommonTileDefaults.longPressLabelSettings
 import com.android.systemui.qs.panels.ui.viewmodel.AccessibilityUiState
+import com.android.systemui.qs.rememberSecureSettingBoolean
+import com.android.systemui.qs.rememberSystemSettingBoolean
+import com.android.systemui.qs.rememberSystemSettingInt
 import com.android.systemui.qs.ui.compose.borderOnFocus
 import com.android.systemui.res.R
 import kotlin.math.abs
@@ -234,8 +236,7 @@ val IconBubbleIconSize = 22.dp
  * Depth/theme work also lives here so it applies to both rows at once:
  *  - "Accent-tinted QS icon backgrounds" toggle (Themes > Quick Settings, Settings.Secure
  *    "qs_accent_icon_bg", default on). When off, an active tile's accent circle is swapped for a
- *    neutral surface. Read here (like custom_pitch_black in PlatformTheme) so it applies on a
- *    SystemUI restart.
+ *    neutral surface. Observed, so the toggle applies while the shade is open.
  *  - A fixed dark-grey bubble so INACTIVE tiles stay visible on a pure-black (pitch-black) surface,
  *    where theme surface colors collapse to black. ACTIVE tiles show the accent (toggle on).
  *  - A subtle top-lit hairline rim so the bubble reads as a raised surface (Substratum/8.1 depth)
@@ -248,7 +249,7 @@ fun QsTileIconBubble(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val accentIconBg = Settings.Secure.getInt(context.contentResolver, "qs_accent_icon_bg", 1) == 1
+    val accentIconBg = rememberSecureSettingBoolean("qs_accent_icon_bg", default = true)
     // IchthysOS: this was a fixed #333 grey, chosen back when pitch black collapsed every surface
     // to #000 and an inactive bubble needed *something* to stand on. The surface ladder is now
     // tinted (black -> dark blue -> purple-ish blue, derived from the accent seed), so a neutral
@@ -309,28 +310,21 @@ fun QsTileIconBubble(
 
 /**
  * IchthysOS: crDroid `qs_tile_label_size` (Settings.System, sp, default 14). Returns a multiplier
- * relative to the 14sp default so both the 8.1-style and large tile labels scale together. Read as a
- * plain (non-reactive) Settings lookup like the `qs_accent_icon_bg` toggle in this file; it applies
- * on recomposition / SystemUI restart.
+ * relative to the 14sp default so both the 8.1-style and large tile labels scale together. Observed
+ * (see [rememberSystemSettingInt]), so a change applies live.
  */
 @Composable
-private fun rememberQsTileLabelScale(): Float {
-    val context = LocalContext.current
-    val size = Settings.System.getInt(context.contentResolver, "qs_tile_label_size", 14)
-    return size.coerceIn(8, 24) / 14f
-}
+private fun rememberQsTileLabelScale(): Float =
+    rememberSystemSettingInt("qs_tile_label_size", 14).coerceIn(8, 24) / 14f
 
 /**
  * IchthysOS: crDroid `qs_tile_label_hide` (Settings.System, default 0 = show). When set to 1 the
- * text label under each 8.1-style tile is omitted, leaving an icon-only expanded grid. Read as a
- * plain (non-reactive) Settings lookup like `qs_tile_label_size` / `qs_accent_icon_bg`; it applies
- * on recomposition / SystemUI restart.
+ * text label under each 8.1-style tile is omitted, leaving an icon-only expanded grid. Observed
+ * (see [rememberSystemSettingBoolean]), so a change applies live.
  */
 @Composable
-private fun rememberQsTileLabelHidden(): Boolean {
-    val context = LocalContext.current
-    return Settings.System.getInt(context.contentResolver, "qs_tile_label_hide", 0) == 1
-}
+private fun rememberQsTileLabelHidden(): Boolean =
+    rememberSystemSettingBoolean("qs_tile_label_hide", default = false)
 
 /**
  * Android 8.1-style tile content: the icon centered on top with the label wrapped below it. Used by

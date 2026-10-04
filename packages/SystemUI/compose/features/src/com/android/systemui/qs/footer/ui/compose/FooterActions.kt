@@ -106,6 +106,7 @@ import com.android.systemui.qs.panels.ui.compose.infinitegrid.ShoalQsColors
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalQsEnabled
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalQsFonts
 import com.android.systemui.qs.panels.ui.viewmodel.TextFeedbackViewModel
+import com.android.systemui.qs.rememberSystemSettingBoolean
 import com.android.systemui.qs.shared.ui.QuickSettings
 import com.android.systemui.qs.ui.composable.QuickSettingsTheme
 import com.android.systemui.qs.ui.compose.borderOnFocus
@@ -187,6 +188,10 @@ fun FooterActions(viewModel: FooterActionsViewModel, modifier: Modifier = Modifi
         launch { viewModel.textFeedback.collect { textFeedback = it } }
         launch { viewModel.settings.collect { settings = it } }
     }
+
+    // IchthysOS: crDroid qs_footer_show_power_menu, observed so it applies without a restart
+    // (the other qs_footer_* switches are folded into the view-model's flows).
+    val showPowerMenu = rememberSystemSettingBoolean("qs_footer_show_power_menu", default = true)
 
     // IchthysOS "Shoal": ink ground, hairline-circle buttons (settings, power, user switcher).
     val shoal = rememberShoalQsEnabled()
@@ -272,7 +277,7 @@ fun FooterActions(viewModel: FooterActionsViewModel, modifier: Modifier = Modifi
                 shoal = shoal,
             )
             IconButton(
-                { viewModel.power },
+                { viewModel.power.takeIf { showPowerMenu } },
                 useModifierBasedExpandable,
                 Modifier.sysuiResTag("pm_lite"),
                 shoal = shoal,

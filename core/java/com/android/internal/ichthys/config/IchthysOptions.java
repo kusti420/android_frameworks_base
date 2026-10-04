@@ -25,14 +25,22 @@ import static com.android.internal.ichthys.config.Binding.setting;
 
 /**
  * Hand-written options: the theme engine, IchthysOS features and settings that crDroidSettings
- * manages in fragment code (so the generator can't see them). Keys and defaults match their
- * consumers; see each feature's source for the meaning.
+ * manages in fragment code (so the generator can't see them). Keys match their consumers; see
+ * each feature's source for the meaning.
+ *
+ * <p><b>Defaults.</b> The defaults here are the IchthysOS baseline, the same values as
+ * /product/etc/ichthys/default.nix (applied as generation 1 of every new user) with its theme
+ * preset (presets/koi.nix) and privacy level (privacy/normal.nix) filled in; IchthysConfigTest
+ * holds the three files and this class to each other. A consumer must treat an unset key as the
+ * default given here, so that "reset to default" and "never set" look the same.
  */
 final class IchthysOptions {
     private IchthysOptions() {}
 
     /** Theme presets shipped in /product/etc/ichthys/presets/&lt;name&gt;.nix. */
     public static final String[] PRESETS = {"none", "koi", "abyss", "reef", "kelp", "paper"};
+    /** Privacy levels shipped in /product/etc/ichthys/privacy/&lt;name&gt;.nix. */
+    public static final String[] PRIVACY_LEVELS = {"relaxed", "normal", "strict"};
 
     static void register(OptionSchema s) {
         registerTheme(s);
@@ -50,7 +58,8 @@ final class IchthysOptions {
         s.add(Option.enumeration("theme.preset", PRESETS, PRESETS, "koi",
                 "Theme preset. Its theme.* values apply wherever this file doesn't set them.",
                 setting(SECURE, "ichthys_theme_preset")));
-        s.add(Option.color("theme.accent", "wallpaper",
+        s.presetFamily("theme.preset", "theme.", "presets", "none");
+        s.add(Option.color("theme.accent", "#ff6b3d",
                 "Accent color: \"wallpaper\" (Monet picks it) or a seed color \"#rrggbb\".",
                 Binding.themeJson("accent")).orWallpaper());
         s.add(Option.enumeration("theme.style",
@@ -63,25 +72,22 @@ final class IchthysOptions {
         s.add(Option.bool("theme.pitchBlack", Boolean.FALSE,
                 "Darkest surface is pure #000 (OLED).", setting(SECURE, "custom_pitch_black")));
         s.add(Option.enumeration("theme.neutral", new String[] {"tinted", "neutral"},
-                new String[] {"tinted", "neutral"}, "tinted",
+                new String[] {"tinted", "neutral"}, "neutral",
                 "Surfaces tinted by the accent (its hue nudged cool, low chroma), or the preset's "
                         + "own neutral ink ramp.",
                 setting(SECURE, "ichthys_theme_neutral")));
-        s.add(Option.integer("theme.surfaces", 3L, 2, 5,
+        s.add(Option.integer("theme.surfaces", 4L, 2, 5,
                 "Number of distinct surface elevation levels in panels and cards (2: ground + "
                         + "card; 3: + raised; 4-5: + tile).",
                 setting(SECURE, "ichthys_theme_surfaces")));
-        s.add(Option.integer("theme.shape.radius", null, 0, 40,
+        s.add(Option.integer("theme.shape.radius", 22L, 0, 40,
                 "Corner radius in dp for dialogs, cards, QS panel and notifications.",
                 setting(SECURE, "ichthys_theme_radius")));
         s.add(Option.enumeration("theme.shape.style", new String[] {"rounded", "pill", "squircle"},
-                new String[] {"rounded", "pill", "squircle"}, "rounded",
+                new String[] {"rounded", "pill", "squircle"}, "pill",
                 "Corner style: rounded, pill (fully round ends) or squircle.",
                 setting(SECURE, "ichthys_theme_shape")));
-        s.add(Option.enumeration("theme.density",
-                new String[] {"compact", "standard", "comfortable"},
-                new String[] {"compact", "standard", "comfortable"}, "standard",
-                "Spacing density of IchthysOS panels.", setting(SECURE, "ichthys_theme_density")));
+        s.removed("theme.density", "nothing ever read it");
         s.add(Option.packageName("theme.font.body", null,
                 "System font overlay package (android.theme.customization.font), null for default.",
                 Binding.themeJson("font")));
@@ -101,9 +107,8 @@ final class IchthysOptions {
         s.add(Option.string("theme.font.mono", "jetbrains-mono",
                 "Font family for numbers in IchthysOS UI (e.g. \"jetbrains-mono\").",
                 setting(SECURE, "ichthys_theme_font_mono")));
-        // Consumers treat an unset key as the default (hairline): a value equal to the default is
-        // never written. "stock" turns the whole Shoal palette off (plain Monet colours, stock
-        // fonts); the palette itself is derived in system_server (ShoalPalette).
+        // "stock" turns the whole Shoal palette off (plain Monet colours, stock fonts); the
+        // palette itself is derived in system_server (ShoalPalette).
         s.add(Option.enumeration("theme.surface", new String[] {"stock", "hairline", "tonal"},
                 new String[] {"stock", "hairline", "tonal"}, "hairline",
                 "Surface style: \"hairline\" (Koi: ink ground, 1dp-outlined panels), \"tonal\" "
@@ -131,12 +136,51 @@ final class IchthysOptions {
 
     private static void registerStatusBar(OptionSchema s) {
         s.add(Option.enumeration("statusBar.layout", new String[] {"single", "zigzag"},
-                new String[] {"single", "zigzag"}, "single",
+                new String[] {"single", "zigzag"}, "zigzag",
                 "Status icon layout: one row, or the two-row zig-zag lattice of circles.",
                 setting(SECURE, "ichthys_statusbar_layout")));
         s.add(Option.stringList("statusBar.hiddenIcons",
                 "Status bar icon slots to hide (e.g. \"volume\" \"alarm_clock\").",
                 setting(SECURE, "icon_blacklist")));
+
+        // Notification dot and privacy indicator (SystemUI statusbar/ichthys/indicator). Consumers
+        // treat an unset key as the default below.
+        s.add(Option.bool("statusBar.notificationDot.enabled", Boolean.TRUE,
+                "Show a dot in the status bar corner while there are unseen, non-silent "
+                        + "notifications.",
+                setting(SYSTEM, "ichthys_notif_dot_enabled")));
+        s.add(Option.bool("statusBar.notificationDot.aod", Boolean.TRUE,
+                "Keep the notification dot on the always-on display (dimmed, with burn-in "
+                        + "drift).",
+                setting(SYSTEM, "ichthys_notif_dot_aod")));
+        s.add(Option.enumeration("statusBar.notificationDot.color",
+                new String[] {"accent", "white", "app"}, new String[] {"0", "1", "2"}, "accent",
+                "Notification dot colour: the theme accent, white (the status bar icon tint), or "
+                        + "the newest notifying app's colour.",
+                setting(SYSTEM, "ichthys_notif_dot_color")));
+        s.add(Option.bool("statusBar.notificationDot.replaceIcons", Boolean.FALSE,
+                "Hide the status bar notification icons and show only the dot.",
+                setting(SYSTEM, "ichthys_notif_dot_replace_icons")));
+        s.add(Option.enumeration("statusBar.privacyIndicator.style",
+                new String[] {"cutoutRing", "dot"}, new String[] {"0", "1"}, "cutoutRing",
+                "Camera / microphone / location in-use indicator: a ring around the front camera "
+                        + "cutout, or the stock corner dot (also used when the display has no "
+                        + "cutout). With \"dot\" the notification dot sits just inside it.",
+                setting(SYSTEM, "ichthys_privacy_indicator_style")));
+        s.add(Option.bool("statusBar.privacyIndicator.colorByType", Boolean.FALSE,
+                "Colour the privacy ring by what is in use (camera, microphone, location) "
+                        + "instead of one colour.",
+                setting(SYSTEM, "ichthys_privacy_indicator_color_by_type")));
+        // No default: unset means "as wide as the display's cutout ring asks for" (the consumer's
+        // dimen), which no number here can say. A default of 2 could never be applied, because
+        // the unset key already counted as 2.
+        s.add(Option.integer("statusBar.privacyIndicator.ringWidth", null, 1, 4,
+                "Stroke width of the privacy ring in dp (null: sized for the display).",
+                setting(SYSTEM, "ichthys_privacy_indicator_ring_width")));
+        s.add(Option.bool("statusBar.weather.anchorToCutout", Boolean.TRUE,
+                "Keep the status bar weather locked in place right after the camera cutout "
+                        + "instead of moving with the icons (only with a centred cutout).",
+                setting(SYSTEM, "ichthys_statusbar_weather_anchor_cutout")));
 
         s.add(Option.enumeration("statusBar.battery.style", BATTERY_STYLES, BATTERY_STYLE_VALUES,
                 "classic", "Battery icon style.",
@@ -157,8 +201,9 @@ final class IchthysOptions {
         s.add(Option.enumeration("statusBar.battery.fillMode",
                 new String[] {"tint", "custom", "accent"}, new String[] {"0", "1", "2"}, "tint",
                 "Battery fill color source.", setting(SYSTEM, "ichthys_battery_fill_mode")));
-        s.add(Option.color("statusBar.battery.fillColor", "#4caf50",
-                "Custom battery fill color (fillMode = custom).",
+        // No default: an unset key means the theme accent, which no colour here can say.
+        s.add(Option.color("statusBar.battery.fillColor", null,
+                "Custom battery fill color (fillMode = custom; null: the theme accent).",
                 setting(SYSTEM, "ichthys_battery_fill_color")).storedAsInt());
         s.add(Option.enumeration("statusBar.battery.stateColors",
                 new String[] {"off", "theme", "custom"}, new String[] {"0", "1", "2"}, "theme",
@@ -195,7 +240,7 @@ final class IchthysOptions {
                 new String[] {"-1", "0", "1", "2", "3"}, "followStatusBar",
                 "Battery percentage in the QS header.", setting(SYSTEM, "qs_show_battery_percent")));
         s.add(Option.enumeration("quickSettings.style", new String[] {"grid", "shoal"},
-                new String[] {"grid", "shoal"}, "grid",
+                new String[] {"grid", "shoal"}, "shoal",
                 "Tile layout: the standard grid, or the Shoal honeycomb of circles.",
                 setting(SECURE, "ichthys_qs_style")));
     }
@@ -204,29 +249,64 @@ final class IchthysOptions {
     // privacy.*
 
     private static void registerPrivacy(OptionSchema s) {
-        s.add(Option.bool("privacy.contactsLockdown", Boolean.TRUE,
-                "Only the phone, contacts and SMS apps can read contacts.",
-                setting(GLOBAL, "ichthys_contacts_lockdown")));
-        s.add(Option.bool("privacy.clipboardLockdown", Boolean.TRUE,
-                "Apps read the clipboard only right after you touch them.",
-                setting(GLOBAL, "ichthys_clipboard_lockdown")));
+        // privacy.shields.<name> = { enable = <bool>; allow = [ pkgs ]; } for every shield in
+        // IchthysShields, the one table of shield names, keys, tables and list meanings. The
+        // options bind to the keys the enforcement code already reads; nothing is renamed.
+        //   enable   the shield's switch. Unset counts as on, so the default is true. Shields
+        //            without a switch key are always on and have no "enable".
+        //   allow    apps that get the real data despite the shield.
+        //   protect  for the three shields that are per-app choices (scans, location, nfc): the
+        //            apps that get the protected answer. Nobody is protected until listed, so
+        //            the attribute is named for what listing does, not "allow" with the meaning
+        //            turned around.
+        // The lists are kept unless a config mentions them: they are per-app decisions made in
+        // Ichthys Guard and the permission dialog, not something a partial ichthys.nix (a theme,
+        // say) should wipe.
+        for (IchthysShields.Shield shield : IchthysShields.all()) {
+            final String base = "privacy.shields." + shield.name;
+            if (shield.switchKey != null) {
+                s.add(Option.bool(base + ".enable", Boolean.TRUE, shield.description,
+                        setting(store(shield.switchTable), shield.switchKey)));
+            }
+            if (shield.listKey != null) {
+                final Option list = Option.packageList(base + "." + shield.listAttribute(),
+                        shield.listDescription,
+                        setting(store(shield.listTable), shield.listKey)).preserved();
+                if (shield.picked) {
+                    // "pkg:picked": the app sees only what the user picked for it. The
+                    // permission dialog writes this form.
+                    list.entryTags(IchthysShields.PICKED_SUFFIX.substring(1));
+                }
+                s.add(list);
+            }
+        }
+        // The names these six options had before privacy.shields.
+        s.alias("privacy.contactsLockdown", "privacy.shields.contacts.enable");
+        s.alias("privacy.clipboardLockdown", "privacy.shields.clipboard.enable");
+        s.alias("privacy.sensorShield", "privacy.shields.sensors.enable");
+        s.alias("privacy.allow.contacts", "privacy.shields.contacts.allow");
+        s.alias("privacy.allow.clipboard", "privacy.shields.clipboard.allow");
+        s.alias("privacy.allow.sensors", "privacy.shields.sensors.allow");
+
+        s.add(Option.enumeration("privacy.level", PRIVACY_LEVELS, PRIVACY_LEVELS, "normal",
+                "Privacy level. Its privacy.* values apply wherever this file doesn't set them "
+                        + "(never the per-app lists): relaxed keeps the shields that cost "
+                        + "nothing, normal turns every shield on, strict adds the measures that "
+                        + "cost battery or convenience.",
+                setting(SECURE, "ichthys_privacy_level")));
+        s.presetFamily("privacy.level", "privacy.", "privacy", null);
+
         s.add(Option.integer("privacy.clipboardClearMinutes", 5L, 0, 1440,
                 "Clear the clipboard after this many minutes (0 = stock one hour).",
                 setting(GLOBAL, "ichthys_clipboard_clear_minutes")));
-        s.add(Option.bool("privacy.sensorShield", Boolean.TRUE,
-                "Round, cap and anonymize motion sensors for non-system apps.",
-                setting(GLOBAL, "ichthys_sensor_fingerprint_protection")));
-        s.add(Option.packageList("privacy.allow.contacts",
-                "Apps allowed past the contacts lockdown.",
-                setting(SECURE, "ichthys_contacts_allowed_pkgs")));
-        s.add(Option.packageList("privacy.allow.clipboard",
-                "Apps allowed to read the clipboard at any time.",
-                setting(SECURE, "ichthys_clipboard_allowed_pkgs")));
-        s.add(Option.packageList("privacy.allow.sensors",
-                "Apps that get exact sensors.", setting(SECURE, "ichthys_sensor_exempt_pkgs")));
         s.add(Option.bool("privacy.networkDecoy", Boolean.FALSE,
-                "Send decoy network traffic to blur usage patterns.",
+                "Advertise decoy services on the local network (mDNS), so device lists don't "
+                        + "show what the phone is.",
                 setting(GLOBAL, "network_decoy_enabled")));
+    }
+
+    private static Binding.Store store(IchthysShields.Table table) {
+        return table == IchthysShields.Table.GLOBAL ? GLOBAL : SECURE;
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -239,13 +319,19 @@ final class IchthysOptions {
                 setting(GLOBAL, "ichthys_unrestricted_bg_mode")));
         s.add(Option.packageList("background.unrestrictedApps",
                 "Apps kept unrestricted when background.unrestricted = selected.",
-                setting(GLOBAL, "ichthys_unrestricted_bg_pkgs")));
+                setting(GLOBAL, "ichthys_unrestricted_bg_pkgs")).preserved());
         s.add(Option.bool("background.unrestrictedPersist", Boolean.FALSE,
                 "Keep the unrestricted mode across reboots.",
                 setting(GLOBAL, "ichthys_unrestricted_bg_persist")));
         s.add(Option.integer("background.backstageMaxHours", 0L, 0, 12,
                 "Stop Backstage apps automatically after this many hours (0 = never).",
                 setting(SECURE, "ichthys_backstage_max_hours")));
+        // The Miscellaneous page had the same two keys as generated options. One key, one
+        // option: two made a declarative apply set the key through one path and reset it through
+        // the other, so applying the same file twice flipped the setting.
+        s.removed("system.misc.ichthysUnrestrictedBgMode", "use background.unrestricted");
+        s.removed("system.misc.ichthysUnrestrictedBgPersist",
+                "use background.unrestrictedPersist");
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -267,9 +353,7 @@ final class IchthysOptions {
                 "Navigation bar look: stock, shoal (outlined circles, accent home), lattice "
                         + "(small discs), mono (text labels) or gestures (accent gesture handle).",
                 setting(SECURE, "ichthys_navbar_style")));
-        s.add(Option.integer("system.torchLevel", 3L, 1, 5,
-                "Flashlight brightness step used when the torch turns on.",
-                setting(SECURE, "ichthys_torch_level")));
+        s.removed("system.torchLevel", "the last flashlight brightness is runtime state");
         s.add(Option.stringList("system.powerMenu.actions",
                 "Power menu entries, in order (e.g. \"power\" \"restart\" \"screenshot\").",
                 setting(LINEAGE_SECURE, "power_menu_actions")).separator("|"));
@@ -281,6 +365,18 @@ final class IchthysOptions {
         s.add(Option.string("system.gestures.threeFingerSwipe", null,
                 "Action for a three-finger swipe (Lineage action id).",
                 setting(LINEAGE_SYSTEM, "key_three_fingers_swipe_action")));
+        // The ambient display switches of stock Settings (Display > Lock screen). No crDroid
+        // page has them, so they are written here. No defaults: the device's config decides
+        // whether the display dozes at all.
+        s.add(Option.bool("lockscreen.ambient.enabled", null,
+                "Wake the screen for notifications (ambient display).",
+                setting(SECURE, "doze_enabled")));
+        s.add(Option.bool("lockscreen.ambient.alwaysOn", null,
+                "Always-on display: always show time and info.",
+                setting(SECURE, "doze_always_on")));
+        s.add(Option.bool("lockscreen.ambient.pulseOnPickUp", null,
+                "Wake the ambient display when the phone is picked up.",
+                setting(SECURE, "doze_pulse_on_pick_up")));
         s.add(Option.string("lockscreen.shortcuts.start", null,
                 "Bottom-left lock screen shortcut (affordance id, e.g. \"flashlight\"; null = none).",
                 Binding.keyguardSlot("bottom_start")));
@@ -304,5 +400,37 @@ final class IchthysOptions {
         s.add(Option.packageName("apps.defaults.assistant", null,
                 "Default digital assistant (null = none).",
                 Binding.role("android.app.role.ASSISTANT")));
+
+        // Ichthys Apps (org.ichthys.apps): which catalog apps it installs and keeps updated.
+        // apps.install has no default on purpose: the catalog's recommended ("default": true)
+        // entries only pre-check Ichthys Apps' first-boot screen, and the app always stores the
+        // confirmed list explicitly. A default would make a catalog change in an OTA silently
+        // install or remove apps.
+        s.add(Option.stringList("apps.install",
+                "Ichthys Apps catalog ids to install and keep updated (e.g. \"zarchiver\" "
+                        + "\"curve\"); see /product/etc/ichthys/apps-catalog.json. Removing an id "
+                        + "uninstalls that app.",
+                setting(SECURE, "ichthys_apps_install")).preserved());
+        // Apps installed from elsewhere (F-Droid, Aurora, a sideload) that Ichthys Apps keeps
+        // updated. No default and preserved, like apps.install: it is state the device built up.
+        // The app escapes "%", "," and newline inside the source spec, so the "," separator holds.
+        s.add(Option.stringList("apps.adopted",
+                "Apps installed from elsewhere that Ichthys Apps keeps updated, one "
+                        + "\"<package>[@<cert sha256>[+<sha256>...]]=<scheme>:<spec>\" each (e.g. "
+                        + "\"org.example.app=fdroid:org.example.app\"). Removing an entry only "
+                        + "stops the updates; the app stays installed.",
+                setting(SECURE, "ichthys_apps_adopted")).preserved());
+        s.add(Option.bool("apps.autoUpdate", Boolean.TRUE,
+                "Ichthys Apps updates installed catalog apps in the background (daily).",
+                setting(SECURE, "ichthys_apps_auto_update")));
+        s.add(Option.bool("apps.wifiOnly", Boolean.FALSE,
+                "Ichthys Apps downloads installs and updates only on Wi-Fi (unmetered networks). "
+                        + "When off, background downloads over 100 MB still wait for an unmetered "
+                        + "network.",
+                setting(SECURE, "ichthys_apps_wifi_only")));
+        s.add(Option.bool("apps.confirmed", Boolean.FALSE,
+                "Set by Ichthys Apps' first-boot screen once the app list is confirmed; until "
+                        + "then it offers the Recommended list instead of installing.",
+                setting(SECURE, "ichthys_apps_confirmed")).preserved());
     }
 }

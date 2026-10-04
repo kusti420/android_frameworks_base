@@ -184,6 +184,7 @@ import com.android.server.LockGuard;
 import com.android.server.StorageManagerInternal;
 import com.android.server.SystemServiceManager;
 import com.android.server.companion.virtual.VirtualDeviceManagerInternal;
+import com.android.server.pm.AppsFilterQueryAllPackages;
 import com.android.server.pm.PackageList;
 import com.android.server.pm.PackageManagerLocal;
 import com.android.server.pm.ProtectedPackages;
@@ -7696,7 +7697,8 @@ public class AppOpsService extends IAppOpsService.Stub {
     // Get all packages that have the given op explicitly set to the given mode
     @Override
     @NonNull public List<String> getPackagesWithNonDefaultUidMode(int op, int mode, int userId) {
-        mContext.enforceCallingOrSelfPermission(Manifest.permission.QUERY_ALL_PACKAGES, null);
+        // IchthysOS: a withheld QUERY_ALL_PACKAGES reads as granted to the app itself.
+        AppsFilterQueryAllPackages.enforceCallingOrSelfPermission(mContext, null);
         if (userId != UserHandle.getUserId(Binder.getCallingUid())) {
             mContext.enforceCallingOrSelfPermission(Manifest.permission.INTERACT_ACROSS_USERS,
                     null);

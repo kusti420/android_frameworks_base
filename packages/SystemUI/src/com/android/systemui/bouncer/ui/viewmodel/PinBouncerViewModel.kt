@@ -39,6 +39,7 @@ import com.android.systemui.res.R
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
+import java.security.SecureRandom
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
@@ -145,7 +146,7 @@ constructor(
     override suspend fun onActivated(): Nothing {
         _digitLayout.value =
             if (!isSimAreaVisible && isScrambleEnabled()) {
-                DEFAULT_DIGIT_LAYOUT.shuffled()
+                DEFAULT_DIGIT_LAYOUT.shuffled(SecureRandom())
             } else {
                 DEFAULT_DIGIT_LAYOUT
             }

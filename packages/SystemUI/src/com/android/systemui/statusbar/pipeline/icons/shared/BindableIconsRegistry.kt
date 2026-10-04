@@ -19,6 +19,7 @@ package com.android.systemui.statusbar.pipeline.icons.shared
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.statusbar.pipeline.icons.shared.model.BindableIcon
 import com.android.systemui.statusbar.pipeline.mobile.ui.StackedMobileBindableIcon
+import com.android.systemui.statusbar.pipeline.overlay.ui.OverlayIndicatorBindableIcon
 import com.android.systemui.statusbar.pipeline.satellite.ui.DeviceBasedSatelliteBindableIcon
 import javax.inject.Inject
 
@@ -43,10 +44,13 @@ constructor(
     /** Bindables go here */
     oemSatellite: DeviceBasedSatelliteBindableIcon,
     stackedMobile: StackedMobileBindableIcon,
+    // IchthysOS: overlay-active indicator (an app is drawing over other apps).
+    overlayIndicator: OverlayIndicatorBindableIcon,
 ) : BindableIconsRegistry {
     /**
      * Adding the injected bindables to this list will get them registered with
      * StatusBarIconController
      */
-    override val bindableIcons: List<BindableIcon> = listOf(oemSatellite, stackedMobile)
+    override val bindableIcons: List<BindableIcon> =
+        listOf(oemSatellite, stackedMobile, overlayIndicator)
 }

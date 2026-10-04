@@ -56,6 +56,27 @@ constructor(
         notificationListRepository.hasFilteredOutSeenNotifications.value = value
     }
 
+    /**
+     * IchthysOS: keys of the notifications the user has not seen yet (never ongoing or media
+     * notifications). Published by OriginalUnseenKeyguardCoordinator whether or not the
+     * "only unseen notifications on the lock screen" setting is on.
+     */
+    val unseenNotificationKeys: StateFlow<Set<String>> =
+        notificationListRepository.unseenNotificationKeys
+
+    /**
+     * IchthysOS: the subset of [unseenNotificationKeys] that was on the awake lock screen long
+     * enough to count as seen (they leave the unseen set on unlock).
+     */
+    val seenOnLockscreenNotificationKeys: StateFlow<Set<String>> =
+        notificationListRepository.seenOnLockscreenNotificationKeys
+
+    /** IchthysOS: publish the unseen tracking state, see [unseenNotificationKeys]. */
+    fun setUnseenNotificationKeys(unseen: Set<String>, seenOnLockscreen: Set<String>) {
+        notificationListRepository.unseenNotificationKeys.value = unseen
+        notificationListRepository.seenOnLockscreenNotificationKeys.value = seenOnLockscreen
+    }
+
     /** Set the entry that is identified as the top ongoing notification. */
     fun setTopOngoingNotification(entry: NotificationEntry?) {
         if (NotificationMinimalism.isUnexpectedlyInLegacyMode()) return

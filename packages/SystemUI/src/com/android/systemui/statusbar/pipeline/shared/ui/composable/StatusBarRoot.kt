@@ -92,11 +92,11 @@ import com.android.systemui.res.R
 import com.android.systemui.scene.ui.view.WindowRootView
 import com.android.systemui.shade.ui.composable.VariableDayDate
 import com.android.systemui.statusbar.BatteryBarView
-import com.android.systemui.statusbar.CutoutRingView
 import com.android.systemui.statusbar.IchthysBtBatteryView
 import com.android.systemui.statusbar.IchthysShoalBatteryView
 import com.android.systemui.statusbar.NetworkTraffic
 import com.android.systemui.statusbar.StatusBarWeather
+import com.android.systemui.statusbar.StatusBarWeatherAnchor
 import com.android.systemui.statusbar.StatusBarAlwaysUseRegionSampling
 import com.android.systemui.statusbar.StatusBarLogo
 import com.android.systemui.statusbar.chips.ui.compose.OngoingActivityChips
@@ -663,6 +663,14 @@ private fun addCrDroidStatusBarViews(
     // clock and notification icons.
     endContainer.addView(weather, 0)
     darkIconDispatcher.addDarkReceiver(weather)
+    // IchthysOS: and it stays put there, locked right after the cutout however many icons follow
+    // it (statusBar.weather.anchorToCutout). Without a centred cutout it is just the first item.
+    StatusBarWeatherAnchor(
+            weather = weather,
+            endContent = endContainer,
+            cutoutSpace = phoneStatusBarView.findViewById(R.id.cutout_space_view),
+        )
+        .attach()
 
     // IchthysOS "Shoal": connected Bluetooth device battery pill, right after the status icon
     // lattice (so it sits between the icons and the battery). Self-managing; shown only in the
@@ -726,20 +734,6 @@ private fun addCrDroidStatusBarViews(
                 )
         }
     phoneStatusBarView.addView(batteryBar)
-
-    // SPIKE (IchthysOS): placeholder cutout ring. Added last so it draws on top of everything else
-    // in the bar. Guarded by CutoutRingView.SPIKE_ENABLED -- flip that to false to disable.
-    if (CutoutRingView.SPIKE_ENABLED && CutoutRingView.SHOW_STATUS_BAR_RINGS) {
-        val cutoutRing =
-            CutoutRingView(context).apply {
-                layoutParams =
-                    FrameLayout.LayoutParams(
-                        FrameLayout.LayoutParams.MATCH_PARENT,
-                        FrameLayout.LayoutParams.MATCH_PARENT,
-                    )
-            }
-        phoneStatusBarView.addView(cutoutRing)
-    }
 
     return {
         darkIconDispatcher.removeDarkReceiver(logo)

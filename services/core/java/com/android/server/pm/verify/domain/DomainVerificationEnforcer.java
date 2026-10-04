@@ -25,6 +25,7 @@ import android.content.pm.PackageManager;
 import android.os.Binder;
 import android.os.Process;
 
+import com.android.server.pm.AppsFilterQueryAllPackages;
 import com.android.server.pm.verify.domain.proxy.DomainVerificationProxy;
 
 public class DomainVerificationEnforcer {
@@ -96,7 +97,8 @@ public class DomainVerificationEnforcer {
                     break;
                 }
 
-                mContext.enforcePermission(android.Manifest.permission.QUERY_ALL_PACKAGES,
+                // IchthysOS: a withheld QUERY_ALL_PACKAGES reads as granted to the app itself.
+                AppsFilterQueryAllPackages.enforcePermission(mContext,
                         Binder.getCallingPid(), callingUid,
                         "Caller " + callingUid + " does not hold "
                                 + android.Manifest.permission.QUERY_ALL_PACKAGES);
@@ -133,7 +135,8 @@ public class DomainVerificationEnforcer {
 
                 // If the caller isn't a legacy verifier, it needs the QUERY_ALL permission
                 if (!isLegacyVerificationAgent) {
-                    mContext.enforcePermission(android.Manifest.permission.QUERY_ALL_PACKAGES,
+                    // IchthysOS: withheld reads as granted to the app itself.
+                    AppsFilterQueryAllPackages.enforcePermission(mContext,
                             callingPid, callingUid, "Caller " + callingUid + " does not hold "
                                     + android.Manifest.permission.QUERY_ALL_PACKAGES);
                 }
@@ -257,7 +260,8 @@ public class DomainVerificationEnforcer {
                     callingPid, callingUid, "Caller is not allowed to query other users");
         }
 
-        mContext.enforcePermission(android.Manifest.permission.QUERY_ALL_PACKAGES,
+        // IchthysOS: a withheld QUERY_ALL_PACKAGES reads as granted to the app itself.
+        AppsFilterQueryAllPackages.enforcePermission(mContext,
                 callingPid, callingUid, "Caller " + callingUid + " does not hold "
                         + android.Manifest.permission.QUERY_ALL_PACKAGES);
 

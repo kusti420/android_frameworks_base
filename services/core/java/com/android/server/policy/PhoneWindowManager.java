@@ -5541,23 +5541,49 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         mHandler.removeCallbacks(mVolumeDownMusicSeek);
     }
 
+    // Which volume keys are physically down, and the key whose press we swallowed because the
+    // other one was already down (a two-key chord).
+    private boolean mVolumeUpHeld;
+    private boolean mVolumeDownHeld;
+    private int mVolumeChordSecondKey;
+
     // Returns true if the volume key event was consumed here and normal volume processing
     // should be skipped for that event.
     private boolean handleVolumeMusicControl(int keyCode, KeyEvent event, boolean interactive) {
-        if (!mVolBtnMusicControls) {
-            return false; // feature off — let volume behave normally
-        }
         final boolean isVolumeUpDown = keyCode == KeyEvent.KEYCODE_VOLUME_UP
                 || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN;
         if (!isVolumeUpDown) {
             return false;
         }
         final boolean down = event.getAction() == KeyEvent.ACTION_DOWN;
+        final boolean otherHeld = keyCode == KeyEvent.KEYCODE_VOLUME_UP
+                ? mVolumeDownHeld : mVolumeUpHeld;
+        if (!down || event.getRepeatCount() == 0) {
+            if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
+                mVolumeUpHeld = down;
+            } else {
+                mVolumeDownHeld = down;
+            }
+        }
+        if (!mVolBtnMusicControls) {
+            return false; // feature off — let volume behave normally
+        }
 
         if (down) {
             // Ignore synthesized repeats defensively; we consume the whole hold below.
             if (event.getRepeatCount() != 0) {
-                return mVolumeMusicActiveKey == keyCode;
+                return mVolumeMusicActiveKey == keyCode || mVolumeChordSecondKey == keyCode;
+            }
+            if (otherHeld) {
+                // Both volume keys are down: that is a chord (the accessibility shortcut, for
+                // example Extra dim), not a hold of either key. Without this the second key
+                // armed its own long-press and the chord skipped a track as well. Drop the
+                // pending skip of the key that was already down, and make its release change
+                // nothing either.
+                cancelPendingVolumeMusicSeek();
+                mVolumeSeekFired = true;
+                mVolumeChordSecondKey = keyCode;
+                return true;
             }
             final boolean seekEligible = (!interactive || mVolBtnMusicControlsScreenOn)
                     && AudioSystem.isStreamActive(AudioSystem.STREAM_MUSIC, 0);
@@ -5585,6 +5611,10 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         }
 
         // ACTION_UP
+        if (mVolumeChordSecondKey == keyCode) {
+            mVolumeChordSecondKey = 0;
+            return true; // consume the up to match the consumed down of the chord's second key
+        }
         if (mVolumeMusicActiveKey != keyCode) {
             return false; // we didn't take ownership of this key's down
         }

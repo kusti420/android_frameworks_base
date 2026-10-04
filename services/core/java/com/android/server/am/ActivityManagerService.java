@@ -4514,12 +4514,24 @@ public class ActivityManagerService extends IActivityManager.Stub
                         Slog.w(TAG, "Invalid packageName: " + packageName);
                         continue;
                     }
-                    try {
-                        pm.setPackageStoppedState(packageName, true, user);
-                    } catch (RemoteException e) {
-                    } catch (IllegalArgumentException e) {
-                        Slog.w(TAG, "Failed trying to unstop package "
-                                + packageName + ": " + e);
+                    // IchthysOS: a force-stop does not kill a persistent process (evenPersistent
+                    // is false below), so a persistent package such as SystemUI keeps running.
+                    // Flagging it stopped, cancelling its PendingIntents and broadcasting
+                    // PACKAGE_RESTARTED (alarms, jobs and notifications dropped, the image
+                    // wallpaper cleared) would only break the process that is still alive, so
+                    // for these only the non-persistent leftovers are cleaned up.
+                    final boolean persistentPackage = isPersistentPackage(packageName, user);
+                    if (persistentPackage) {
+                        Slog.w(TAG, "Force stop of persistent package " + packageName + " u" + user
+                                + ": keeping its package state");
+                    } else {
+                        try {
+                            pm.setPackageStoppedState(packageName, true, user);
+                        } catch (RemoteException e) {
+                        } catch (IllegalArgumentException e) {
+                            Slog.w(TAG, "Failed trying to unstop package "
+                                    + packageName + ": " + e);
+                        }
                     }
                     if (mUserController.isUserRunning(user, userRunningFlags)) {
 
@@ -4542,15 +4554,25 @@ public class ActivityManagerService extends IActivityManager.Stub
                         forceStopPackageLocked(packageName, UserHandle.getAppId(pkgUid),
                                 false /* callerWillRestart */, false /* purgeCache */,
                                 true /* doIt */, false /* evenPersistent */,
-                                false /* uninstalling */, true /* packageStateStopped */,
+                                false /* uninstalling */,
+                                !persistentPackage /* packageStateStopped */,
                                 user, description);
-                        finishForceStopPackageLocked(packageName, pkgUid);
+                        if (!persistentPackage) {
+                            finishForceStopPackageLocked(packageName, pkgUid);
+                        }
                     }
                 }
             }
         } finally {
             Binder.restoreCallingIdentity(callingId);
         }
+    }
+
+    /** Whether the package is a persistent system app, i.e. one whose process is never stopped. */
+    private boolean isPersistentPackage(String packageName, @UserIdInt int userId) {
+        final ApplicationInfo info = getPackageManagerInternal().getApplicationInfo(
+                packageName, MATCH_DEBUG_TRIAGED_MISSING, SYSTEM_UID, userId);
+        return info != null && (info.flags & PERSISTENT_MASK) == PERSISTENT_MASK;
     }
 
     @Override
@@ -4767,7 +4789,9 @@ public class ActivityManagerService extends IActivityManager.Stub
 
         int callerUid = Binder.getCallingUid();
         // Only the system server can kill an application
-        if (callerUid == SYSTEM_UID) {
+        // IchthysOS: compare the app id so system-uid apps of a secondary user (Settings asking
+        // SystemUI to restart) are accepted too; they are the same trusted uid.
+        if (UserHandle.getAppId(callerUid) == SYSTEM_UID) {
             synchronized (mGlobalLock) {
                 ProcessRecord app = getProcessRecordLocked(processName, uid);
                 IApplicationThread thread;
@@ -14404,6 +14428,24 @@ public class ActivityManagerService extends IActivityManager.Stub
             // Remove provider publish timeout because we will start a new timeout when the
             // restarted process is attaching (if the process contains launching providers).
             mHandler.removeMessages(CONTENT_PROVIDER_PUBLISH_TIMEOUT_MSG, app);
+
+            if (app.isPersistent()) {
+                // IchthysOS: a persistent package can not be stopped (see addAppLocked, which
+                // only runs at boot). Clear the flag on every restart as well, so a state left
+                // behind by an earlier force-stop never outlives the process. Posted because
+                // the process lock is held here.
+                final String persistentPackage = app.info.packageName;
+                final int persistentUserId = app.userId;
+                mHandler.post(() -> {
+                    try {
+                        mPackageManagerInt.setPackageStoppedState(
+                                persistentPackage, false, persistentUserId);
+                    } catch (IllegalArgumentException e) {
+                        Slog.w(TAG, "Failed trying to unstop package "
+                                + persistentPackage + ": " + e);
+                    }
+                });
+            }
 
             mProcessList.addProcessNameLocked(app);
             app.setPendingStart(false);

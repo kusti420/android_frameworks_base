@@ -34,6 +34,7 @@ import android.view.animation.DecelerateInterpolator;
 import android.widget.FrameLayout;
 
 import com.android.systemui.Dependency;
+import com.android.systemui.statusbar.phone.IchthysZigzag;
 import com.android.systemui.tuner.TunerService;
 
 /**
@@ -80,7 +81,10 @@ public class BatteryBarView extends View implements TunerService.Tunable {
     private int mStyle = STYLE_REGULAR;
     private boolean mBlendColor = true;
     private boolean mBlendColorReverse = false;
-    private int mColor = 0xff76c124;
+    // COLOR_UNSET while statusbar_battery_bar_color was never picked: the bar then follows the
+    // Shoal accent (resolved when drawing, so it tracks the theme).
+    private static final int COLOR_UNSET = 0;
+    private int mColor = COLOR_UNSET;
     private int mLowColor = 0xfff90028;
     private boolean mAnimate = true;
     private boolean mChargingColorEnable = true;
@@ -171,7 +175,7 @@ public class BatteryBarView extends View implements TunerService.Tunable {
                 invalidate();
                 break;
             case COLOR:
-                mColor = parseColor(newValue, 0xff76c124);
+                mColor = parseColor(newValue, COLOR_UNSET);
                 invalidate();
                 break;
             case LOW_COLOR:
@@ -192,6 +196,11 @@ public class BatteryBarView extends View implements TunerService.Tunable {
             default:
                 break;
         }
+    }
+
+    /** The picked bar colour, or the status bar's accent while none was ever picked. */
+    private int barColor() {
+        return mColor != COLOR_UNSET ? mColor : IchthysZigzag.accent(getContext());
     }
 
     private static int parseColor(String value, int def) {
@@ -263,9 +272,9 @@ public class BatteryBarView extends View implements TunerService.Tunable {
             float frac = clamp(mDrawnLevel / 100f);
             // Regular blend: low color at empty -> normal color at full.
             float t = mBlendColorReverse ? (1f - frac) : frac;
-            return blend(mLowColor, mColor, t);
+            return blend(mLowColor, barColor(), t);
         }
-        return mDrawnLevel <= LOW_LEVEL ? mLowColor : mColor;
+        return mDrawnLevel <= LOW_LEVEL ? mLowColor : barColor();
     }
 
     private static float clamp(float v) {

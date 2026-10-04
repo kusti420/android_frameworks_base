@@ -865,10 +865,6 @@ constructor(
                                         BrightnessSliderContainer(
                                             viewModel =
                                                 containerViewModel.brightnessSliderViewModel,
-                                            // IchthysOS: the toggles are hosted in the expanded QS
-                                            // header (ShadeHeaderController) for this layout, so
-                                            // the slider keeps the full row width.
-                                            showToggles = false,
                                             containerColors =
                                                 ContainerColors(
                                                     Color.Transparent,

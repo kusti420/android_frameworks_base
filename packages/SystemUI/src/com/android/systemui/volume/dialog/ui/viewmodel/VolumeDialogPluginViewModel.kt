@@ -55,11 +55,16 @@ constructor(
     val csdWarningConfigModel: CsdWarningConfigModel,
     private val uiEventLogger: UiEventLogger,
     private val broadcastDispatcher: BroadcastDispatcher,
-    expandedAudioTileDetailsFeatureInteractor: ExpandedAudioTileDetailsFeatureInteractor,
+    private val expandedAudioTileDetailsFeatureInteractor:
+        ExpandedAudioTileDetailsFeatureInteractor,
 ) {
 
-    // Use horizontal volume dialog if the audio tile details view is enabled
-    private val isVolumeDialogVertical = !expandedAudioTileDetailsFeatureInteractor.isEnabled()
+    // Use horizontal volume dialog if the audio tile details view is enabled.
+    // IchthysOS: evaluated on every use rather than once at plugin start, so the crDroid
+    // "custom_volume_horizontal" switch applies the next time the dialog is shown (each show
+    // builds a new dialog) instead of needing a SystemUI restart.
+    private val isVolumeDialogVertical: Boolean
+        get() = !expandedAudioTileDetailsFeatureInteractor.isEnabled()
     private var dismissJob: Job? = null
 
     fun launchVolumeDialog() {

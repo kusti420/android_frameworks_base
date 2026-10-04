@@ -240,6 +240,41 @@ prebuilt_etc {
         "ichthys/presets/paper.nix",
         "ichthys/presets/reef.nix",
     ],
-    // The presets name these font families (data/fonts/ichthys).
-    required: ["fonts_customization.xml"],
+    // The presets name these font families (data/fonts/ichthys). The baseline and the privacy
+    // levels come along, so a product that has the presets has the whole /product/etc/ichthys.
+    required: [
+        "fonts_customization.xml",
+        "ichthys_default_config",
+        "ichthys_privacy_levels",
+    ],
+}
+
+// IchthysOS baseline: applied as generation 1 of every new user (IchthysConfigService), and what
+// the ichthys.nix option defaults are.
+prebuilt_etc {
+    name: "ichthys_default_config",
+    product_specific: true,
+    sub_dir: "ichthys",
+    src: "ichthys/default.nix",
+    filename: "default.nix",
+}
+
+// The baseline, presets and levels as resources of the host tests (tests/IchthysConfigTests),
+// which hold them and the option defaults to each other: "default.nix", "presets/koi.nix", ...
+filegroup {
+    name: "ichthys-config-etc",
+    srcs: ["ichthys/**/*.nix"],
+    path: "ichthys",
+}
+
+// IchthysOS privacy levels for ichthys.nix `privacy.level`.
+prebuilt_etc {
+    name: "ichthys_privacy_levels",
+    product_specific: true,
+    sub_dir: "ichthys/privacy",
+    srcs: [
+        "ichthys/privacy/normal.nix",
+        "ichthys/privacy/relaxed.nix",
+        "ichthys/privacy/strict.nix",
+    ],
 }

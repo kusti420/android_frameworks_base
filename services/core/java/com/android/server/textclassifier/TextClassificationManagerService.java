@@ -72,6 +72,7 @@ import com.android.internal.util.IndentingPrintWriter;
 import com.android.internal.util.Preconditions;
 import com.android.server.LocalServices;
 import com.android.server.SystemService;
+import com.android.server.pm.AppsFilterQueryAllPackages;
 import com.android.server.textclassifier.personalcontext.PersonalContextBridge;
 import com.android.server.textclassifier.personalcontext.PersonalContextBridgeImpl;
 
@@ -601,7 +602,9 @@ public final class TextClassificationManagerService extends ITextClassifierServi
         if (com.android.server.textclassifier.Flags.textclassifierSkipRedundantIconRewriting()) {
             // If the caller has full package visibility there's no need to rewrite any responses.
             try {
-                if (AppGlobals.getPackageManager()
+                // IchthysOS: a withheld QUERY_ALL_PACKAGES reads as granted to the app itself.
+                if (!AppsFilterQueryAllPackages.isRevoked(uid)
+                        && AppGlobals.getPackageManager()
                                 .checkUidPermission(
                                         android.Manifest.permission.QUERY_ALL_PACKAGES, uid)
                         == PackageManager.PERMISSION_GRANTED) {

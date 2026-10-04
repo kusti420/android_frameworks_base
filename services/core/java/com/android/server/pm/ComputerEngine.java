@@ -5548,14 +5548,15 @@ public class ComputerEngine implements Computer {
         // target package name or has proper permission.
         if (setting instanceof PackageSetting) {
             final AndroidPackage pkg = ((PackageSetting) setting).getPkg();
-            return pkg != null && mAppsFilter.canQueryPackage(pkg, targetPackageName);
+            return pkg != null && mAppsFilter.canQueryPackage(pkg, targetPackageName, userId);
         } else {
             final ArraySet<PackageStateInternal> callingSharedPkgSettings =
                     (ArraySet<PackageStateInternal>)
                             ((SharedUserSetting) setting).getPackageStates();
             for (int i = callingSharedPkgSettings.size() - 1; i >= 0; i--) {
                 final AndroidPackage pkg = callingSharedPkgSettings.valueAt(i).getPkg();
-                if (pkg != null && mAppsFilter.canQueryPackage(pkg, targetPackageName)) {
+                if (pkg != null
+                        && mAppsFilter.canQueryPackage(pkg, targetPackageName, userId)) {
                     return true;
                 }
             }

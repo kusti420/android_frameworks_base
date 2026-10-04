@@ -664,6 +664,10 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
             try {
                 AccessibilityWindowInfo window =
                         mA11yWindowManager.findA11yWindowInfoByIdLocked(windowId);
+                if (window != null && mSecurityPolicy.isIchthysWindowHiddenLocked(
+                        mSystemSupport.getCurrentUserIdLocked(), this, window.getId())) {
+                    window = null;
+                }
                 if (window != null) {
                     AccessibilityWindowInfo windowClone = AccessibilityWindowInfo.obtain(window);
                     windowClone.setConnectionId(mId);
@@ -1447,6 +1451,14 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
                         interactionId);
                 return;
             }
+            // IchthysOS accessibility scoping: a window outside the scope does not exist here.
+            if (mSecurityPolicy.isIchthysWindowHiddenLocked(
+                    mSystemSupport.getCurrentUserIdLocked(), this,
+                    resolveAccessibilityWindowIdLocked(accessibilityWindowId))) {
+                callback.sendTakeScreenshotOfWindowError(
+                        AccessibilityService.ERROR_TAKE_SCREENSHOT_INVALID_WINDOW, interactionId);
+                return;
+            }
         }
         if (!mSecurityPolicy.checkAccessibilityAccess(this)) {
             callback.sendTakeScreenshotOfWindowError(
@@ -1543,6 +1555,14 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
             if (!mSecurityPolicy.canTakeScreenshotLocked(this)) {
                 throw new SecurityException("Services don't have the capability of taking"
                         + " the screenshot.");
+            }
+
+            // IchthysOS accessibility scoping: no full-display capture while a window outside
+            // this service's scope is on that display.
+            if (isIchthysHiddenWindowOnDisplayLocked(displayId)) {
+                sendScreenshotFailure(AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERNAL_ERROR,
+                        callback);
+                return;
             }
         }
 
@@ -1823,6 +1843,13 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
             final boolean requiredForCacheConsistency = mUsesAccessibilityCache
                     && ((AccessibilityCache.CACHE_CRITICAL_EVENTS_MASK & eventType) != 0);
             if (!clientWantsEvent && !requiredForCacheConsistency) {
+                return;
+            }
+
+            // IchthysOS accessibility scoping: events from apps outside this service's scope are
+            // never sent, not even for cache consistency.
+            if (mSecurityPolicy.isIchthysEventHiddenLocked(
+                    mSystemSupport.getCurrentUserIdLocked(), this, event)) {
                 return;
             }
 
@@ -2385,6 +2412,22 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
                 interrogatingPid, interrogatingTid);
     }
 
+    private boolean isIchthysHiddenWindowOnDisplayLocked(int displayId) {
+        final List<AccessibilityWindowInfo> windows =
+                mA11yWindowManager.getWindowListLocked(displayId);
+        if (windows == null) {
+            return false;
+        }
+        final int userId = mSystemSupport.getCurrentUserIdLocked();
+        for (int i = 0; i < windows.size(); i++) {
+            if (mSecurityPolicy.isIchthysWindowHiddenLocked(userId, this,
+                    windows.get(i).getId())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private List<AccessibilityWindowInfo> getWindowsByDisplayLocked(int displayId) {
         final List<AccessibilityWindowInfo> internalWindowList =
                 mA11yWindowManager.getWindowListLocked(displayId);
@@ -2393,8 +2436,13 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
         }
         final List<AccessibilityWindowInfo> returnedWindowList = new ArrayList<>();
         final int windowCount = internalWindowList.size();
+        final int userId = mSystemSupport.getCurrentUserIdLocked();
         for (int i = 0; i < windowCount; i++) {
             AccessibilityWindowInfo window = internalWindowList.get(i);
+            // IchthysOS accessibility scoping: windows outside this service's scope are left out.
+            if (mSecurityPolicy.isIchthysWindowHiddenLocked(userId, this, window.getId())) {
+                continue;
+            }
             AccessibilityWindowInfo windowClone =
                     AccessibilityWindowInfo.obtain(window);
             windowClone.setConnectionId(mId);

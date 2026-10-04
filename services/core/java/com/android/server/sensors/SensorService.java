@@ -33,6 +33,7 @@ import android.os.UserManager;
 import android.provider.Settings;
 import android.text.TextUtils;
 import android.util.ArrayMap;
+import android.util.Slog;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.os.BackgroundThread;
@@ -54,10 +55,12 @@ public class SensorService extends SystemService {
     // IchthysOS: sensor fingerprinting protection (kusti420/ichthysos-tracker#30). Third-party
     // apps get a generic sensor list without uncalibrated sensors, 50 Hz motion sensors and
     // quantized values (native SensorService). Global kill switch, default on, and a per-user
-    // comma-separated package exemption list (for Ichthys Guard).
+    // comma-separated package exemption list (for Ichthys Guard). The ROM's own bundled FOSS
+    // apps are put on that list once, see IchthysSensorExemptions.
     private static final String FINGERPRINT_PROTECTION_SETTING =
             "ichthys_sensor_fingerprint_protection";
     private static final String FINGERPRINT_EXEMPT_SETTING = "ichthys_sensor_exempt_pkgs";
+    private final IchthysSensorExemptions mBundledExemptions = new IchthysSensorExemptions();
     private final Object mLock = new Object();
     @GuardedBy("mLock")
     private final ArrayMap<ProximityActiveListener, ProximityListenerProxy> mProximityListeners =
@@ -165,6 +168,13 @@ public class SensorService extends SystemService {
         final ArrayList<String> exemptions = new ArrayList<>();
         final UserManager userManager = getContext().getSystemService(UserManager.class);
         for (UserInfo user : userManager.getAliveUsers()) {
+            try {
+                // Runs on every push: at boot, and when a package or user is added.
+                mBundledExemptions.seed(getContext(), FINGERPRINT_EXEMPT_SETTING, user.id);
+            } catch (RuntimeException e) {
+                Slog.w("SensorService", "bundled sensor exemptions not seeded for user "
+                        + user.id, e);
+            }
             final String value = Settings.Secure.getStringForUser(resolver,
                     FINGERPRINT_EXEMPT_SETTING, user.id);
             if (TextUtils.isEmpty(value)) {

@@ -413,6 +413,7 @@ import com.android.modules.utils.TypedXmlPullParser;
 import com.android.modules.utils.TypedXmlSerializer;
 import com.android.server.DeviceIdleInternal;
 import com.android.server.EventLogTags;
+import com.android.server.IchthysPreinstallController;
 import com.android.server.IoThread;
 import com.android.server.LocalServices;
 import com.android.server.SystemService;
@@ -9965,7 +9966,9 @@ public class NotificationManagerService extends SystemService {
      * IchthysOS: a newly installed user app may use full-screen intents only if it is a calling
      * or alarm app (the same categories Play allows). Everything else starts with the
      * USE_FULL_SCREEN_INTENT app op off, so its full-screen notifications show as ordinary
-     * heads-up notifications; the user can turn it back on in Special app access.
+     * heads-up notifications; the user can turn it back on in Special app access. Apps installed
+     * during setup, the ROM's bundled preinstalls and apps installed by Ichthys Apps are left
+     * alone.
      */
     private void restrictFullScreenIntentOnInstall(String pkg, int uid) {
         if (uid < 0 || !UserHandle.isApp(uid)) {
@@ -9976,6 +9979,12 @@ public class NotificationManagerService extends SystemService {
             final ApplicationInfo ai = mPackageManagerClient.getApplicationInfoAsUser(
                     pkg, 0, userId);
             if (ai.isSystemApp() || ai.targetSdkVersion < Build.VERSION_CODES.Q) {
+                return;
+            }
+            if (IchthysPreinstallController.isBundledPreinstall(pkg)
+                    || Settings.Secure.getIntForUser(getContext().getContentResolver(),
+                            Settings.Secure.USER_SETUP_COMPLETE, 0, userId) == 0
+                    || isInstalledByIchthysApps(pkg, userId)) {
                 return;
             }
             if (!mPermissionHelper.hasRequestedPermission(
@@ -9997,6 +10006,22 @@ public class NotificationManagerService extends SystemService {
             // Uninstalled again before we got here.
         } catch (RuntimeException e) {
             Slog.w(TAG, "Could not restrict full-screen intents for " + pkg, e);
+        }
+    }
+
+    /**
+     * IchthysOS: whether Ichthys Apps is {@code pkg}'s installer of record. Only the system app
+     * of that name counts.
+     */
+    private boolean isInstalledByIchthysApps(String pkg, int userId) {
+        final String ichthysApps = "org.ichthys.apps";
+        try {
+            final PackageManager pm = getContext().createContextAsUser(UserHandle.of(userId), 0)
+                    .getPackageManager();
+            return ichthysApps.equals(pm.getInstallSourceInfo(pkg).getInstallingPackageName())
+                    && pm.getApplicationInfo(ichthysApps, 0).isSystemApp();
+        } catch (NameNotFoundException | RuntimeException e) {
+            return false;
         }
     }
 

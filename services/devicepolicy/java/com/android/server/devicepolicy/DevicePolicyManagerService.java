@@ -5272,6 +5272,11 @@ public class DevicePolicyManagerService extends IDevicePolicyManager.Stub
                     ActiveAdmin.DEF_MAXIMUM_FAILED_PASSWORDS_FOR_WIPE) {
                 continue;  // No max number of failed passwords policy set for this profile.
             }
+            // IchthysOS: a user-installed admin can't arm this policy any more; a limit it
+            // stored before that rule existed doesn't count either.
+            if (isThirdPartyLegacyAdmin(admin, MANAGE_DEVICE_POLICY_WIPE_DATA, MASTER_CLEAR)) {
+                continue;
+            }
 
             // We always favor the primary profile if several profiles have the same value set.
             final int userId = getUserIdToWipeForFailedPasswords(admin);
@@ -5701,9 +5706,12 @@ public class DevicePolicyManagerService extends IDevicePolicyManager.Stub
                 adminComponent = admin == null ? null : admin.info.getComponent();
             }
             checkCanExecuteOrThrowUnsafe(DevicePolicyManager.OPERATION_LOCK_NOW);
+            // IchthysOS: a user-installed admin can't lock the device. Ignored rather than
+            // refused: stock never throws here for an active admin, and admins don't expect it.
             if (isThirdPartyLegacyAdmin(caller, MANAGE_DEVICE_POLICY_LOCK, LOCK_DEVICE)) {
-                throw new SecurityException(
-                        "Admin " + adminComponent + " is not allowed to lock the device");
+                Slogf.w(LOG_TAG, "lockNow(): ignored, admin %s is not allowed to lock the device",
+                        adminComponent);
+                return;
             }
             final long ident = mInjector.binderClearCallingIdentity();
             try {
@@ -7328,9 +7336,12 @@ public class DevicePolicyManagerService extends IDevicePolicyManager.Stub
         EnforcingAdmin enforcingAdmin = getEnforcingAdmin(caller);
 
         checkCanExecuteOrThrowUnsafe(DevicePolicyManager.OPERATION_WIPE_DATA);
+        // IchthysOS: a user-installed admin can't wipe the device. Ignored rather than refused:
+        // stock never throws here for an active admin, and admins don't expect it.
         if (isThirdPartyLegacyAdmin(caller, MANAGE_DEVICE_POLICY_WIPE_DATA, MASTER_CLEAR)) {
-            throw new SecurityException("Admin " + caller.getPackageName()
-                    + " is not allowed to wipe the device");
+            Slogf.w(LOG_TAG, "wipeDataWithReason(): ignored, admin %s is not allowed to wipe the"
+                    + " device", caller.getPackageName());
+            return;
         }
 
         if (TextUtils.isEmpty(wipeReasonForUser)) {
@@ -13682,6 +13693,37 @@ public class DevicePolicyManagerService extends IDevicePolicyManager.Stub
                 }
             }
             return true;
+        } catch (RemoteException | IllegalArgumentException e) {
+            return false;
+        } finally {
+            mInjector.binderRestoreCallingIdentity(ident);
+        }
+    }
+
+    /**
+     * IchthysOS: {@link #isThirdPartyLegacyAdmin(CallerIdentity, String...)} for a stored admin,
+     * where there is no caller to look at.
+     */
+    private boolean isThirdPartyLegacyAdmin(ActiveAdmin admin, String... permissions) {
+        if (admin.info == null) {
+            return false;
+        }
+        final ComponentName who = admin.info.getComponent();
+        final int userId = admin.getUserHandle().getIdentifier();
+        if (!UserHandle.isApp(admin.getUid())
+                || mDeviceAdmins.isDeviceOwner(who, userId)
+                || mDeviceAdmins.isProfileOwner(who, userId)) {
+            return false;
+        }
+        final long ident = mInjector.binderClearCallingIdentity();
+        try {
+            for (String permission : permissions) {
+                if (mIPackageManager.checkPermission(permission, who.getPackageName(), userId)
+                        == PackageManager.PERMISSION_GRANTED) {
+                    return false;
+                }
+            }
+            return !isSystemApp(mIPackageManager, who.getPackageName(), userId);
         } catch (RemoteException | IllegalArgumentException e) {
             return false;
         } finally {

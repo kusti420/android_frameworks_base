@@ -7,6 +7,5 @@
     surfaces = 3;
     shape.radius = 18;
     shape.style = "rounded";
-    density = "standard";
   };
 }

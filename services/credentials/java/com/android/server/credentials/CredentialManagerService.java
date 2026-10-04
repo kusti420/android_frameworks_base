@@ -76,6 +76,7 @@ import com.android.server.credentials.metrics.ApiName;
 import com.android.server.credentials.metrics.ApiStatus;
 import com.android.server.infra.AbstractMasterSystemService;
 import com.android.server.infra.SecureSettingsServiceNameResolver;
+import com.android.server.pm.AppsFilterQueryAllPackages;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -309,7 +310,9 @@ public final class CredentialManagerService
     }
 
     private void verifyGetProvidersPermission() throws SecurityException {
-        if (hasPermission(android.Manifest.permission.QUERY_ALL_PACKAGES)) {
+        // IchthysOS: a withheld QUERY_ALL_PACKAGES reads as granted to the app itself.
+        if (!AppsFilterQueryAllPackages.isRevoked(Binder.getCallingUid())
+                && hasPermission(android.Manifest.permission.QUERY_ALL_PACKAGES)) {
             return;
         }
 

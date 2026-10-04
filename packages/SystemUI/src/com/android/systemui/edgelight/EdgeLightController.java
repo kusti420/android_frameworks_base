@@ -45,6 +45,7 @@ import com.android.systemui.dagger.qualifiers.Application;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.statusbar.NotificationListener;
+import com.android.systemui.statusbar.phone.IchthysZigzag;
 import com.android.systemui.util.settings.SystemSettings;
 
 import java.io.PrintWriter;
@@ -109,7 +110,10 @@ public class EdgeLightController implements CoreStartable {
     private EdgeLightColorMode mColorMode = EdgeLightColorMode.ACCENT;
     private EdgeLightEffect mEffect = EdgeLightEffect.NONE;
     private boolean mRoundedStyle;
-    private int mCustomColor = EdgeLightColorMode.FALLBACK_COLOR;
+    // CUSTOM_COLOR_UNSET while edge_light_custom_color was never picked: the Shoal accent is
+    // used instead (resolved per pulse, so it follows the theme).
+    private static final int CUSTOM_COLOR_UNSET = 0;
+    private int mCustomColor = CUSTOM_COLOR_UNSET;
     private long mPulsesShown;
 
     @Inject
@@ -180,9 +184,8 @@ public class EdgeLightController implements CoreStartable {
         mColorMode = EdgeLightColorMode.fromSettings(mSystemSettings.getString(KEY_COLOR_MODE));
         mEffect = EdgeLightEffect.fromSettings(mSystemSettings.getString(KEY_ANIMATION));
         mRoundedStyle = STYLE_ROUNDED.equals(mSystemSettings.getString(KEY_STYLE));
-        mCustomColor = EdgeLightColorMode.sanitize(EdgeLightColorMode.parseSettingsColor(
-                mSystemSettings.getString(KEY_CUSTOM_COLOR),
-                EdgeLightColorMode.FALLBACK_COLOR));
+        mCustomColor = EdgeLightColorMode.parseSettingsColor(
+                mSystemSettings.getString(KEY_CUSTOM_COLOR), CUSTOM_COLOR_UNSET);
     }
 
     static int clamp(int value, int min, int max) {
@@ -246,7 +249,7 @@ public class EdgeLightController implements CoreStartable {
     private int resolveColor(StatusBarNotification sbn) {
         switch (mColorMode) {
             case CUSTOM:
-                return mCustomColor;
+                return customColor();
             case NOTIFICATION: {
                 final Notification notification = sbn.getNotification();
                 return EdgeLightColorMode.sanitize(notification == null ? 0 : notification.color);
@@ -261,13 +264,15 @@ public class EdgeLightController implements CoreStartable {
         }
     }
 
+    /** The Shoal accent, the one the status bar and the notification dot draw with. */
     private int accentColor() {
-        final TypedValue value = new TypedValue();
-        if (mContext.getTheme().resolveAttribute(
-                android.R.attr.colorAccent, value, true)) {
-            return value.data;
-        }
-        return 0;
+        return IchthysZigzag.accent(mContext);
+    }
+
+    /** The picked custom colour, or the accent while none was ever picked. */
+    private int customColor() {
+        return EdgeLightColorMode.sanitize(
+                mCustomColor != CUSTOM_COLOR_UNSET ? mCustomColor : accentColor());
     }
 
     private int wallpaperColor() {
@@ -407,7 +412,7 @@ public class EdgeLightController implements CoreStartable {
     private int resolveColorWithoutNotification() {
         switch (mColorMode) {
             case CUSTOM:
-                return mCustomColor;
+                return customColor();
             case WALLPAPER:
                 return EdgeLightColorMode.sanitize(wallpaperColor());
             case RAINBOW:
@@ -430,7 +435,8 @@ public class EdgeLightController implements CoreStartable {
         pw.println("  colorMode=" + mColorMode.settingsValue());
         pw.println("  effect=" + mEffect.settingsValue());
         pw.println("  roundedStyle=" + mRoundedStyle);
-        pw.println("  customColor=#" + Integer.toHexString(mCustomColor));
+        pw.println("  customColor=" + (mCustomColor == CUSTOM_COLOR_UNSET
+                ? "unset (accent)" : "#" + Integer.toHexString(mCustomColor)));
         pw.println("  dozing=" + mStatusBarStateController.isDozing());
         pw.println("  showing=" + (mView != null));
         pw.println("  pulsesShown=" + mPulsesShown);

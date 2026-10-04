@@ -450,7 +450,43 @@ public final class AppsFilterImpl extends AppsFilterLocked implements Watchable,
                 forcedQueryablePackageNames, forceSystemAppsQueryable, null,
                 injector.getHandler());
         featureConfig.setAppsFilter(appsFilter);
+        // IchthysOS: QUERY_ALL_PACKAGES is user-controlled (decision 2).
+        AppsFilterQueryAllPackages.setChangeListener(
+                uid -> appsFilter.onQueryAllPackagesChanged(pmInt, uid));
         return appsFilter;
+    }
+
+    /**
+     * IchthysOS: the user granted or withheld QUERY_ALL_PACKAGES for {@code uid} (decision 2),
+     * so every cached decision with that app as the caller is stale. Rebuilt for the app's
+     * packages the same way a compat change is handled ({@code FeatureConfigImpl.onCompatChange}).
+     * Posted, because the permission service calls this while holding its state lock; the cache
+     * build itself also runs on {@link #mHandler}, so the two never interleave. Before the cache is
+     * ready every decision is computed live and already sees the new state.
+     */
+    private void onQueryAllPackagesChanged(PackageManagerInternal pmInternal, int uid) {
+        mHandler.post(() -> {
+            if (!mCacheReady) {
+                onChanged();
+                return;
+            }
+            final long currentTimeUs = SystemClock.currentTimeMicro();
+            final Computer snapshot = (Computer) pmInternal.snapshot();
+            final int appId = UserHandle.getAppId(uid);
+            final ArrayMap<String, ? extends PackageStateInternal> settings =
+                    snapshot.getPackageStates();
+            for (int i = settings.size() - 1; i >= 0; i--) {
+                if (settings.valueAt(i).getAppId() == appId) {
+                    updateShouldFilterCacheForPackage(snapshot, settings.keyAt(i));
+                }
+            }
+            logCacheUpdated(
+                    PACKAGE_MANAGER_APPS_FILTER_CACHE_UPDATE_REPORTED__EVENT_TYPE__COMPAT_CHANGED,
+                    SystemClock.currentTimeMicro() - currentTimeUs,
+                    snapshot.getUserInfos().length,
+                    settings.size(),
+                    appId);
+        });
     }
 
     public FeatureConfig getFeatureConfig() {

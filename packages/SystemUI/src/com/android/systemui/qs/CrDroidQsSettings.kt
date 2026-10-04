@@ -44,6 +44,9 @@ import androidx.compose.ui.platform.LocalContext
 private fun readInt(cr: ContentResolver, key: String, default: Int): Int =
     Settings.System.getIntForUser(cr, key, default, UserHandle.USER_CURRENT)
 
+private fun readSecureInt(cr: ContentResolver, key: String, default: Int): Int =
+    Settings.Secure.getIntForUser(cr, key, default, UserHandle.USER_CURRENT)
+
 /** Observes a `Settings.System` integer, recomposing when it changes. */
 @Composable
 fun rememberSystemSettingInt(key: String, default: Int): Int {
@@ -75,3 +78,37 @@ fun rememberSystemSettingInt(key: String, default: Int): Int {
 @Composable
 fun rememberSystemSettingBoolean(key: String, default: Boolean): Boolean =
     rememberSystemSettingInt(key, if (default) 1 else 0) != 0
+
+/**
+ * Observes a `Settings.Secure` integer of the current user, recomposing when it changes. The
+ * `Settings.Secure` twin of [rememberSystemSettingInt], for toggles the Themes screens store there
+ * (e.g. `qs_accent_icon_bg`).
+ */
+@Composable
+fun rememberSecureSettingInt(key: String, default: Int): Int {
+    val cr = LocalContext.current.contentResolver
+    val value by
+        produceState(initialValue = readSecureInt(cr, key, default), key, cr) {
+            val observer =
+                object : ContentObserver(Handler(Looper.getMainLooper())) {
+                    override fun onChange(selfChange: Boolean) {
+                        value = readSecureInt(cr, key, default)
+                    }
+                }
+            cr.registerContentObserver(
+                Settings.Secure.getUriFor(key),
+                false,
+                observer,
+                UserHandle.USER_ALL,
+            )
+            // Re-read after registering, as in rememberSystemSettingInt.
+            value = readSecureInt(cr, key, default)
+            awaitDispose { cr.unregisterContentObserver(observer) }
+        }
+    return value
+}
+
+/** Observes a `Settings.Secure` switch (1/0), recomposing when it changes. */
+@Composable
+fun rememberSecureSettingBoolean(key: String, default: Boolean): Boolean =
+    rememberSecureSettingInt(key, if (default) 1 else 0) != 0

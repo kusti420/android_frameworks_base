@@ -169,6 +169,9 @@ fun ContentScope.SingleShadeNestedScrollLayout(
             .collect { shouldCollapse -> if (shouldCollapse) scrimOffset.animateTo(0f) }
     }
     var scrimHeight by remember { mutableIntStateOf(0) }
+    // IchthysOS: whether the "headers push the scrim off screen" warning below was already logged
+    // for the current invalid layout (a plain holder: it must not trigger recomposition).
+    val invalidLayoutLogged = remember { booleanArrayOf(false) }
     Layout(
         modifier = modifier,
         contents =
@@ -269,6 +272,25 @@ fun ContentScope.SingleShadeNestedScrollLayout(
             measurables[2][0].measure(
                 constraints.copy(minHeight = scrimHeight, maxHeight = scrimHeight)
             )
+
+        // IchthysOS: the headers must leave room for the notification scrim. If they do not, a
+        // child of a header took the whole height constraint (e.g. a MATCH_PARENT AndroidView in a
+        // wrap-content row) and the shade shows a header mid-screen with nothing else. Say so.
+        val scrimRestTop = insetsTop + alwaysVisibleHeader.height + overlappableHeader.height
+        if (scrimRestTop >= layoutBottom) {
+            if (!invalidLayoutLogged[0]) {
+                invalidLayoutLogged[0] = true
+                Log.w(
+                    TAG,
+                    "Invalid shade layout: scrim rest top $scrimRestTop >= height $layoutBottom" +
+                        " (insetsTop=$insetsTop header=${alwaysVisibleHeader.height}" +
+                        " qqs=${overlappableHeader.height} scrimOffset=${scrimOffset.value}" +
+                        " maxHeight=${constraintsWithCutout.maxHeight})",
+                )
+            }
+        } else {
+            invalidLayoutLogged[0] = false
+        }
 
         // Update the last height of the header.
         overlappableHeaderHeight.intValue = overlappableHeader.height

@@ -71,6 +71,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.LocusId;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManagerInternal;
@@ -151,6 +152,11 @@ public class UsageStatsService extends SystemService implements
         UserUsageStatsService.StatsUpdatedListener {
 
     static final String TAG = "UsageStatsService";
+    /**
+     * IchthysOS: Settings.Secure, comma-separated packages whose usage access returns real
+     * history. Any other third-party holder of usage access sees an empty history.
+     */
+    static final String ICHTHYS_USAGE_FULL_PKGS = "ichthys_usage_full_pkgs";
     public static final boolean ENABLE_TIME_CHANGE_CORRECTION
             = SystemProperties.getBoolean("persist.debug.time_correction", true);
 
@@ -2278,6 +2284,60 @@ public class UsageStatsService extends SystemService implements
             return mode == AppOpsManager.MODE_ALLOWED;
         }
 
+        /**
+         * IchthysOS (Guard decision 34): like {@link #hasQueryPermission}, but a third-party app
+         * holding usage access only sees real history when the user listed it in Secure
+         * {@link #ICHTHYS_USAGE_FULL_PKGS}. Everyone else gets the empty answer stock gives a
+         * caller without access (null, which UsageStatsManager turns into an empty result),
+         * so to the app it looks like a phone with no recorded usage. The app op is still
+         * noted, exactly as for a real grant.
+         */
+        private boolean hasQueryAccess(String callingPackage) {
+            return hasQueryPermission(callingPackage) && !ichthysHidesUsageHistory(callingPackage);
+        }
+
+        private boolean ichthysHidesUsageHistory(String callingPackage) {
+            final int callingUid = Binder.getCallingUid();
+            if (UserHandle.getAppId(callingUid) < Process.FIRST_APPLICATION_UID
+                    || callingPackage == null) {
+                return false;
+            }
+            final int userId = UserHandle.getUserId(callingUid);
+            final long token = Binder.clearCallingIdentity();
+            try {
+                final ApplicationInfo ai = mPackageManagerInternal.getApplicationInfo(
+                        callingPackage, 0, Process.SYSTEM_UID, userId);
+                if (ai == null || ai.uid != callingUid) {
+                    return true;
+                }
+                if (ai.isSystemApp() || mPackageManagerInternal.isPlatformSigned(callingPackage)) {
+                    return false;
+                }
+                final String allowed = Settings.Secure.getStringForUser(
+                        getContext().getContentResolver(), ICHTHYS_USAGE_FULL_PKGS, userId);
+                if (!TextUtils.isEmpty(allowed)) {
+                    for (String pkg : allowed.split(",")) {
+                        if (callingPackage.equals(pkg.trim())) {
+                            return false;
+                        }
+                    }
+                }
+                return true;
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
+
+        /**
+         * IchthysOS (Guard decision 34): the standby bucket reported to a caller whose usage
+         * access is hidden, for any app but itself: the one of an app that was never used.
+         */
+        @StandbyBuckets
+        private int ichthysNeverUsedBucket() {
+            return mAppStandby.isAppIdleEnabled() ? UsageStatsManager.STANDBY_BUCKET_NEVER
+                    : UsageStatsManager.STANDBY_BUCKET_EXEMPTED;
+        }
+
         private boolean canReportUsageStats() {
             if (isCallingUidSystem()) {
                 // System UID can always report UsageStats
@@ -2397,7 +2457,7 @@ public class UsageStatsService extends SystemService implements
         @Override
         public ParceledListSlice<UsageStats> queryUsageStats(int bucketType, long beginTime,
                 long endTime, String callingPackage, int userId) {
-            if (!hasQueryPermission(callingPackage)) {
+            if (!hasQueryAccess(callingPackage)) {
                 return null;
             }
 
@@ -2425,7 +2485,7 @@ public class UsageStatsService extends SystemService implements
         @Override
         public ParceledListSlice<ConfigurationStats> queryConfigurationStats(int bucketType,
                 long beginTime, long endTime, String callingPackage) throws RemoteException {
-            if (!hasQueryPermission(callingPackage)) {
+            if (!hasQueryAccess(callingPackage)) {
                 return null;
             }
 
@@ -2447,7 +2507,7 @@ public class UsageStatsService extends SystemService implements
         @Override
         public ParceledListSlice<EventStats> queryEventStats(int bucketType,
                 long beginTime, long endTime, String callingPackage) throws RemoteException {
-            if (!hasQueryPermission(callingPackage)) {
+            if (!hasQueryAccess(callingPackage)) {
                 return null;
             }
 
@@ -2469,7 +2529,7 @@ public class UsageStatsService extends SystemService implements
         // TODO: add UT to verify the queryEvents API and metrics loogging.
         @Override
         public UsageEvents queryEvents(long beginTime, long endTime, String callingPackage) {
-            if (!hasQueryPermission(callingPackage)) {
+            if (!hasQueryAccess(callingPackage)) {
                 return null;
             }
             final UsageEvents events = queryEventsHelper(UserHandle.getCallingUserId(), beginTime,
@@ -2490,7 +2550,7 @@ public class UsageStatsService extends SystemService implements
             Objects.requireNonNull(query);
             Objects.requireNonNull(callingPackage);
 
-            if (!hasQueryPermission(callingPackage)) {
+            if (!hasQueryAccess(callingPackage)) {
                 return null;
             }
 
@@ -2524,7 +2584,8 @@ public class UsageStatsService extends SystemService implements
             final int callingUserId = UserHandle.getUserId(callingUid);
 
             checkCallerIsSameApp(callingPackage);
-            final boolean includeTaskRoot = hasQueryPermission(callingPackage);
+            // IchthysOS: the task root can name another app, so it follows the usage history.
+            final boolean includeTaskRoot = hasQueryAccess(callingPackage);
 
             final long token = Binder.clearCallingIdentity();
             try {
@@ -2544,7 +2605,7 @@ public class UsageStatsService extends SystemService implements
         @Override
         public UsageEvents queryEventsForUser(long beginTime, long endTime, int userId,
                 String callingPackage) {
-            if (!hasQueryPermission(callingPackage)) {
+            if (!hasQueryAccess(callingPackage)) {
                 return null;
             }
 
@@ -2572,11 +2633,13 @@ public class UsageStatsService extends SystemService implements
                         "No permission to query usage stats for this user");
             }
             checkCallerIsSystemOrSameApp(pkg);
+            // IchthysOS: the task root can name another app, so it follows the usage history.
+            final boolean includeTaskRoot = !ichthysHidesUsageHistory(callingPackage);
 
             final long token = Binder.clearCallingIdentity();
             try {
                 return UsageStatsService.this.queryEventsForPackage(userId, beginTime,
-                        endTime, pkg, true);
+                        endTime, pkg, includeTaskRoot);
             } finally {
                 Binder.restoreCallingIdentity(token);
             }
@@ -2606,6 +2669,9 @@ public class UsageStatsService extends SystemService implements
                 }
             } else if (!hasQueryPermission(callingPackage)) {
                 return false;
+            } else if (ichthysHidesUsageHistory(callingPackage)) {
+                // IchthysOS (decision 34): the answer for an app that was never used.
+                return !mAppStandby.isInParole();
             }
             final boolean obfuscateInstantApps = shouldObfuscateInstantAppsForCaller(
                     callingUid, userId);
@@ -2657,6 +2723,8 @@ public class UsageStatsService extends SystemService implements
             if (!sameApp && !hasQueryPermission(callingPackage)) {
                 throw new SecurityException("Don't have permission to query app standby bucket");
             }
+            // IchthysOS (decision 34): other apps look like they were never used.
+            final boolean hidden = !sameApp && ichthysHidesUsageHistory(callingPackage);
 
             final boolean isInstantApp = isInstantApp(packageName, userId);
             final boolean cannotAccessInstantApps = shouldObfuscateInstantAppsForCaller(callingUid,
@@ -2664,6 +2732,9 @@ public class UsageStatsService extends SystemService implements
             if (packageUid < 0 || (!sameApp && isInstantApp && cannotAccessInstantApps)) {
                 throw new IllegalArgumentException(
                         "Cannot get standby bucket for non existent package (" + packageName + ")");
+            }
+            if (hidden) {
+                return ichthysNeverUsedBucket();
             }
             final long token = Binder.clearCallingIdentity();
             try {
@@ -2705,6 +2776,10 @@ public class UsageStatsService extends SystemService implements
             if (!hasQueryPermission(callingPackageName)) {
                 throw new SecurityException(
                         "Don't have permission to query app standby bucket");
+            }
+            if (ichthysHidesUsageHistory(callingPackageName)) {
+                // IchthysOS (decision 34): no app has a usage history.
+                return ParceledListSlice.emptyList();
             }
             final boolean cannotAccessInstantApps = shouldObfuscateInstantAppsForCaller(callingUid,
                     userId);
@@ -2755,11 +2830,14 @@ public class UsageStatsService extends SystemService implements
             }
             final int packageUid = mPackageManagerInternal.getPackageUid(packageName, 0, userId);
             // If the calling app is asking about itself, continue, else check for permission.
+            boolean hidden = false;
             if (packageUid != callingUid) {
                 if (!hasQueryPermission(callingPackage)) {
                     throw new SecurityException(
                             "Don't have permission to query min app standby bucket");
                 }
+                // IchthysOS (decision 34): other apps look like plain, never-used apps.
+                hidden = ichthysHidesUsageHistory(callingPackage);
             }
             final boolean isInstantApp = isInstantApp(packageName, userId);
             final boolean cannotAccessInstantApps = shouldObfuscateInstantAppsForCaller(callingUid,
@@ -2768,6 +2846,9 @@ public class UsageStatsService extends SystemService implements
                 throw new IllegalArgumentException(
                         "Cannot get min standby bucket for non existent package ("
                                 + packageName + ")");
+            }
+            if (hidden) {
+                return ichthysNeverUsedBucket();
             }
             final long token = Binder.clearCallingIdentity();
             try {
@@ -3111,6 +3192,10 @@ public class UsageStatsService extends SystemService implements
             }
             if (!hasQueryPermission(callingPackage)) {
                 throw new SecurityException("Don't have permission to query usage stats");
+            }
+            if (ichthysHidesUsageHistory(callingPackage)) {
+                // IchthysOS (decision 34): never used.
+                return 0;
             }
             synchronized (mLock) {
                 // Truncate the returned milliseconds to the boundary of the last day before exact

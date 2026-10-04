@@ -10,7 +10,6 @@
     surfaces = 4; # ink, card, raised, tile: the full koi ramp
     shape.radius = 22;
     shape.style = "pill";
-    density = "standard";
     font.display = "syne";
     font.mono = "jetbrains-mono";
     font.text = "instrument-sans";

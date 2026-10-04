@@ -54,11 +54,6 @@ fun ContentScope.QuickSettingsContent(
     mediaInRow: Boolean,
     modifier: Modifier = Modifier,
     mediaSquishiness: () -> Float = { 1f },
-    // IchthysOS: false where an expanded QS header is shown above this content — the adaptive /
-    // brightness-floor toggles live in that header's empty middle instead, which hands their ~96dp
-    // back to the slider. Layouts with a collapsed header (split shade, wide QS) have no such gap,
-    // so they keep the toggles inline.
-    showBrightnessToggles: Boolean = true,
 ) {
     QuickSettingsPanelLayout(
         brightness =
@@ -86,7 +81,6 @@ fun ContentScope.QuickSettingsContent(
                                     .thenIf(!isBrightnessSliderInteractable) {
                                         Modifier.gesturesDisabled()
                                     },
-                            showToggles = showBrightnessToggles,
                         )
                     }
                 }

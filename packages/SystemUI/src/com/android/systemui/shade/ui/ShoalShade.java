@@ -82,11 +82,12 @@ public final class ShoalShade {
                     KEY_SURFACE);
             if ("tonal".equals(surface)) return false;
             if ("hairline".equals(surface)) return true;
-            if ("shoal".equals(Settings.Secure.getString(context.getContentResolver(),
+            // Unset means the option defaults: quickSettings.style = "shoal", theme.surfaces = 4.
+            if (!"grid".equals(Settings.Secure.getString(context.getContentResolver(),
                     KEY_QS_STYLE))) {
                 return true;
             }
-            return Settings.Secure.getInt(context.getContentResolver(), KEY_SURFACES, 0) == 2;
+            return Settings.Secure.getInt(context.getContentResolver(), KEY_SURFACES, 4) == 2;
         } catch (Exception e) {
             return false;
         }

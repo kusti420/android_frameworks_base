@@ -26,6 +26,7 @@ import android.os.UserHandle
 import android.provider.Settings
 import androidx.annotation.ColorInt
 import com.android.internal.graphics.ColorUtils
+import com.android.systemui.statusbar.phone.IchthysZigzag
 
 /**
  * IchthysOS: shared two-stop gradient palette backed by crDroid's "Gradient customization" screen
@@ -34,8 +35,8 @@ import com.android.internal.graphics.ColorUtils
  * That screen owns three [Settings.System] keys:
  * * `custom_gradient_color_mode` — [GradientColors.MODE_AUTO] (0, default) or
  *   [GradientColors.MODE_CUSTOM] (1)
- * * `custom_gradient_start_color` — ARGB int, only used in `MODE_CUSTOM`
- * * `custom_gradient_end_color` — ARGB int, only used in `MODE_CUSTOM`
+ * * `custom_gradient_start_color` — ARGB int, only used in `MODE_CUSTOM` (unset: the accent)
+ * * `custom_gradient_end_color` — ARGB int, only used in `MODE_CUSTOM` (unset: the accent)
  *
  * Every per-element toggle on that screen (`qs_tile_gradient`, `qs_brightness_slider_gradient`,
  * `volume_slider_gradient`, ...) shares this one palette; the toggles themselves are read by their
@@ -108,12 +109,6 @@ object GradientColors {
     /** Every key this object reads — register observers on exactly these. */
     @JvmField val KEYS: List<String> = listOf(KEY_COLOR_MODE, KEY_START_COLOR, KEY_END_COLOR)
 
-    /**
-     * Default for both color pickers, matching `android:defaultValue="#ff0000"` in
-     * `gradient_settings.xml`, so an untouched device in [MODE_CUSTOM] shows what Settings previews.
-     */
-    @ColorInt private val DEFAULT_CUSTOM_COLOR: Int = Color.RED
-
     /** How far apart the two auto-mode stops are pushed in HSL lightness. */
     private const val AUTO_LIGHTNESS_SPREAD = 0.14f
 
@@ -121,17 +116,21 @@ object GradientColors {
     private const val AUTO_HUE_SPREAD = 12f
 
     /**
-     * Reads all three keys.
+     * Reads all three keys. A custom stop the user never picked falls back to the Shoal accent (the
+     * one the status bar and the notification dot draw with), so an untouched device in
+     * [MODE_CUSTOM] follows the theme instead of a fixed hue.
      *
      * `getIntForUser` with [UserHandle.USER_CURRENT], never the resolver's own user: consumers of
      * this palette run in per-display window contexts whose user is not the foreground user, and
      * getting that wrong returns the default forever with no log output.
      */
     @JvmStatic
-    fun config(context: Context): GradientConfig = config(context.contentResolver)
+    fun config(context: Context): GradientConfig =
+        config(context.contentResolver, IchthysZigzag.accent(context))
 
+    /** [config] with the colour to use for an unset custom stop given explicitly. */
     @JvmStatic
-    fun config(resolver: ContentResolver): GradientConfig =
+    fun config(resolver: ContentResolver, @ColorInt unsetColor: Int): GradientConfig =
         GradientConfig(
             colorMode =
                 Settings.System.getIntForUser(
@@ -144,14 +143,14 @@ object GradientColors {
                 Settings.System.getIntForUser(
                     resolver,
                     KEY_START_COLOR,
-                    DEFAULT_CUSTOM_COLOR,
+                    unsetColor,
                     UserHandle.USER_CURRENT,
                 ),
             endColor =
                 Settings.System.getIntForUser(
                     resolver,
                     KEY_END_COLOR,
-                    DEFAULT_CUSTOM_COLOR,
+                    unsetColor,
                     UserHandle.USER_CURRENT,
                 ),
         )
@@ -159,11 +158,7 @@ object GradientColors {
     /** One-shot convenience for consumers that do not need to cache a [GradientConfig]. */
     @JvmStatic
     fun palette(context: Context, @ColorInt baseColor: Int): GradientPalette =
-        palette(context.contentResolver, baseColor)
-
-    @JvmStatic
-    fun palette(resolver: ContentResolver, @ColorInt baseColor: Int): GradientPalette =
-        config(resolver).paletteFor(baseColor)
+        config(context).paletteFor(baseColor)
 
     /**
      * [MODE_AUTO]: split [baseColor] into a slightly lighter, hue-rotated stop and a slightly

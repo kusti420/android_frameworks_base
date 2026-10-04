@@ -90,6 +90,7 @@ import com.android.server.permission.access.util.andInv
 import com.android.server.permission.access.util.hasAnyBit
 import com.android.server.permission.access.util.hasBits
 import com.android.server.permission.access.util.withClearedCallingIdentity
+import com.android.server.pm.AppsFilterQueryAllPackages
 import com.android.server.pm.KnownPackages
 import com.android.server.pm.PackageInstallerService
 import com.android.server.pm.PackageManagerLocal
@@ -97,7 +98,6 @@ import com.android.server.pm.PackageManagerService
 import com.android.server.pm.PackageMetrics
 import com.android.server.pm.UserManagerInternal
 import com.android.server.pm.UserManagerService
-import com.android.server.pm.permission.ContactsLockdownPolicy
 import com.android.server.pm.permission.LegacyPermission
 import com.android.server.pm.permission.LegacyPermissionSettings
 import com.android.server.pm.permission.LegacyPermissionState
@@ -191,6 +191,18 @@ class PermissionService(private val service: AccessCheckingService) :
         onPermissionFlagsChangedListener = OnPermissionFlagsChangedListener()
         policy.addOnPermissionFlagsChangedListener(onPermissionFlagsChangedListener)
         devicePolicy.addOnPermissionFlagsChangedListener(onPermissionFlagsChangedListener)
+
+        // IchthysOS: AppsFilter asks us whether an app's QUERY_ALL_PACKAGES has been withheld
+        // (decision 2). The access state is already loaded here, and AppsFilter builds its cache
+        // only once the package manager is ready, well after this point. A lock-free state read,
+        // safe from AppsFilter's hot path.
+        AppsFilterQueryAllPackages.setRevokedChecker { uid ->
+            service.getState {
+                with(policy) {
+                    isQueryAllPackagesRevoked(UserHandle.getAppId(uid), UserHandle.getUserId(uid))
+                }
+            }
+        }
     }
 
     override fun getAllPermissionGroups(flags: Int): List<PermissionGroupInfo> {
@@ -522,21 +534,11 @@ class PermissionService(private val service: AccessCheckingService) :
         if (permissionName !in androidPackage.requestedPermissions) {
             return Context.PERMISSION_REQUEST_STATE_UNREQUESTABLE
         }
-        // IchthysOS: global contacts lockdown. An app that asks the platform whether it may still
-        // request contacts is told plainly that it may not, so a well-behaved caller stops trying
-        // instead of firing requestPermissions() into a dialog that will never appear.
-        if (
-            ContactsLockdownPolicy.isGrantBlocked(
-                context,
-                packageName,
-                appId,
-                permissionName,
-                userId,
-                /* isRoleControllerCaller = */ false,
-            )
-        ) {
-            return Context.PERMISSION_REQUEST_STATE_UNREQUESTABLE
-        }
+        // IchthysOS: no contacts special case here any more. The contacts lockdown used to answer
+        // UNREQUESTABLE, which no stock phone ever does for an ordinary runtime permission and so
+        // marked the device. Contacts are now requested and granted like on any phone; what an app
+        // reads afterwards (empty book, picked contacts or the real one) is decided by the contacts
+        // provider from the per-app mode, see ContactsLockdown in PermissionController.
 
         val permissionFlags =
             service.getState {
@@ -624,7 +626,7 @@ class PermissionService(private val service: AccessCheckingService) :
             val isPermissionGranted =
                 service.getState {
                     isPermissionGranted(packageState, userId, permissionName, deviceId)
-                }
+                } || isWithheldQueryAllReportedAsGranted(packageState.appId, userId, permissionName)
             return if (isPermissionGranted) {
                 PackageManager.PERMISSION_GRANTED
             } else {
@@ -637,6 +639,32 @@ class PermissionService(private val service: AccessCheckingService) :
         } else {
             PackageManager.PERMISSION_DENIED
         }
+    }
+
+    /**
+     * IchthysOS (decision 2): QUERY_ALL_PACKAGES withheld by the user still reads as granted to
+     * ordinary apps, as a normal permission always does on stock; only AppsFilter narrows what the
+     * app can see. Callers that manage permissions (PermissionController, Settings: they hold
+     * GRANT_RUNTIME_PERMISSIONS) and the system get the real state.
+     */
+    private fun isWithheldQueryAllReportedAsGranted(
+        appId: Int,
+        userId: Int,
+        permissionName: String,
+    ): Boolean {
+        if (permissionName != Manifest.permission.QUERY_ALL_PACKAGES) {
+            return false
+        }
+        if (UserHandle.getAppId(Binder.getCallingUid()) < Process.FIRST_APPLICATION_UID) {
+            return false
+        }
+        if (
+            context.checkCallingPermission(Manifest.permission.GRANT_RUNTIME_PERMISSIONS) ==
+                PackageManager.PERMISSION_GRANTED
+        ) {
+            return false
+        }
+        return service.getState { with(policy) { isQueryAllPackagesRevoked(appId, userId) } }
     }
 
     /** Internal implementation that should only be called by [checkUidPermission]. */
@@ -670,7 +698,9 @@ class PermissionService(private val service: AccessCheckingService) :
             } ?: return PackageManager.PERMISSION_DENIED
 
         val isPermissionGranted =
-            service.getState { isPermissionGranted(packageState, userId, permissionName, deviceId) }
+            service.getState {
+                isPermissionGranted(packageState, userId, permissionName, deviceId)
+            } || isWithheldQueryAllReportedAsGranted(packageState.appId, userId, permissionName)
         return if (isPermissionGranted) {
             PackageManager.PERMISSION_GRANTED
         } else {
@@ -922,31 +952,10 @@ class PermissionService(private val service: AccessCheckingService) :
             return
         }
 
-        // IchthysOS: global contacts lockdown. Refusing the grant itself rather than only the
-        // dialog is what makes the feature unavoidable — every caller that can hand out contacts
-        // ends up here, including `pm grant`, a device policy controller, PermissionController's
-        // own "Allow" button and the per-app permission screen in Settings. Evaluated before
-        // service.mutateState() because resolving the role holders is a call out to RoleService
-        // and must not be made while holding the access state lock. The role controller is told
-        // apart from the rest so a phone or messaging app being handed its role is not refused the
-        // access that comes with it.
-        if (
-            isGranted &&
-                ContactsLockdownPolicy.isGrantBlocked(
-                    context,
-                    packageName,
-                    packageState!!.appId,
-                    permissionName,
-                    userId,
-                    UserHandle.getAppId(callingUid) == permissionControllerPackageState!!.appId,
-                )
-        ) {
-            Slog.i(
-                LOG_TAG,
-                "$methodName: contacts lockdown refused $permissionName to $packageName",
-            )
-            return
-        }
+        // IchthysOS: contacts grants are no longer refused here. A refused grant is visible to the
+        // app (the dialog never says yes), which made the contacts lockdown a ROM fingerprint. The
+        // grant now goes through like on any phone and the contacts provider serves an empty book
+        // unless the user chose otherwise for this app ("empty book" mode).
 
         val canManageRolePermission =
             isRootOrSystemUid(callingUid) ||
@@ -985,18 +994,6 @@ class PermissionService(private val service: AccessCheckingService) :
         userId: Int,
         permissionStates: ArrayMap<String, Int>,
     ) {
-        // IchthysOS: global contacts lockdown, the install-session half of the check in
-        // setRuntimePermissionGranted() above — an installer must not be able to pre-grant
-        // contacts to an app the user has locked out. Resolved up front for the same reason: the
-        // role lookup must not happen inside service.mutateState().
-        val isContactsLockedDown =
-            ContactsLockdownPolicy.isPackageBlocked(
-                context,
-                packageState.packageName,
-                packageState.appId,
-                userId,
-                /* isRoleControllerCaller = */ false,
-            )
         service.mutateState {
             permissionStates.forEachIndexed { _, permissionName, permissionState ->
                 when (permissionState) {
@@ -1012,17 +1009,6 @@ class PermissionService(private val service: AccessCheckingService) :
                     }
                 }
                 if (permissionName !in packageState.androidPackage!!.requestedPermissions) {
-                    return@forEachIndexed
-                }
-                if (
-                    isContactsLockedDown &&
-                        ContactsLockdownPolicy.isContactsPermission(permissionName)
-                ) {
-                    Slog.i(
-                        LOG_TAG,
-                        "setRequestedPermissionStates: contacts lockdown refused" +
-                            " $permissionName to ${packageState.packageName}",
-                    )
                     return@forEachIndexed
                 }
                 val permission =
@@ -1098,6 +1084,19 @@ class PermissionService(private val service: AccessCheckingService) :
 
         val androidPackage = packageState.androidPackage!!
         val packageName = packageState.packageName
+        // IchthysOS: QUERY_ALL_PACKAGES (decision 2). A normal permission, but user-controlled for
+        // apps the user installed, so the app's permissions page grants and revokes it through the
+        // same call as a runtime permission. System and platform-signed apps fall through to the
+        // stock "not a changeable permission type" refusal below.
+        if (
+            permissionName == Manifest.permission.QUERY_ALL_PACKAGES &&
+                deviceId == VirtualDeviceManager.PERSISTENT_DEVICE_ID_DEFAULT &&
+                with(policy) {
+                    setQueryAllPackagesGranted(packageState.appId, userId, isGranted)
+                }
+        ) {
+            return
+        }
         when {
             permission.isDevelopment -> {}
             permission.isRole -> {
@@ -2883,6 +2882,8 @@ class PermissionService(private val service: AccessCheckingService) :
         private val addedUserIds = MutableIntSet()
         private val removedUserIds = MutableIntSet()
         private val removedAppIds = MutableIntSet()
+        // IchthysOS: UIDs whose QUERY_ALL_PACKAGES state changed, for AppsFilter (decision 2).
+        private val queryAllPackagesChangedUids = MutableIntSet()
 
         private var isKillRuntimePermissionRevokedUidsSkipped = false
         private val killRuntimePermissionRevokedUidsReasons = ArraySet<String>()
@@ -2941,6 +2942,21 @@ class PermissionService(private val service: AccessCheckingService) :
                 runtimePermissionChangedUidDevices.getOrPut(uid) { mutableSetOf() } += deviceId
             }
 
+            // IchthysOS: QUERY_ALL_PACKAGES is user-controlled (decision 2). AppsFilter reads the
+            // state directly but caches its answers, so it has to be told whenever the withheld
+            // state flips, including 0 -> INSTALL_REVOKED on install: AppsFilter may have cached
+            // the new app before its permissions were evaluated. A revoke of a real grant also
+            // stops the app, like a runtime revoke does, so it can't keep using an app list it
+            // fetched while it still had access.
+            if (permissionName == Manifest.permission.QUERY_ALL_PACKAGES) {
+                if (isQueryAllPackagesWithheld(oldFlags) != isQueryAllPackagesWithheld(newFlags)) {
+                    queryAllPackagesChangedUids += uid
+                }
+                if (wasPermissionGranted && !isPermissionGranted) {
+                    runtimePermissionRevokedUids[uid] = false
+                }
+            }
+
             if (permission.hasGids && (wasPermissionGranted != isPermissionGranted)) {
                 gidsChangedUids += uid
             }
@@ -2958,6 +2974,11 @@ class PermissionService(private val service: AccessCheckingService) :
                 }
             }
         }
+
+        /** IchthysOS: mirrors AppIdPermissionPolicy.isQueryAllPackagesRevoked() on raw flags. */
+        private fun isQueryAllPackagesWithheld(flags: Int): Boolean =
+            flags.hasBits(PermissionFlags.INSTALL_REVOKED) &&
+                !flags.hasBits(PermissionFlags.INSTALL_GRANTED)
 
         override fun onUserAdded(userId: Int) {
             addedUserIds += userId
@@ -3015,6 +3036,11 @@ class PermissionService(private val service: AccessCheckingService) :
                 bpfMapPermissionNames.forEachIndexed { _, bpfMap, _ -> bpfMap.removeAppId(appId) }
             }
             removedAppIds.clear()
+
+            queryAllPackagesChangedUids.forEachIndexed { _, uid ->
+                AppsFilterQueryAllPackages.onQueryAllPackagesChanged(uid)
+            }
+            queryAllPackagesChangedUids.clear()
 
             runtimePermissionChangedUidDevices.forEachIndexed { _, uid, persistentDeviceIds ->
                 persistentDeviceIds.forEach { deviceId ->

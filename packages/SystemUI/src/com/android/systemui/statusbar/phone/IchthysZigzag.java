@@ -78,14 +78,18 @@ public final class IchthysZigzag {
 
     private IchthysZigzag() {}
 
+    /** Unset means the option's default (statusBar.layout = "zigzag"); only "single" is off. */
     public static boolean isEnabled(Context context) {
-        return "zigzag".equals(Settings.Secure.getStringForUser(context.getContentResolver(),
+        return !"single".equals(Settings.Secure.getStringForUser(context.getContentResolver(),
                 LAYOUT_SETTING, UserHandle.USER_CURRENT));
     }
 
-    /** The theme accent (Monet accent1, driven by the ichthys theme engine). */
-    static int accent(Context context) {
-        return context.getColor(android.R.color.system_accent1_400);
+    /**
+     * The theme accent: the shared Shoal token, so the status bar, notification dot, battery and
+     * every "unset = accent" colour agree with the nav bar, brightness slider and Guard.
+     */
+    public static int accent(Context context) {
+        return context.getColor(com.android.internal.R.color.ichthys_accent);
     }
 
     static float dp(View view, float value) {

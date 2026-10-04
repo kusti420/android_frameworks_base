@@ -18,7 +18,9 @@ package com.android.internal.ichthys.config;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
@@ -28,6 +30,10 @@ import java.util.regex.Pattern;
  * <p>Values in this class are "Nix values": Boolean, Long, Double, String, List&lt;String&gt; or null.
  * A null default means "unset": the consumer's own built-in default applies, and resetting the
  * option deletes the stored value.
+ *
+ * <p>A <em>preserved</em> option ({@link #preserved()}) holds state the user or an app built up
+ * (per-app lists, "the first-boot screen was confirmed"): a declarative apply leaves it alone
+ * unless the file mentions it, where any other option the file omits goes back to its default.
  */
 public final class Option {
 
@@ -57,6 +63,12 @@ public final class Option {
     boolean boolAsText;
     // Lists are stored joined with this separator.
     String listSeparator = ",";
+    // Declarative applies keep the stored value unless the file mentions the option.
+    boolean preserved;
+    // PACKAGE_LIST: tags an entry may carry after the package name ("org.example.app:picked").
+    String[] entryTags = {};
+    // ENUM: names this option used to have -> the current name.
+    Map<String, String> enumAliases;
 
     private Option(String path, Type type, Object def, String description, Binding binding,
             String[] enumNames, String[] enumStored, double min, double max) {
@@ -143,6 +155,40 @@ public final class Option {
         return this;
     }
 
+    /**
+     * Marks state that belongs to the device rather than to a config file: a declarative apply
+     * keeps it unless the file mentions the option (see the class comment).
+     */
+    public Option preserved() {
+        preserved = true;
+        return this;
+    }
+
+    public boolean isPreserved() {
+        return preserved;
+    }
+
+    /**
+     * PACKAGE_LIST: lets an entry carry one of {@code tags} after a colon, the form some lists
+     * store a per-app mode in ("org.example.app:picked").
+     */
+    public Option entryTags(String... tags) {
+        entryTags = tags;
+        return this;
+    }
+
+    /** ENUM: keeps a name the option used to have working ({@code old} means {@code name}). */
+    public Option enumAlias(String old, String name) {
+        if (!Arrays.asList(enumNames).contains(name)) {
+            throw new IllegalArgumentException(path + ": no enum name " + name);
+        }
+        if (enumAliases == null) {
+            enumAliases = new HashMap<>();
+        }
+        enumAliases.put(old, name);
+        return this;
+    }
+
     public List<String> enumNames() {
         return enumNames == null ? new ArrayList<>() : Arrays.asList(enumNames);
     }
@@ -195,13 +241,15 @@ public final class Option {
                 if (v instanceof String) {
                     final String s = (String) v;
                     if (allowWallpaper && "wallpaper".equals(s)) return s;
-                    if (COLOR.matcher(s).matches()) return s.toLowerCase();
+                    if (COLOR.matcher(s).matches()) return canonicalColor(s);
                 }
                 throw bad(allowWallpaper ? "\"wallpaper\" or a color \"#rrggbb\""
                         : "a color \"#rrggbb\" or \"#aarrggbb\"", v);
-            case ENUM:
-                if (v instanceof String && Arrays.asList(enumNames).contains(v)) return v;
+            case ENUM: {
+                final String name = v instanceof String ? enumName((String) v) : null;
+                if (name != null) return name;
                 throw bad("one of " + String.join(", ", enumNames), v);
+            }
             case STRING_LIST:
             case PACKAGE_LIST: {
                 if (!(v instanceof List)) throw bad("a list of strings", v);
@@ -209,8 +257,10 @@ public final class Option {
                 for (Object o : (List<Object>) v) {
                     if (!(o instanceof String)) throw bad("a list of strings", v);
                     final String s = (String) o;
-                    if (type == Type.PACKAGE_LIST && !PACKAGE.matcher(s).matches()) {
-                        throw bad("a list of package names", v);
+                    if (type == Type.PACKAGE_LIST && !PACKAGE.matcher(packageOf(s)).matches()) {
+                        throw bad(entryTags.length == 0 ? "a list of package names"
+                                : "a list of package names (an entry may end in :"
+                                        + String.join(" or :", entryTags) + ")", v);
                     }
                     if (s.contains(listSeparator)) {
                         throw new IllegalArgumentException(path + ": list entries can't contain '"
@@ -223,6 +273,42 @@ public final class Option {
             default:
                 throw new IllegalStateException();
         }
+    }
+
+    /**
+     * The canonical spelling of a colour, the one {@link #fromStored} prints: lower case, and
+     * "#rrggbb" for an opaque colour ("#ffrrggbb" names the same colour).
+     */
+    private static String canonicalColor(String s) {
+        final String c = s.toLowerCase();
+        return c.length() == 9 && c.startsWith("#ff") ? "#" + c.substring(3) : c;
+    }
+
+    /**
+     * The enum name {@code s} stands for: a current name, a former one ({@link #enumAlias}), or
+     * the stored value itself, bare or as the "v&lt;value&gt;" placeholder the options generator
+     * used to emit for an entry it could not name. Null when it is none of them.
+     */
+    private String enumName(String s) {
+        final List<String> names = Arrays.asList(enumNames);
+        if (names.contains(s)) return s;
+        if (enumAliases != null && enumAliases.containsKey(s)) return enumAliases.get(s);
+        final List<String> stored = Arrays.asList(enumStored);
+        int i = stored.indexOf(s);
+        if (i < 0 && s.length() > 1 && s.charAt(0) == 'v') {
+            i = stored.indexOf(s.substring(1));
+        }
+        return i < 0 ? null : enumNames[i];
+    }
+
+    /** The package name of a list entry, without the tag it may carry. */
+    private String packageOf(String entry) {
+        for (String tag : entryTags) {
+            if (entry.endsWith(":" + tag)) {
+                return entry.substring(0, entry.length() - tag.length() - 1);
+            }
+        }
+        return entry;
     }
 
     /** The string written to a settings table for a normalized value (null deletes). */
@@ -281,7 +367,7 @@ public final class Option {
                                 ? String.format("#%06x", argb & 0xFFFFFF)
                                 : String.format("#%08x", argb);
                     }
-                    return COLOR.matcher(s).matches() ? s.toLowerCase() : null;
+                    return COLOR.matcher(s).matches() ? canonicalColor(s) : null;
                 }
                 case ENUM: {
                     final int i = Arrays.asList(enumStored).indexOf(s);
@@ -319,7 +405,9 @@ public final class Option {
             case STRING_LIST:
                 return "list of strings";
             case PACKAGE_LIST:
-                return "list of package names";
+                return entryTags.length == 0 ? "list of package names"
+                        : "list of package names (an entry may end in :"
+                                + String.join(" or :", entryTags) + ")";
             case PACKAGE:
                 return "package name";
             default:

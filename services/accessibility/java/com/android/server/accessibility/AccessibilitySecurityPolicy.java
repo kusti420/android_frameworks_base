@@ -43,13 +43,17 @@ import android.os.UserManager;
 import android.util.ArraySet;
 import android.util.Slog;
 import android.util.SparseBooleanArray;
+import android.view.WindowInfo;
+import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityWindowInfo;
 import android.view.inputmethod.InputMethodInfo;
 
 import com.android.internal.util.ArrayUtils;
 import com.android.server.LocalServices;
 import com.android.server.companion.virtual.VirtualDeviceManagerInternal;
 import com.android.server.inputmethod.InputMethodManagerInternal;
+import com.android.server.wm.WindowManagerInternal;
 
 import libcore.util.EmptyArray;
 
@@ -116,6 +120,8 @@ public class AccessibilitySecurityPolicy {
     private AccessibilityWindowManager mAccessibilityWindowManager;
     private int mCurrentUserId = UserHandle.USER_NULL;
     private boolean mSendNonA11yToolNotificationEnabled = false;
+    /** IchthysOS accessibility scoping (Guard decision 36). */
+    private final IchthysA11yScopes mIchthysScopes;
 
     /**
      * Constructor for AccessibilityManagerService.
@@ -131,6 +137,7 @@ public class AccessibilitySecurityPolicy {
         mUserManager = (UserManager) mContext.getSystemService(Context.USER_SERVICE);
         mAppOpsManager = (AppOpsManager) context.getSystemService(Context.APP_OPS_SERVICE);
         mPolicyWarningUIController = policyWarningUIController;
+        mIchthysScopes = new IchthysA11yScopes(context);
     }
 
     /**
@@ -325,7 +332,87 @@ public class AccessibilitySecurityPolicy {
     public boolean canGetAccessibilityNodeInfoLocked(int userId,
             @NonNull AbstractAccessibilityServiceConnection service, int windowId) {
         return canRetrieveWindowContentLocked(service)
-                && isRetrievalAllowingWindowLocked(userId, windowId);
+                && isRetrievalAllowingWindowLocked(userId, windowId)
+                && !isIchthysWindowHiddenLocked(userId, service, windowId);
+    }
+
+    /**
+     * IchthysOS accessibility scoping: whether {@code service} must not see the window
+     * {@code windowId} (its list entry, content, screenshots). See {@link IchthysA11yScopes}.
+     */
+    public boolean isIchthysWindowHiddenLocked(int userId,
+            @NonNull AbstractAccessibilityServiceConnection service, int windowId) {
+        if (!isIchthysScopedService(service) || mAccessibilityWindowManager == null
+                || windowId == AccessibilityWindowInfo.UNDEFINED_WINDOW_ID) {
+            return false;
+        }
+        final int resolvedWindowId =
+                mAccessibilityWindowManager.resolveParentWindowIdLocked(windowId);
+        final AccessibilityWindowManager.RemoteAccessibilityConnection connection =
+                mAccessibilityWindowManager.getConnectionLocked(userId, resolvedWindowId);
+        if (connection == null) {
+            return false;
+        }
+        return isIchthysPackageHiddenLocked(userId, service, connection.getPackageName(),
+                resolvedWindowId);
+    }
+
+    /**
+     * IchthysOS accessibility scoping: whether {@code event} must not reach {@code service} at
+     * all (not even for its node cache). Checks the reported package and the window's owner.
+     */
+    public boolean isIchthysEventHiddenLocked(int userId,
+            @NonNull AbstractAccessibilityServiceConnection service,
+            @NonNull AccessibilityEvent event) {
+        if (!isIchthysScopedService(service)) {
+            return false;
+        }
+        final int windowId = event.getWindowId();
+        final CharSequence packageName = event.getPackageName();
+        if (packageName != null && isIchthysPackageHiddenLocked(userId, service,
+                packageName.toString(), windowId)) {
+            return true;
+        }
+        return isIchthysWindowHiddenLocked(userId, service, windowId);
+    }
+
+    /** Real accessibility services only: not UiAutomation, not virtual-device proxies. */
+    private static boolean isIchthysScopedService(
+            @NonNull AbstractAccessibilityServiceConnection service) {
+        return service instanceof AccessibilityServiceConnection
+                && !(service instanceof ProxyAccessibilityServiceConnection);
+    }
+
+    private boolean isIchthysPackageHiddenLocked(int userId,
+            @NonNull AbstractAccessibilityServiceConnection service, @NonNull String packageName,
+            int windowId) {
+        boolean systemUiSensitive = false;
+        if (IchthysA11yScopes.SYSTEMUI_PACKAGE.equals(packageName)) {
+            // Lock screen and bouncer: everything SystemUI shows while locked. Credential
+            // screens over apps (BiometricPrompt's PIN/pattern/password view) are keyguard
+            // dialogs.
+            systemUiSensitive = isIchthysKeyguardLocked()
+                    || isIchthysKeyguardDialogLocked(windowId);
+        }
+        return mIchthysScopes.isHidden(service.getComponentName(),
+                IchthysA11yScopes.isThirdPartyService(service.getServiceInfo()), packageName,
+                userId, systemUiSensitive);
+    }
+
+    private boolean isIchthysKeyguardLocked() {
+        final WindowManagerInternal wm = LocalServices.getService(WindowManagerInternal.class);
+        return wm != null && wm.isKeyguardLocked();
+    }
+
+    private boolean isIchthysKeyguardDialogLocked(int windowId) {
+        if (mAccessibilityWindowManager == null
+                || windowId == AccessibilityWindowInfo.UNDEFINED_WINDOW_ID) {
+            return false;
+        }
+        final WindowInfo windowInfo = mAccessibilityWindowManager.findWindowInfoByIdLocked(
+                windowId);
+        return windowInfo != null
+                && windowInfo.type == WindowManager.LayoutParams.TYPE_KEYGUARD_DIALOG;
     }
 
     /**

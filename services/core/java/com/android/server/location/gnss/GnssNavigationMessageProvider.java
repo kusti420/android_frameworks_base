@@ -25,6 +25,7 @@ import android.location.IGnssNavigationMessageListener;
 import android.location.util.identity.CallerIdentity;
 import android.util.Log;
 
+import com.android.server.location.IchthysLocationNoFix;
 import com.android.server.location.gnss.hal.GnssNative;
 import com.android.server.location.injector.AppOpsHelper;
 import com.android.server.location.injector.Injector;
@@ -116,8 +117,10 @@ public class GnssNavigationMessageProvider extends
     @Override
     public void onReportNavigationMessage(GnssNavigationMessage event) {
         deliverToListeners(registration -> {
-            if (mAppOpsHelper.noteOpNoThrow(AppOpsManager.OP_FINE_LOCATION,
-                    registration.getIdentity())) {
+            // IchthysOS "No location": raw GNSS output would give the position away.
+            if (!IchthysLocationNoFix.isNoFix(registration.getIdentity())
+                    && mAppOpsHelper.noteOpNoThrow(AppOpsManager.OP_FINE_LOCATION,
+                            registration.getIdentity())) {
                 return listener -> listener.onGnssNavigationMessageReceived(event);
             } else {
                 return null;

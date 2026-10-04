@@ -82,15 +82,19 @@ final class IchthysConfigShellCommand extends ShellCommand {
             switch (cmd) {
                 case "apply": {
                     final String text = readFile(getNextArgRequired());
+                    printNotes(err, text);
                     final String changes = mService.diff(text, merge, user);
                     final int gen = mService.apply(text, merge, "shell", user);
                     pw.print(changes);
                     pw.println("generation " + gen);
                     return 0;
                 }
-                case "diff":
-                    pw.print(mService.diff(readFile(getNextArgRequired()), merge, user));
+                case "diff": {
+                    final String text = readFile(getNextArgRequired());
+                    printNotes(err, text);
+                    pw.print(mService.diff(text, merge, user));
                     return 0;
+                }
                 case "rollback": {
                     final String arg = getNextArg();
                     final int gen = mService.rollback(arg == null ? -1 : Integer.parseInt(arg),
@@ -124,14 +128,23 @@ final class IchthysConfigShellCommand extends ShellCommand {
                         err.println("Error: no option " + path);
                         return -1;
                     }
-                    final Object v = mService.liveState(user, true).get(path);
-                    pw.println(path + " = " + NixPrinter.value(v) + ";");
+                    // o.path: the option may have been named by a former path.
+                    final Object v = mService.liveState(user, true).get(o.path);
+                    pw.println(o.path + " = " + NixPrinter.value(v) + ";");
                     return 0;
                 }
                 case "presets":
-                    for (String p : mService.listPresets()) {
+                    for (String p : mService.listPresets(IchthysConfigService.PRESETS)) {
                         pw.println(p);
                     }
+                    return 0;
+                case "levels":
+                    for (String p : mService.listPresets(IchthysConfigService.PRIVACY_LEVELS)) {
+                        pw.println(p);
+                    }
+                    return 0;
+                case "default":
+                    pw.print(mService.defaultConfigText());
                     return 0;
                 default:
                     return handleDefaultCommands(cmd);
@@ -144,6 +157,13 @@ final class IchthysConfigShellCommand extends ShellCommand {
             return 1;
         } finally {
             Binder.restoreCallingIdentity(token);
+        }
+    }
+
+    /** Says which settings of a config are skipped (options that no longer exist). */
+    private void printNotes(PrintWriter err, String text) {
+        for (String note : mService.notes(text)) {
+            err.println("note: " + note);
         }
     }
 
@@ -182,15 +202,22 @@ final class IchthysConfigShellCommand extends ShellCommand {
         final PrintWriter pw = getOutPrintWriter();
         pw.println("IchthysOS configuration (ichthys.nix) commands:");
         pw.println("  apply [--merge] [--user U] FILE|-   apply a config as a new generation");
-        pw.println("      declarative by default: options the file omits return to defaults;");
+        pw.println("      declarative by default: options the file omits return to defaults,");
+        pw.println("      except per-app lists and app state (privacy.shields.*.allow/protect,");
+        pw.println("      background.unrestrictedApps, apps.install, apps.adopted,");
+        pw.println("      apps.confirmed), default apps and lock screen shortcuts, which stay");
+        pw.println("      unless the file sets them;");
         pw.println("      --merge only changes the options the file sets");
         pw.println("  diff [--merge] FILE|-               show what apply would change");
-        pw.println("  rollback [N]                        re-apply generation N (default: previous)");
+        pw.println("  rollback [N]                        restore generation N exactly (default:");
+        pw.println("                                      the previous one), as a new generation");
         pw.println("  list                                list generations (* = current)");
         pw.println("  show-generation N                   print generation N");
         pw.println("  export [--all]                      print the live config");
         pw.println("  options [PREFIX]                    option reference");
         pw.println("  show PATH                           print one option's live value");
-        pw.println("  presets                             list theme presets");
+        pw.println("  presets                             list theme presets (theme.preset)");
+        pw.println("  levels                              list privacy levels (privacy.level)");
+        pw.println("  default                             print the baseline every new user gets");
     }
 }

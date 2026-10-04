@@ -1127,6 +1127,12 @@ class AppIdPermissionPolicy : SchemePolicy() {
                     newFlags = newFlags or PermissionFlags.PURPOSE_REVOKED
                 }
             }
+            // IchthysOS: QUERY_ALL_PACKAGES is the user's to grant for apps they installed
+            // themselves (decision 2), see evaluateQueryAllPackagesFlags().
+            if (permissionName == Manifest.permission.QUERY_ALL_PACKAGES) {
+                newFlags =
+                    evaluateQueryAllPackagesFlags(oldFlags, newFlags, requestingPackageStates)
+            }
             if (permission.isAppOp) {
                 newFlags =
                     newFlags or (oldFlags and (PermissionFlags.ROLE or PermissionFlags.USER_SET))
@@ -1397,6 +1403,112 @@ class AppIdPermissionPolicy : SchemePolicy() {
             }
             setPermissionFlags(appId, userId, implicitPermissionName, newFlags)
         }
+    }
+
+    /**
+     * IchthysOS: QUERY_ALL_PACKAGES, the full installed-apps list, is user-controlled for apps the
+     * user installed (decision 2). It stays a normal permission, so nothing about its definition
+     * changes; only its grant state does:
+     * - System apps and apps signed with the platform key keep the stock install-time grant.
+     * - Every other app starts without it ([PermissionFlags.INSTALL_REVOKED]) and then sees exactly
+     *   what a stock Android 11+ app without the permission sees: package visibility filtering via
+     *   AppsFilter, its own `<queries>` and the force-queryable set.
+     * - The user's choice is recorded as [PermissionFlags.USER_SET] plus either
+     *   [PermissionFlags.INSTALL_GRANTED] or [PermissionFlags.INSTALL_REVOKED], and is kept across
+     *   app updates. It is changed with [setQueryAllPackagesGranted].
+     * - An app that already held the permission before this rule existed (INSTALL_GRANTED without
+     *   USER_SET) keeps it, recorded as if the user had granted it, so an OTA does not break apps
+     *   that were set up before it; the user revokes it from the app's permissions page.
+     */
+    private fun MutateStateScope.evaluateQueryAllPackagesFlags(
+        oldFlags: Int,
+        newFlags: Int,
+        requestingPackageStates: IndexedList<PackageState>,
+    ): Int {
+        if (
+            requestingPackageStates.isEmpty() ||
+                !isQueryAllPackagesUserControlled(requestingPackageStates)
+        ) {
+            return newFlags
+        }
+        val otherFlags = newFlags andInv QUERY_ALL_PACKAGES_STATE_MASK
+        return when {
+            oldFlags.hasBits(PermissionFlags.USER_SET) ->
+                otherFlags or (oldFlags and QUERY_ALL_PACKAGES_STATE_MASK)
+            oldFlags.hasBits(PermissionFlags.INSTALL_GRANTED) ->
+                otherFlags or PermissionFlags.INSTALL_GRANTED or PermissionFlags.USER_SET
+            else -> otherFlags or PermissionFlags.INSTALL_REVOKED
+        }
+    }
+
+    /**
+     * IchthysOS: whether QUERY_ALL_PACKAGES is the user's decision for an app ID, i.e. none of the
+     * packages requesting it is a system app or signed with the platform key.
+     */
+    private fun MutateStateScope.isQueryAllPackagesUserControlled(
+        requestingPackageStates: IndexedList<PackageState>
+    ): Boolean {
+        val platformSigningDetails =
+            newState.externalState.packageStates[PLATFORM_PACKAGE_NAME]
+                ?.androidPackage
+                ?.signingDetails
+        return requestingPackageStates.noneIndexed { _, it ->
+            it.isSystem ||
+                (platformSigningDetails != null &&
+                    it.androidPackage!!.signingDetails.hasAncestorOrSelf(platformSigningDetails))
+        }
+    }
+
+    /**
+     * IchthysOS: records the user's QUERY_ALL_PACKAGES decision for an app, see
+     * [evaluateQueryAllPackagesFlags]. Returns `false` without changing anything when the app does
+     * not request the permission or is not user-controlled (system or platform-signed), which the
+     * caller reports like any other unchangeable permission.
+     */
+    fun MutateStateScope.setQueryAllPackagesGranted(
+        appId: Int,
+        userId: Int,
+        isGranted: Boolean,
+    ): Boolean {
+        val permissionName = Manifest.permission.QUERY_ALL_PACKAGES
+        val packageNames = newState.externalState.appIdPackageNames[appId] ?: return false
+        val requestingPackageStates = MutableIndexedList<PackageState>()
+        packageNames.forEachIndexed { _, packageName ->
+            val packageState =
+                newState.externalState.packageStates[packageName] ?: return@forEachIndexed
+            val androidPackage = packageState.androidPackage
+            if (androidPackage != null && permissionName in androidPackage.requestedPermissions) {
+                requestingPackageStates += packageState
+            }
+        }
+        if (
+            requestingPackageStates.isEmpty() ||
+                !isQueryAllPackagesUserControlled(requestingPackageStates)
+        ) {
+            return false
+        }
+        val grantFlag =
+            if (isGranted) PermissionFlags.INSTALL_GRANTED else PermissionFlags.INSTALL_REVOKED
+        updatePermissionFlags(
+            appId,
+            userId,
+            permissionName,
+            QUERY_ALL_PACKAGES_STATE_MASK,
+            grantFlag or PermissionFlags.USER_SET,
+        )
+        return true
+    }
+
+    /**
+     * IchthysOS: whether QUERY_ALL_PACKAGES has been withheld from an app, by default or by the
+     * user. Read by AppsFilter on its hot path, so it is a single lookup in the current state.
+     * Anything else that makes the permission not granted (a missing purpose declaration, say) is
+     * left to stock behaviour, which AppsFilter has always ignored.
+     */
+    fun GetStateScope.isQueryAllPackagesRevoked(appId: Int, userId: Int): Boolean {
+        val flags = getPermissionFlags(appId, userId, Manifest.permission.QUERY_ALL_PACKAGES)
+        return flags.hasBits(PermissionFlags.INSTALL_REVOKED) &&
+            !flags.hasBits(PermissionFlags.INSTALL_GRANTED)
     }
 
     private fun isCompatibilityPermissionForPackage(
@@ -2083,6 +2195,13 @@ class AppIdPermissionPolicy : SchemePolicy() {
         private val LOG_TAG = AppIdPermissionPolicy::class.java.simpleName
 
         private const val PLATFORM_PACKAGE_NAME = "android"
+
+        // IchthysOS: the QUERY_ALL_PACKAGES grant state that evaluateQueryAllPackagesFlags() and
+        // setQueryAllPackagesGranted() own.
+        private const val QUERY_ALL_PACKAGES_STATE_MASK =
+            PermissionFlags.INSTALL_GRANTED or
+                PermissionFlags.INSTALL_REVOKED or
+                PermissionFlags.USER_SET
 
         // A set of permissions that we don't want to revoke when they are no longer implicit.
         private val NO_IMPLICIT_FLAG_PERMISSIONS =

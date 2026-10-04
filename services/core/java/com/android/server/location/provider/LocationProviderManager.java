@@ -102,6 +102,7 @@ import com.android.internal.util.Preconditions;
 import com.android.server.FgThread;
 import com.android.server.IoThread;
 import com.android.server.LocalServices;
+import com.android.server.location.IchthysLocationNoFix;
 import com.android.server.location.LocationPermissions;
 import com.android.server.location.LocationPermissions.PermissionLevel;
 import com.android.server.location.fudger.LocationFudger;
@@ -421,6 +422,14 @@ public class LocationProviderManager extends
             synchronized (mMultiplexerLock) {
                 return mProviderLocationRequest;
             }
+        }
+
+        /**
+         * IchthysOS "No location": the app keeps its permission and its request, but no fix is
+         * delivered, as if it were indoors without signal. Emergency bypass is never affected.
+         */
+        final boolean isIchthysNoFix() {
+            return !getRequest().isBypass() && IchthysLocationNoFix.isNoFix(getIdentity());
         }
 
         /** Update {@link #mIsInEmergency} by invoking Telephony APIs. **/
@@ -948,6 +957,10 @@ public class LocationProviderManager extends
                 return null;
             }
 
+            if (isIchthysNoFix()) {
+                return null;
+            }
+
             LocationResult permittedLocationResult = Objects.requireNonNull(
                     getPermittedLocationResult(fineLocationResult, getPermissionLevel()));
 
@@ -1358,6 +1371,12 @@ public class LocationProviderManager extends
                             + " expired at " + TimeUtils.formatRealtime(mExpirationRealtimeMs));
                 }
                 fineLocationResult = null;
+            }
+
+            // IchthysOS "No location": ignore fixes and keep waiting, so the request ends the way
+            // it does without signal: null once it times out.
+            if (fineLocationResult != null && isIchthysNoFix()) {
+                return null;
             }
 
             // lastly - note app ops
@@ -1829,6 +1848,11 @@ public class LocationProviderManager extends
         request = calculateLastLocationRequest(request, identity);
 
         if (!isActive(request.isBypass(), identity)) {
+            return null;
+        }
+
+        // IchthysOS "No location": no last known fix either.
+        if (!request.isBypass() && IchthysLocationNoFix.isNoFix(identity)) {
             return null;
         }
 

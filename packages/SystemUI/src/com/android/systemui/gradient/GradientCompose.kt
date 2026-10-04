@@ -26,7 +26,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import com.android.systemui.statusbar.phone.IchthysZigzag
 
 /**
  * IchthysOS: Compose front-end for [GradientColors].
@@ -44,17 +46,26 @@ import androidx.compose.ui.platform.LocalContext
  */
 @Composable
 fun rememberGradientConfig(): GradientConfig {
-    val resolver = LocalContext.current.contentResolver
+    val context = LocalContext.current
+    val resolver = context.contentResolver
+    // Unset custom stops follow the accent. Reading the configuration re-resolves the accent when
+    // the theme overlay changes, and keying on the accent restarts the reader with the new colour.
+    LocalConfiguration.current
+    val accent = IchthysZigzag.accent(context)
     val config by
-        produceState(initialValue = GradientColors.config(resolver), resolver) {
+        produceState(
+            initialValue = GradientColors.config(resolver, accent),
+            resolver,
+            accent,
+        ) {
             val observer =
                 object : ContentObserver(Handler(Looper.getMainLooper())) {
                     override fun onChange(selfChange: Boolean) {
-                        value = GradientColors.config(resolver)
+                        value = GradientColors.config(resolver, accent)
                     }
                 }
             GradientColors.registerObserver(resolver, observer)
-            value = GradientColors.config(resolver)
+            value = GradientColors.config(resolver, accent)
             awaitDispose { GradientColors.unregisterObserver(resolver, observer) }
         }
     return config

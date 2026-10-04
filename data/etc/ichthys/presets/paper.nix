@@ -7,6 +7,5 @@
     surfaces = 2;
     shape.radius = 12;
     shape.style = "rounded";
-    density = "compact";
   };
 }

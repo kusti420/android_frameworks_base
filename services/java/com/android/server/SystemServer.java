@@ -3748,7 +3748,7 @@ public final class SystemServer implements Dumpable {
         t.traceEnd();
 
         // IchthysOS: kill cached background processes shortly after the screen turns on (System
-        // setting screen_on_memory_reclaim, default on). Mutually exclusive with the unrestricted
+        // setting screen_on_memory_reclaim, default off). Mutually exclusive with the unrestricted
         // background mode above. ActivityManagerInternal is registered by this boot phase.
         t.traceBegin("StartScreenOnMemoryReclaimController");
         try {
@@ -3770,8 +3770,9 @@ public final class SystemServer implements Dumpable {
         }
         t.traceEnd();
 
-        // IchthysOS: install the bundled third-party apps as user apps once per user, with
-        // Obtainium as update owner. PackageManager is up; the work waits for USER_UNLOCKED.
+        // IchthysOS: set up the apps of the Ichthys Apps catalog when they are installed (storage
+        // access, default camera, file picker), once per user. It installs nothing itself; Ichthys
+        // Apps does. PackageManager is up; the work waits for USER_UNLOCKED.
         t.traceBegin("StartIchthysPreinstallController");
         try {
             new com.android.server.IchthysPreinstallController(mSystemContext).onBootPhaseReady();

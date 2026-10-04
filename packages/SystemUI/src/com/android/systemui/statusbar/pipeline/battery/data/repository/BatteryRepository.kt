@@ -472,7 +472,7 @@ constructor(
                     int(c.KEY_CHARGING_INDICATOR, 1),
                     int(c.KEY_POWER_SAVE_INDICATOR, 1),
                     int(c.KEY_FILL_MODE, c.FILL_MODE_TINT),
-                    int(c.KEY_FILL_COLOR, c.DEFAULT_FILL_COLOR),
+                    int(c.KEY_FILL_COLOR, c.FILL_COLOR_UNSET),
                     int(c.KEY_STATE_COLORS, c.STATE_COLORS_THEME),
                     int(c.KEY_CHARGING_COLOR, c.DEFAULT_CHARGING_COLOR),
                     int(c.KEY_POWER_SAVE_COLOR, c.DEFAULT_POWER_SAVE_COLOR),

@@ -33,6 +33,10 @@
     <!-- IchthysOS: read the OmniJaws weather provider for the status-bar + lockscreen weather
          (OmniJawsClient). READ_WEATHER is a normal permission, auto-granted once requested. -->
     <uses-permission android:name="org.omnirom.omnijaws.READ_WEATHER" />
+    <!-- IchthysOS: the native Guard Lockdown / Pause QS tiles call IchthysGuardService
+         ("ichthys_guard") and exchange the lockdown broadcasts with Settings' Guard. Signature
+         permission (platform certificate), so no privapp allowlist entry is needed. -->
+    <uses-permission android:name="org.ichthys.permission.MANAGE_ICHTHYS_GUARD" />
 
     <!-- Used to read wallpaper -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />

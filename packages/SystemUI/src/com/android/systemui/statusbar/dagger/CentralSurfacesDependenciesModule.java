@@ -61,6 +61,7 @@ import com.android.systemui.statusbar.phone.StatusBarRemoteInputCallback;
 import com.android.systemui.statusbar.phone.ui.StatusBarIconController;
 import com.android.systemui.statusbar.phone.ui.StatusBarIconControllerImpl;
 import com.android.systemui.statusbar.phone.ui.StatusBarIconList;
+import com.android.systemui.statusbar.pipeline.overlay.ui.OverlayIndicatorBindableIcon;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.wm.shell.shared.ShellTransitions;
 
@@ -71,6 +72,7 @@ import dagger.Provides;
 import dagger.multibindings.ClassKey;
 import dagger.multibindings.IntoMap;
 
+import java.util.ArrayList;
 import java.util.concurrent.Executor;
 
 import javax.inject.Provider;
@@ -179,9 +181,23 @@ public interface CentralSurfacesDependenciesModule {
     @Provides
     @SysUISingleton
     static StatusBarIconList provideStatusBarIconList(Context context) {
-        return new StatusBarIconList(
-                context.getResources().getStringArray(
-                        com.android.internal.R.array.config_statusBarIcons));
+        final String[] slots = context.getResources().getStringArray(
+                com.android.internal.R.array.config_statusBarIcons);
+        // IchthysOS: the overlay-active indicator sits with the privacy icons, just before the
+        // camera slot, instead of being auto-inserted at the far start where a crowded status
+        // bar drops it first.
+        final String camera = context.getString(com.android.internal.R.string.status_bar_camera);
+        final ArrayList<String> ordered = new ArrayList<>(slots.length + 1);
+        for (String slot : slots) {
+            if (slot.equals(camera)) {
+                ordered.add(OverlayIndicatorBindableIcon.SLOT);
+            }
+            ordered.add(slot);
+        }
+        if (!ordered.contains(OverlayIndicatorBindableIcon.SLOT)) {
+            ordered.add(0, OverlayIndicatorBindableIcon.SLOT);
+        }
+        return new StatusBarIconList(ordered.toArray(new String[0]));
     }
 
     /**

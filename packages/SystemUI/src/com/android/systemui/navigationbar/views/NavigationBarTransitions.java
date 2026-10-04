@@ -122,7 +122,7 @@ public final class NavigationBarTransitions extends BarTransitions implements
         // black. The tint filter can't be removed once set, so "untint" with DST (keeps the
         // bar's own colour).
         if (mIchthysInk) {
-            mBarBackground.setTint(IchthysNavStyle.INK);
+            mBarBackground.setTint(IchthysNavStyle.tokens(mView.getContext()).ink);
             mBarBackground.setTintMode(PorterDuff.Mode.SRC_IN);
             mIchthysTinted = true;
         } else if (mIchthysTinted) {

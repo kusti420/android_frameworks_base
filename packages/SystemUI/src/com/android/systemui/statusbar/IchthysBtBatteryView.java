@@ -121,7 +121,8 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
     }
 
     private void readSettings() {
-        mZigzag = "zigzag".equals(Settings.Secure.getStringForUser(
+        // Unset means the default, zigzag (see IchthysZigzag.isEnabled).
+        mZigzag = !"single".equals(Settings.Secure.getStringForUser(
                 getContext().getContentResolver(), LAYOUT_SETTING, UserHandle.USER_CURRENT));
         final String family = Settings.Secure.getStringForUser(getContext().getContentResolver(),
                 FONT_MONO_SETTING, UserHandle.USER_CURRENT);

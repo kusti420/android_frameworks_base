@@ -98,6 +98,7 @@ import com.android.server.LocalServices;
 import com.android.server.ServiceThread;
 import com.android.server.SystemService;
 import com.android.server.SystemService.TargetUser;
+import com.android.server.pm.AppsFilterQueryAllPackages;
 import com.android.server.utils.LazyJniRegistrar;
 import com.android.server.wm.ActivityTaskManagerInternal;
 import com.android.server.wm.CompatScaleProvider;
@@ -1865,6 +1866,11 @@ public final class GameManagerService extends IGameManagerService.Stub {
     @RequiresPermission(Manifest.permission.QUERY_ALL_PACKAGES)
     public String getInterventionList(String packageName, int userId) {
         checkPermission(Manifest.permission.QUERY_ALL_PACKAGES);
+        // IchthysOS: a withheld QUERY_ALL_PACKAGES reads as granted to the app itself.
+        if (AppsFilterQueryAllPackages.isRevoked(Binder.getCallingUid())) {
+            throw new SecurityException("Access denied to process: " + Binder.getCallingPid()
+                    + ", must have permission " + Manifest.permission.QUERY_ALL_PACKAGES);
+        }
         final GamePackageConfiguration packageConfig = getConfig(packageName, userId);
         final StringBuilder listStrSb = new StringBuilder();
         if (packageConfig == null) {

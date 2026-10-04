@@ -25,6 +25,7 @@ import com.android.systemui.plugins.DarkIconDispatcher
 import com.android.systemui.res.R
 import com.android.systemui.shade.domain.interactor.ShadeInteractor
 import com.android.systemui.shared.settings.data.repository.SystemSettingsRepository
+import com.android.systemui.statusbar.ichthys.indicator.data.IchthysIndicatorSettingsRepository
 import com.android.systemui.statusbar.notification.icon.domain.interactor.StatusBarNotificationIconsInteractor
 import com.android.systemui.statusbar.phone.domain.interactor.DarkIconInteractor
 import com.android.systemui.util.kotlin.FlowDumperImpl
@@ -63,6 +64,25 @@ constructor(
             .map { if (it <= 0) defaultMaxIcons else it.coerceAtMost(12) }
             .distinctUntilChanged()
 
+    /**
+     * IchthysOS: statusBar.notificationDot.replaceIcons. The notification dot stands in for the
+     * status bar notification icons, so none are shown. Only while the dot itself is enabled.
+     */
+    private val dotReplacesIcons: Flow<Boolean> =
+        combine(
+                systemSettings.boolSetting(
+                    IchthysIndicatorSettingsRepository.KEY_NOTIF_DOT_ENABLED,
+                    true,
+                ),
+                systemSettings.boolSetting(
+                    IchthysIndicatorSettingsRepository.KEY_NOTIF_DOT_REPLACE_ICONS,
+                    false,
+                ),
+            ) { dotEnabled, replaceIcons ->
+                dotEnabled && replaceIcons
+            }
+            .distinctUntilChanged()
+
     /** Are changes to the icon container animated? */
     val animationsEnabled: Flow<Boolean> =
         combine(shadeInteractor.isShadeTouchable, keyguardInteractor.isKeyguardShowing) {
@@ -86,9 +106,14 @@ constructor(
 
     /** [NotificationIconsViewData] indicating which icons to display in the view. */
     val icons: Flow<NotificationIconsViewData> =
-        combine(iconsInteractor.statusBarNotifs, maxIcons) { entries, limit ->
+        combine(iconsInteractor.statusBarNotifs, maxIcons, dotReplacesIcons) {
+                entries,
+                limit,
+                replacedByDot ->
                 NotificationIconsViewData(
-                    visibleIcons = entries.mapNotNull { it.toIconInfo(it.statusBarIcon) },
+                    visibleIcons =
+                        if (replacedByDot) emptyList()
+                        else entries.mapNotNull { it.toIconInfo(it.statusBarIcon) },
                     iconLimit = limit,
                 )
             }

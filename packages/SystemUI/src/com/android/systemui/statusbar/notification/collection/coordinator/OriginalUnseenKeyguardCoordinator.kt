@@ -86,11 +86,57 @@ constructor(
     private val unseenEntryRemoved = MutableSharedFlow<NotificationEntry>(extraBufferCapacity = 1)
     private var unseenFilterEnabled = false
 
+    /**
+     * Notifications that were on the awake lock screen for [SEEN_TIMEOUT]; they leave
+     * [unseenNotifications] on unlock. IchthysOS: a field (was local to [trackSeenNotifications])
+     * so that it can be published with the unseen set.
+     */
+    private val notificationsSeenWhileLocked = mutableSetOf<NotificationEntry>()
+
     override fun attach(pipeline: NotifPipeline) {
         pipeline.addFinalizeFilter(unseenNotifFilter)
         pipeline.addCollectionListener(collectionListener)
         scope.launch { trackUnseenFilterSettingChanges() }
+        // IchthysOS: seen/unseen is always tracked (the notification dot reads it); the setting
+        // only decides whether seen notifications are filtered out of the lock screen.
+        scope.launch { trackSeenNotifications() }
+        scope.launch { clearUnseenNotificationsWhenShadeIsExpandedWithoutKeyguard() }
         dumpManager.registerDumpable(this)
+    }
+
+    /**
+     * IchthysOS: publishes the unseen state for consumers outside the pipeline (the notification
+     * dot). Call after every change to [unseenNotifications] or [notificationsSeenWhileLocked].
+     */
+    private fun publishUnseenNotifications() {
+        val unseen = mutableSetOf<String>()
+        val seenOnLockscreen = mutableSetOf<String>()
+        for (entry in unseenNotifications) {
+            if (shouldIgnoreUnseenCheck(entry)) continue
+            unseen.add(entry.key)
+            if (entry in notificationsSeenWhileLocked) seenOnLockscreen.add(entry.key)
+        }
+        seenNotificationsInteractor.setUnseenNotificationKeys(unseen, seenOnLockscreen)
+    }
+
+    /**
+     * IchthysOS: with the scene container's single shade an open shade is its own scene, not
+     * [Scenes.Gone], so [trackSeenNotifications] treats it as "keyguard present" and the stock
+     * [clearUnseenNotificationsWhenShadeIsExpanded] is cancelled as the shade opens. Clear here
+     * whenever the shade expands while the keyguard is not showing, in every shade mode.
+     */
+    private suspend fun clearUnseenNotificationsWhenShadeIsExpandedWithoutKeyguard() {
+        statusBarStateController.expansionChanges.collectLatest { isExpanded ->
+            // Same reason as the stock tracker: let keyguard events propagate first.
+            yield()
+            if (isExpanded && !keyguardRepository.isKeyguardShowing()) {
+                if (unseenNotifications.isNotEmpty()) {
+                    logger.logShadeExpanded()
+                    unseenNotifications.clear()
+                }
+                publishUnseenNotifications()
+            }
+        }
     }
 
     private suspend fun trackSeenNotifications() {
@@ -110,8 +156,7 @@ constructor(
                 .onEach { trackingUnseen -> logger.logTrackingUnseen(trackingUnseen) }
 
         // Separately track seen notifications while the device is locked, applying once the device
-        // is unlocked.
-        val notificationsSeenWhileLocked = mutableSetOf<NotificationEntry>()
+        // is unlocked. (IchthysOS: [notificationsSeenWhileLocked] is a field now.)
 
         // Use [collectLatest] to cancel any running jobs when [trackingUnseen] changes.
         isKeyguardPresentFlow.collectLatest { isKeyguardPresent: Boolean ->
@@ -129,7 +174,11 @@ constructor(
                     )
                     notificationsSeenWhileLocked.clear()
                 }
-                unseenNotifFilter.invalidateList("keyguard no longer showing")
+                publishUnseenNotifications()
+                // IchthysOS: tracking runs with the filter off too; nothing to refilter then.
+                if (unseenFilterEnabled) {
+                    unseenNotifFilter.invalidateList("keyguard no longer showing")
+                }
                 // Keyguard is gone, notifications can be immediately marked as seen when they
                 // become visible.
                 trackSeenNotificationsWhileUnlocked()
@@ -149,6 +198,7 @@ constructor(
             unseenEntryRemoved.collect { entry ->
                 if (notificationsSeenWhileLocked.remove(entry)) {
                     logger.logRemoveSeenOnLockscreen(entry)
+                    publishUnseenNotifications()
                 }
             }
         }
@@ -179,11 +229,13 @@ constructor(
         suspend fun trackSeenDurationThreshold(entry: NotificationEntry) {
             if (notificationsSeenWhileLocked.remove(entry)) {
                 logger.logResetSeenOnLockscreen(entry)
+                publishUnseenNotifications()
             }
             delay(SEEN_TIMEOUT)
             notificationsSeenWhileLocked.add(entry)
             trackingJobsByEntry.remove(entry)
             logger.logSeenOnLockscreen(entry)
+            publishUnseenNotifications()
         }
 
         /** Stop any unseen tracking when a notification is removed. */
@@ -235,6 +287,7 @@ constructor(
             if (isExpanded) {
                 logger.logShadeExpanded()
                 unseenNotifications.clear()
+                publishUnseenNotifications()
             }
         }
     }
@@ -243,10 +296,12 @@ constructor(
         headsUpManager.allEntries
             .filter { it.isRowPinned }
             .forEach { unseenNotifications.remove(it) }
+        publishUnseenNotifications()
         headsUpManager.headsUpEvents.collect { (entry, isHun) ->
             if (isHun) {
                 logger.logUnseenHun(entry.key)
                 unseenNotifications.remove(entry)
+                publishUnseenNotifications()
             }
         }
     }
@@ -262,10 +317,8 @@ constructor(
                 unseenFilterEnabled = setting
                 unseenNotifFilter.invalidateList("unseen setting changed")
             }
-            // if the setting is enabled, then start tracking and filtering unseen notifications
-            if (setting) {
-                trackSeenNotifications()
-            }
+            // IchthysOS: seen notifications are tracked from attach() on, whatever the setting
+            // is; it only switches the filter.
         }
     }
 
@@ -278,6 +331,7 @@ constructor(
                     logger.logUnseenAdded(entry.key, entry.sbn.postTime)
                     unseenNotifications.add(entry)
                     unseenEntryAdded.tryEmit(entry)
+                    publishUnseenNotifications()
                 }
             }
 
@@ -293,6 +347,7 @@ constructor(
                     }
                     unseenNotifications.add(entry)
                     unseenEntryAdded.tryEmit(entry)
+                    publishUnseenNotifications()
                 }
             }
 
@@ -300,6 +355,9 @@ constructor(
                 if (unseenNotifications.remove(entry)) {
                     logger.logUnseenRemoved(entry.key)
                     unseenEntryRemoved.tryEmit(entry)
+                    // The lock screen tracker only drops it while the keyguard is present.
+                    notificationsSeenWhileLocked.remove(entry)
+                    publishUnseenNotifications()
                 }
             }
         }

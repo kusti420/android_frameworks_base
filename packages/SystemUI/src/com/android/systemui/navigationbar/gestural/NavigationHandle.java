@@ -42,7 +42,6 @@ import com.android.settingslib.Utils;
 import com.android.systemui.navigationbar.views.buttons.ButtonInterface;
 import com.android.systemui.navigationbar.views.buttons.IchthysNavStyle;
 import com.android.systemui.res.R;
-import com.android.systemui.shade.ui.ShoalShade;
 
 public class NavigationHandle extends View implements ButtonInterface {
 
@@ -69,6 +68,8 @@ public class NavigationHandle extends View implements ButtonInterface {
     // IchthysOS navBar.style = "gestures": a track with an accent segment in the centre.
     private boolean mIchthysGestures;
     private int mIchthysAccent;
+    private int mIchthysTrackDark;
+    private int mIchthysTrackLight;
     private float mIchthysDarkIntensity;
     private final Paint mIchthysPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final ContentObserver mStyleObserver =
@@ -155,7 +156,20 @@ public class NavigationHandle extends View implements ButtonInterface {
                 KEY_HANDLE_OPACITY, 100, UserHandle.USER_CURRENT))) / 100f;
         mIchthysGestures = IchthysNavStyle.read(getContext()) == IchthysNavStyle.GESTURES;
         if (mIchthysGestures) {
-            mIchthysAccent = ShoalShade.accent(getContext());
+            final IchthysNavStyle.Tokens tokens = IchthysNavStyle.tokens(getContext());
+            mIchthysAccent = tokens.accent;
+            mIchthysTrackDark = tokens.trackDark;
+            mIchthysTrackLight = tokens.trackLight;
+        }
+    }
+
+    @Override
+    protected void onConfigurationChanged(android.content.res.Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        // IchthysOS: the Shoal tokens arrive as a resource overlay (palette / accent / night).
+        if (mIchthysGestures) {
+            readStyle();
+            invalidate();
         }
     }
 
@@ -203,8 +217,8 @@ public class NavigationHandle extends View implements ButtonInterface {
             final float ichY = navHeight - mBottom - ichHeight + (additionalHeight / 2);
             final float ichRadius = ichHeight / 2;
             final int alpha = Math.round(255 * mStyleOpacity);
-            mIchthysPaint.setColor(IchthysNavStyle.mix(IchthysNavStyle.D_TRACK,
-                    IchthysNavStyle.L_TRACK, mIchthysDarkIntensity));
+            mIchthysPaint.setColor(IchthysNavStyle.mix(mIchthysTrackDark,
+                    mIchthysTrackLight, mIchthysDarkIntensity));
             mIchthysPaint.setAlpha(alpha);
             canvas.drawRoundRect(x, ichY, width, ichY + ichHeight, ichRadius, ichRadius,
                     mIchthysPaint);

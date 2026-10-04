@@ -31,6 +31,7 @@ import android.util.ArraySet;
 import android.util.SparseArray;
 
 import com.android.internal.util.ArrayUtils;
+import com.android.server.pm.AppsFilterQueryAllPackages;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -108,7 +109,8 @@ public class SystemConfigService extends SystemService {
 
         @Override
         public List<ComponentName> getDefaultVrComponents() {
-            getContext().enforceCallingOrSelfPermission(Manifest.permission.QUERY_ALL_PACKAGES,
+            // IchthysOS: a withheld QUERY_ALL_PACKAGES reads as granted to the app itself.
+            AppsFilterQueryAllPackages.enforceCallingOrSelfPermission(getContext(),
                     "Caller must hold " + Manifest.permission.QUERY_ALL_PACKAGES);
             return new ArrayList<>(SystemConfig.getInstance().getDefaultVrComponents());
         }

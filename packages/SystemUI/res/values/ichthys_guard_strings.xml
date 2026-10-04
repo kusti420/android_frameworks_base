@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    IchthysOS: strings for the native Ichthys Guard QS tiles (Lockdown, Pause) and the
+    overlay-active status bar indicator. Kept in their own file so the feature can be lifted out
+    (or rebased over an AOSP strings.xml) without a merge conflict.
+-->
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+    <!-- Guard Lockdown tile label: network off for every app outside the lockdown allowlist. [CHAR LIMIT=20] -->
+    <string name="ichthys_guard_tile_lockdown">Lockdown</string>
+    <!-- Guard Lockdown tile secondary label while lockdown is on. [CHAR LIMIT=20] -->
+    <string name="ichthys_guard_tile_lockdown_on">Apps offline</string>
+    <!-- Guard tile secondary label while the feature is off. [CHAR LIMIT=20] -->
+    <string name="ichthys_guard_tile_off">Off</string>
+    <!-- Guard tile secondary label while Guard can't be reached (e.g. before the first unlock). [CHAR LIMIT=20] -->
+    <string name="ichthys_guard_tile_unavailable">Unavailable</string>
+    <!-- Guard Pause tile label while Guard enforces its rules. [CHAR LIMIT=20] -->
+    <string name="ichthys_guard_tile_pause">Pause Guard</string>
+    <!-- Guard Pause tile label during a pause. [CHAR LIMIT=20] -->
+    <string name="ichthys_guard_tile_paused">Guard paused</string>
+    <!-- Guard Pause tile secondary label: how long one tap pauses for. [CHAR LIMIT=20] -->
+    <string name="ichthys_guard_tile_pause_duration"><xliff:g id="minutes" example="5">%1$d</xliff:g> min</string>
+    <!-- Guard Pause tile secondary label during a pause: time left, minutes:seconds. [CHAR LIMIT=20] -->
+    <string name="ichthys_guard_tile_paused_left"><xliff:g id="time" example="4:32">%1$s</xliff:g> left</string>
+
+    <!-- Content description of the status bar icon shown while an app draws over other apps. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_overlay_indicator_one"><xliff:g id="app" example="Messenger">%1$s</xliff:g> is displaying over other apps. Tap to change.</string>
+    <!-- Content description of the overlay icon when several apps draw over other apps. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_overlay_indicator_many"><xliff:g id="count" example="2">%1$d</xliff:g> apps are displaying over other apps. Tap to change.</string>
+</resources>

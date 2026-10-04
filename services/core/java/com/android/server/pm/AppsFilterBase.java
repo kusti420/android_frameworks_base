@@ -24,6 +24,7 @@ import static com.android.server.pm.AppsFilterUtils.requestsQueryAllPackages;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.annotation.UserIdInt;
 import android.content.pm.SigningDetails;
 import android.os.Binder;
 import android.os.Handler;
@@ -491,15 +492,19 @@ public abstract class AppsFilterBase implements AppsFilterSnapshot {
                 if (DEBUG_TRACING) {
                     Trace.traceBegin(TRACE_TAG_PACKAGE_MANAGER, "requestsQueryAllPackages");
                 }
+                // IchthysOS: requesting QUERY_ALL_PACKAGES is not enough on its own; the user
+                // may have withheld it (decision 2), see AppsFilterQueryAllPackages.
                 if (callingPkgSetting != null) {
                     if (callingPkgSetting.getPkg() != null
-                            && requestsQueryAllPackages(callingPkgSetting.getPkg())) {
+                            && requestsQueryAllPackages(callingPkgSetting.getPkg())
+                            && !AppsFilterQueryAllPackages.isRevoked(callingUid)) {
                         return false;
                     }
                 } else {
                     for (int i = callingSharedPkgSettings.size() - 1; i >= 0; i--) {
                         AndroidPackage pkg = callingSharedPkgSettings.valueAt(i).getPkg();
-                        if (pkg != null && requestsQueryAllPackages(pkg)) {
+                        if (pkg != null && requestsQueryAllPackages(pkg)
+                                && !AppsFilterQueryAllPackages.isRevoked(callingUid)) {
                             return false;
                         }
                     }
@@ -695,6 +700,17 @@ public abstract class AppsFilterBase implements AppsFilterSnapshot {
      */
     @Override
     public boolean canQueryPackage(@NonNull AndroidPackage querying, String potentialTarget) {
+        // No caller here: AndroidPackage.getUid() is the uid in the system user.
+        return canQueryPackage(querying, potentialTarget,
+                UserHandle.getUserId(querying.getUid()));
+    }
+
+    /**
+     * See {@link AppsFilterSnapshot#canQueryPackage(AndroidPackage, String, int)}
+     */
+    @Override
+    public boolean canQueryPackage(@NonNull AndroidPackage querying, String potentialTarget,
+            @UserIdInt int userId) {
         int appId = UserHandle.getAppId(querying.getUid());
         if (appId < Process.FIRST_APPLICATION_UID) {
             return true;
@@ -705,7 +721,9 @@ public abstract class AppsFilterBase implements AppsFilterSnapshot {
             return true;
         }
 
-        if (requestsQueryAllPackages(querying)) {
+        // IchthysOS: unless the user withheld it (decision 2), which is per user.
+        if (requestsQueryAllPackages(querying)
+                && !AppsFilterQueryAllPackages.isRevoked(UserHandle.getUid(userId, appId))) {
             return true;
         }
 

@@ -8,7 +8,6 @@
     surfaces = 3;
     shape.radius = 22;
     shape.style = "pill";
-    density = "standard";
     surface = "tonal";
     font.display = "outfit";
     font.mono = "ibm-plex-sans";

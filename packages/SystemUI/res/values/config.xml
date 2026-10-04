@@ -107,9 +107,11 @@
     <!-- IchthysOS: "nfc" added. NfcTile exists and is bound into the tile map
          (ConnectivityModule#bindNfcTile), but a tile missing from this list is never offered in the
          QS edit tray, so the device has NFC hardware and a working stack with no way to toggle it
-         from Quick Settings. -->
+         from Quick Settings.
+         IchthysOS: "guard_lockdown" and "guard_pause" are the native Ichthys Guard tiles
+         (qs/tiles/impl/guard); they only show up when the ichthys_guard service exists. -->
     <string name="quick_settings_tiles_stock" translatable="false">
-        internet,wifi,bt,nfc,flashlight,dnd,modes_dnd,alarm,airplane,controls,wallet,rotation,battery,cast,screenrecord,mictoggle,cameratoggle,location,hotspot,inversion,saver,dark,work,night,reverse,reduce_brightness,qr_code_scanner,onehanded,color_correction,font_scaling,record_issue,hearing_devices,notes,desktopeffects,cell
+        internet,wifi,bt,nfc,flashlight,dnd,modes_dnd,alarm,airplane,controls,wallet,rotation,battery,cast,screenrecord,mictoggle,cameratoggle,location,hotspot,inversion,saver,dark,work,night,reverse,reduce_brightness,qr_code_scanner,onehanded,color_correction,font_scaling,record_issue,hearing_devices,notes,desktopeffects,cell,guard_lockdown,guard_pause
     </string>
 
     <!-- The tiles to display in QuickSettings -->

@@ -300,8 +300,8 @@ public class UdfpsAnimation extends View {
         mColorMode = IchthysUdfpsSettings.get(mContext, IchthysUdfpsSettings.ANIM_COLOR_MODE,
                 IchthysUdfpsSettings.ANIM_COLOR_MODE_DEFAULT);
         mColor = IchthysUdfpsSettings.resolveColor(mContext, mColorMode,
-                IchthysUdfpsSettings.get(mContext, IchthysUdfpsSettings.ANIM_COLOR,
-                        IchthysUdfpsSettings.ANIM_COLOR_DEFAULT));
+                IchthysUdfpsSettings.getColorOrAccent(mContext,
+                        IchthysUdfpsSettings.ANIM_COLOR));
         final int speed = clamp(IchthysUdfpsSettings.get(mContext,
                 IchthysUdfpsSettings.ANIM_SPEED, IchthysUdfpsSettings.ANIM_SPEED_DEFAULT), 25, 300);
         mPeriod = BASE_PERIOD_MS * 100 / speed;
@@ -316,8 +316,8 @@ public class UdfpsAnimation extends View {
         mPressedColor = IchthysUdfpsSettings.resolveColor(mContext,
                 IchthysUdfpsSettings.get(mContext, IchthysUdfpsSettings.PRESSED_COLOR_MODE,
                         IchthysUdfpsSettings.PRESSED_COLOR_MODE_DEFAULT),
-                IchthysUdfpsSettings.get(mContext, IchthysUdfpsSettings.PRESSED_COLOR,
-                        IchthysUdfpsSettings.PRESSED_COLOR_DEFAULT));
+                IchthysUdfpsSettings.getColorOrAccent(mContext,
+                        IchthysUdfpsSettings.PRESSED_COLOR));
         mPressedSize = clamp(IchthysUdfpsSettings.get(mContext,
                 IchthysUdfpsSettings.PRESSED_SIZE, IchthysUdfpsSettings.PRESSED_SIZE_DEFAULT),
                 100, 200) / 100f;

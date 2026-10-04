@@ -514,8 +514,10 @@ private fun AutoScrollGrid(
     padding: PaddingValues,
 ) {
     val density = LocalDensity.current
+    // IchthysOS: keyed on the padding as well. The top bar collapses while the list scrolls, so
+    // the top padding changes during a drag; remembering the first value left the zones stale.
     val (top, bottom) =
-        remember(density) {
+        remember(density, padding) {
             with(density) {
                 padding.calculateTopPadding().roundToPx() to
                     padding.calculateBottomPadding().roundToPx()
@@ -529,9 +531,16 @@ private fun AutoScrollGrid(
                     // Return the scroll target needed based on the position of the drag movement,
                     // or null if we don't need to scroll
                     val y = position.y.roundToInt()
+                    // IchthysOS: the drag position is in root coordinates, and the scrollable
+                    // starts below the top bar (EditModeScrollableColumn pads by `top` before it
+                    // scrolls), so its bottom edge is at top + viewportSize. Upstream left `top`
+                    // out, which made the bottom zone as tall as the top bar plus the intended
+                    // strip: dragging a tile into the lower part of the screen started a scroll
+                    // to the very end that only stopped when the finger went back up.
+                    val viewportBottom = top + scrollState.viewportSize
                     when {
                         y < AUTO_SCROLL_DISTANCE + top -> 0
-                        y > scrollState.viewportSize - bottom - AUTO_SCROLL_DISTANCE ->
+                        y > viewportBottom - bottom - AUTO_SCROLL_DISTANCE ->
                             scrollState.maxValue
                         else -> null
                     }

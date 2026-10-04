@@ -4960,6 +4960,16 @@ public class PackageManagerService implements PackageSender, TestUtilityService 
                             packageName, callingUid, userId);
             final PackageUserState packageUserState = packageState == null
                     ? null : packageState.getUserStateOrDefault(userId);
+            // IchthysOS: persistent system apps (SystemUI, phone, ...) are restarted by
+            // ActivityManager whenever they die, so "stopped" is never true for them. Refusing
+            // the flag here keeps a force-stop from leaving them marked stopped (which blocks
+            // their jobs, among other things) while their process is running.
+            if (stopped && packageState != null && packageState.isSystem()
+                    && packageState.isPersistent()) {
+                Slog.w(TAG, "Not marking persistent system package " + packageName
+                        + " stopped for user " + userId);
+                return;
+            }
             if (packageState != null && packageUserState.isStopped() != stopped) {
                 boolean wasNotLaunched = packageUserState.isNotLaunched();
                 wasStopped = packageUserState.isStopped();

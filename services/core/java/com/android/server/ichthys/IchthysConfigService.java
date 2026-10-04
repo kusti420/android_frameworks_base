@@ -17,18 +17,22 @@
 package com.android.server.ichthys;
 
 import android.app.ActivityManager;
+import android.app.AppGlobals;
 import android.content.Context;
 import android.os.Binder;
 import android.os.Environment;
+import android.os.RemoteException;
 import android.os.ResultReceiver;
 import android.os.ShellCallback;
 import android.os.UserHandle;
+import android.provider.Settings;
 import android.util.AtomicFile;
 import android.util.Slog;
 
 import com.android.internal.ichthys.IIchthysConfig;
 import com.android.internal.ichthys.config.Binding;
 import com.android.internal.ichthys.config.ConfigDiff;
+import com.android.internal.ichthys.config.ConfigPlanner;
 import com.android.internal.ichthys.config.NixParseException;
 import com.android.internal.ichthys.config.NixParser;
 import com.android.internal.ichthys.config.Option;
@@ -52,7 +56,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Properties;
 
 /**
@@ -61,17 +64,25 @@ import java.util.Properties;
  * <ul>
  *   <li><b>apply</b>: evaluate a config against the {@link OptionSchema} (unknown options and
  *       wrong types are errors, with line:col), compute the change set, write it atomically (a
- *       failure part-way restores every option already written), then record a new
+ *       failure part-way restores every option already written), then record a
  *       <i>generation</i>. Declarative by default: options the file doesn't mention go back to
- *       their defaults. With {@code merge}, only the options it mentions change.</li>
- *   <li><b>generations</b>: /data/system/ichthys/&lt;user&gt;/gen-N.nix is the live state right after
- *       apply N (non-default options). Generation 0 is the state before the first apply. The
- *       last {@value #KEEP_GENERATIONS} are kept.</li>
- *   <li><b>rollback N</b>: apply gen-N declaratively as a new generation (like nixos-rebuild
- *       --rollback, nothing is ever rewritten in place).</li>
- *   <li><b>theme.preset</b>: a preset's theme.* values fill in wherever the file sets none.</li>
+ *       their defaults, except the per-app lists and app state, which are kept unless
+ *       mentioned. With {@code merge}, only the options it mentions change. {@link
+ *       ConfigPlanner} has the exact rules.</li>
+ *   <li><b>baseline</b>: /product/etc/ichthys/default.nix is applied as generation 1 of every
+ *       new user, so a fresh install has the IchthysOS look and privacy defaults stored
+ *       explicitly, whatever a consumer would make of an unset key.</li>
+ *   <li><b>generations</b>: /data/system/ichthys/&lt;user&gt;/gen-N.nix is a snapshot of every
+ *       stored option right after apply N. Generation 0 is the state before the first apply. The
+ *       last {@value #KEEP_GENERATIONS} are kept. Applies from the same interactive source (a
+ *       run of taps in Theme Studio) within {@link #COALESCE_WINDOW_MS} of each other share one
+ *       generation, so trying things out doesn't push the history out.</li>
+ *   <li><b>rollback N</b>: restore the snapshot gen-N exactly, as a new generation (like
+ *       nixos-rebuild --rollback, nothing is ever rewritten in place).</li>
+ *   <li><b>presets</b>: theme.preset fills in theme.*, privacy.level fills in privacy.*,
+ *       wherever the file sets nothing.</li>
  * </ul>
- * Exposed as the "ichthys_config" binder service (Settings' Theme Studio) and
+ * Exposed as the "ichthys_config" binder service (Settings' Theme Studio, Ichthys Apps) and
  * {@code cmd ichthys_config}.
  */
 public final class IchthysConfigService extends SystemService {
@@ -79,16 +90,33 @@ public final class IchthysConfigService extends SystemService {
     static final String SERVICE_NAME = "ichthys_config";
     static final String PERMISSION = "android.permission.MANAGE_ICHTHYS_CONFIG";
     static final int KEEP_GENERATIONS = 30;
-    private static final File PRESETS_DIR = new File("/product/etc/ichthys/presets");
+    /**
+     * An apply joins the current generation instead of starting a new one when it comes from the
+     * same interactive source and this soon after that generation's last apply...
+     */
+    static final long COALESCE_WINDOW_MS = 60_000;
+    /** ...but a generation never collects applies for longer than this. */
+    static final long COALESCE_MAX_MS = 10 * 60_000;
+    /** Generation source of the baseline. */
+    static final String SOURCE_DEFAULT = "default";
+
+    private static final File ETC_DIR = new File("/product/etc/ichthys");
+    /** Theme presets: theme.preset = "&lt;name&gt;". */
+    static final String PRESETS = "presets";
+    /** Privacy levels: privacy.level = "&lt;name&gt;". */
+    static final String PRIVACY_LEVELS = "privacy";
+    private static final File DEFAULT_CONFIG = new File(ETC_DIR, "default.nix");
 
     private final Object mLock = new Object();
     private final OptionSchema mSchema;
+    private final ConfigPlanner mPlanner;
     private final ConfigBackend mBackend;
     private final ThemeApplier mTheme;
 
     public IchthysConfigService(Context context) {
         super(context);
         mSchema = OptionSchema.create();
+        mPlanner = new ConfigPlanner(mSchema, IchthysConfigService::presetFile);
         mBackend = new ConfigBackend(context);
         mTheme = new ThemeApplier(context);
     }
@@ -106,6 +134,17 @@ public final class IchthysConfigService extends SystemService {
     }
 
     @Override
+    public void onUserUnlocked(TargetUser user) {
+        // The baseline waits for the unlock: recording a generation reads every option, some
+        // from providers that only run for an unlocked user. On a first boot there is no lock,
+        // so this comes right after boot. Profiles share their parent's look and have no
+        // configuration of their own.
+        if (!user.isProfile()) {
+            applyBaselineAsync(user.getUserIdentifier());
+        }
+    }
+
+    @Override
     public void onUserSwitching(TargetUser from, TargetUser to) {
         applyTokensAsync(to.getUserIdentifier());
     }
@@ -117,98 +156,84 @@ public final class IchthysConfigService extends SystemService {
     // ---------------------------------------------------------------------------------------------
     // Core operations (callers hold the right permission and have cleared the binder identity)
 
-    /** Live state: every option's value, or only those that differ from the default. */
+    private ConfigPlanner.Store store(int userId) {
+        return o -> mBackend.read(o, userId);
+    }
+
+    /** Live state: every option's value, or only what an export needs to say. */
     LinkedHashMap<String, Object> liveState(int userId, boolean all) {
-        final LinkedHashMap<String, Object> out = new LinkedHashMap<>();
-        for (Option o : mSchema.all()) {
-            final Object v = mBackend.read(o, userId);
-            if (all ? v != null || o.defaultValue != null : v != null
-                    && !Objects.equals(v, o.defaultValue)) {
-                out.put(o.path, v != null ? v : o.defaultValue);
-            }
-        }
-        return out;
+        return mPlanner.state(store(userId),
+                all ? ConfigPlanner.State.ALL : ConfigPlanner.State.CHANGED);
     }
 
     String export(int userId, boolean all) {
         final String header = "IchthysOS configuration (ichthys.nix)\n"
-                + "exported " + now() + (all ? ", all options" : ", options changed from default")
+                + "exported " + now() + (all ? ", all options"
+                        : ", options changed from the defaults and presets")
                 + "\napply with: adb shell cmd ichthys_config apply <file>, or Settings > Theme Studio";
         return mSchema.print(liveState(userId, all), header);
     }
 
+    /** A generation snapshot: every option that has a stored value. */
+    private String snapshot(int userId) {
+        return mSchema.print(mPlanner.state(store(userId), ConfigPlanner.State.STORED),
+                "IchthysOS generation snapshot: every stored option\nsaved " + now());
+    }
+
     /** Evaluates text to {path → value}; IllegalArgumentException carries the position. */
     LinkedHashMap<String, Object> evaluate(String text) {
+        return evaluate(text, false, null);
+    }
+
+    /**
+     * @param lenient skip what the schema no longer accepts instead of failing (snapshots)
+     * @param notes   receives a line per skipped setting; may be null
+     */
+    private LinkedHashMap<String, Object> evaluate(String text, boolean lenient,
+            List<String> notes) {
         try {
-            return mSchema.evaluate(NixParser.parse(text));
+            return mSchema.evaluate(NixParser.parse(text), lenient, notes);
         } catch (NixParseException e) {
             throw new IllegalArgumentException(e.getMessage());
         }
     }
 
-    /** What the device should look like after applying {@code declared}. */
-    private LinkedHashMap<String, Object> target(LinkedHashMap<String, Object> declared,
-            boolean merge) {
-        final LinkedHashMap<String, Object> wanted = new LinkedHashMap<>(declared);
-        // A declarative apply that doesn't name a preset gets the default one (koi), like any
-        // other option left out; --merge only touches what the file names.
-        final Object preset = declared.containsKey("theme.preset") ? declared.get("theme.preset")
-                : merge ? null : mSchema.get("theme.preset").defaultValue;
-        if (preset instanceof String && !"none".equals(preset)) {
-            for (Map.Entry<String, Object> e : loadPreset((String) preset).entrySet()) {
-                if (e.getKey().startsWith("theme.") && !wanted.containsKey(e.getKey())) {
-                    wanted.put(e.getKey(), e.getValue());
-                }
-            }
-        }
-        if (merge) {
-            return wanted;
-        }
-        final LinkedHashMap<String, Object> full = new LinkedHashMap<>();
-        for (Option o : mSchema.all()) {
-            if (wanted.containsKey(o.path)) {
-                full.put(o.path, wanted.get(o.path));
-            } else if (o.binding.isSettingsTable()
-                    || o.binding.store == Binding.Store.THEME_JSON) {
-                full.put(o.path, null); // not in the file: back to the default
-            }
-            // Roles and lock screen slots have no "default" to go back to (resetting would
-            // leave the phone without a dialer, or record an explicit empty shortcut): an
-            // unmentioned one is left as it is.
-        }
-        return full;
+    /** What applying {@code text} would skip (settings of options that no longer exist). */
+    List<String> notes(String text) {
+        final List<String> notes = new ArrayList<>();
+        evaluate(text, false, notes);
+        return notes;
     }
 
-    /** The options whose effective value changes (null counts as the option's default). */
-    private ConfigDiff changes(Map<String, Object> target, int userId) {
-        final LinkedHashMap<String, Object> before = new LinkedHashMap<>();
-        final LinkedHashMap<String, Object> after = new LinkedHashMap<>();
-        for (Map.Entry<String, Object> e : target.entrySet()) {
-            final Option o = mSchema.get(e.getKey());
-            final Object live = mBackend.read(o, userId);
-            final Object liveEff = live != null ? live : o.defaultValue;
-            final Object wantEff = e.getValue() != null ? e.getValue() : o.defaultValue;
-            if (!Objects.equals(liveEff, wantEff)) {
-                before.put(o.path, live);
-                after.put(o.path, e.getValue());
-            }
-        }
-        return ConfigDiff.between(before, after);
+    private static ConfigPlanner.Mode mode(boolean merge) {
+        return merge ? ConfigPlanner.Mode.MERGE : ConfigPlanner.Mode.DECLARATIVE;
     }
 
     String diff(String text, boolean merge, int userId) {
         synchronized (mLock) {
-            return changes(target(evaluate(text), merge), userId).format();
+            final ConfigPlanner.Mode mode = mode(merge);
+            return mPlanner.changes(mPlanner.target(evaluate(text), mode), mode, store(userId))
+                    .format();
         }
     }
 
-    /** @return the new generation number, or the current one if nothing changed */
+    /** @return the generation number now current (unchanged if nothing changed) */
     int apply(String text, boolean merge, String source, int userId) {
         synchronized (mLock) {
-            final ConfigDiff diff = changes(target(evaluate(text), merge), userId);
+            final ConfigPlanner.Mode mode = mode(merge);
+            return applyTarget(mPlanner.target(evaluate(text), mode), mode, source, userId);
+        }
+    }
+
+    /** Writes a target (see {@link ConfigPlanner#target}) and records the generation. */
+    private int applyTarget(Map<String, Object> target, ConfigPlanner.Mode mode, String source,
+            int userId) {
+        synchronized (mLock) {
+            final ConfigDiff diff = mPlanner.changes(target, mode, store(userId));
             final Generations gens = generations(userId);
             if (gens.list().isEmpty()) {
-                gens.save(0, export(userId, false), "state before the first apply", "initial");
+                gens.save(0, snapshot(userId), "state before the first apply", "initial", null,
+                        0, null);
             }
             if (diff.isEmpty()) {
                 return gens.current();
@@ -216,7 +241,7 @@ public final class IchthysConfigService extends SystemService {
             final List<ConfigDiff.Change> done = new ArrayList<>();
             try {
                 for (ConfigDiff.Change c : diff.changes) {
-                    mBackend.write(mSchema.get(c.path), c.after, userId);
+                    mBackend.write(mSchema.get(c.path), mPlanner.valueToStore(c, mode), userId);
                     done.add(c);
                 }
             } catch (RuntimeException e) {
@@ -235,15 +260,14 @@ public final class IchthysConfigService extends SystemService {
             if (touchesTokens(diff)) {
                 applyTokens(userId, false);
             }
-            final int gen = gens.next();
-            gens.save(gen, export(userId, false), diff.summary(), source);
+            final int gen = gens.record(snapshot(userId), diff.paths(), source,
+                    System.currentTimeMillis());
             Slog.i(TAG, "user " + userId + " generation " + gen + ": " + diff.summary());
             return gen;
         }
     }
 
     int rollback(int generation, int userId) {
-        final String text;
         synchronized (mLock) {
             final Generations gens = generations(userId);
             final List<Integer> list = gens.list();
@@ -252,11 +276,20 @@ public final class IchthysConfigService extends SystemService {
             if (target < 0 || !list.contains(target)) {
                 throw new IllegalArgumentException("no generation " + generation);
             }
-            text = gens.read(target);
+            final String text = gens.read(target);
             if (text == null) {
                 throw new IllegalArgumentException("generation " + target + " is unreadable");
             }
-            return apply(text, false, "rollback to " + target, userId);
+            // A snapshot is restored exactly: what it lists is written, everything else is
+            // unset, and no preset fills in. It was valid when it was saved, so what the schema
+            // dropped or renamed since is skipped (and logged), not an error.
+            final List<String> notes = new ArrayList<>();
+            final LinkedHashMap<String, Object> declared = evaluate(text, true, notes);
+            for (String note : notes) {
+                Slog.w(TAG, "rollback to " + target + ": " + note);
+            }
+            return applyTarget(mPlanner.target(declared, ConfigPlanner.Mode.SNAPSHOT),
+                    ConfigPlanner.Mode.SNAPSHOT, "rollback to " + target, userId);
         }
     }
 
@@ -302,6 +335,9 @@ public final class IchthysConfigService extends SystemService {
         return o instanceof String ? (String) o : null;
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // Baseline and boot
+
     private void applyTokensAsync(int userId) {
         BackgroundThread.getHandler().post(() -> {
             try {
@@ -314,11 +350,95 @@ public final class IchthysConfigService extends SystemService {
         });
     }
 
+    /** Applies the baseline off the main thread if {@code userId} is a new user. */
+    private void applyBaselineAsync(int userId) {
+        // Decided now, not on the background thread: by then a setup wizard may already have
+        // marked the user as set up.
+        if (!isNewUser(userId)) {
+            return;
+        }
+        BackgroundThread.getHandler().post(() -> {
+            try {
+                synchronized (mLock) {
+                    applyBaseline(userId);
+                }
+            } catch (RuntimeException e) {
+                // Never fatal: the option defaults are the same values, the user only lacks
+                // the explicit copy.
+                Slog.e(TAG, "user " + userId + ": baseline not applied", e);
+            }
+        });
+    }
+
+    /**
+     * Whether {@code userId} has never had a configuration and is new: nothing was ever applied
+     * for it, and either this is the device's first boot or the user has not finished setup. A
+     * user that existed before this build (set up, no generations) is left alone: its settings
+     * are its own, and a baseline would overwrite the ones it names.
+     */
+    private boolean isNewUser(int userId) {
+        if (!generations(userId).list().isEmpty()) {
+            return false;
+        }
+        try {
+            if (userId == UserHandle.USER_SYSTEM && AppGlobals.getPackageManager().isFirstBoot()) {
+                return true;
+            }
+            return Settings.Secure.getIntForUser(getContext().getContentResolver(),
+                    Settings.Secure.USER_SETUP_COMPLETE, 0, userId) != 1;
+        } catch (RemoteException | RuntimeException e) {
+            Slog.w(TAG, "user " + userId + ": can't tell whether it is new", e);
+            return false;
+        }
+    }
+
+    /**
+     * Applies /product/etc/ichthys/default.nix as generation 1 (generation 0 being the untouched
+     * state before it). Only the options the file and its presets name are written, each one
+     * explicitly. For a user other than the system user the device-wide (Global) options are
+     * left out: the first user's baseline set them, and a user added later must not undo what
+     * the owner changed since.
+     */
+    private void applyBaseline(int userId) {
+        if (!generations(userId).list().isEmpty()) {
+            return;
+        }
+        final String text;
+        try {
+            text = new String(Files.readAllBytes(DEFAULT_CONFIG.toPath()),
+                    StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            Slog.w(TAG, "no " + DEFAULT_CONFIG + ", user " + userId + " starts unconfigured");
+            return;
+        }
+        final LinkedHashMap<String, Object> target =
+                mPlanner.target(evaluate(text), ConfigPlanner.Mode.MERGE);
+        if (userId != UserHandle.USER_SYSTEM) {
+            target.keySet().removeIf(path -> {
+                final Binding.Store store = mSchema.get(path).binding.store;
+                return store == Binding.Store.GLOBAL || store == Binding.Store.LINEAGE_GLOBAL;
+            });
+        }
+        final int gen = applyTarget(target, ConfigPlanner.Mode.MERGE, SOURCE_DEFAULT, userId);
+        Slog.i(TAG, "user " + userId + ": baseline applied as generation " + gen);
+    }
+
+    /** The shipped baseline, for {@code cmd ichthys_config default}. */
+    String defaultConfigText() {
+        try {
+            return new String(Files.readAllBytes(DEFAULT_CONFIG.toPath()),
+                    StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new IllegalArgumentException("no " + DEFAULT_CONFIG);
+        }
+    }
+
     // ---------------------------------------------------------------------------------------------
     // Presets
 
-    String[] listPresets() {
-        final String[] names = PRESETS_DIR.list((d, n) -> n.endsWith(".nix"));
+    /** Names of the presets in /product/etc/ichthys/&lt;directory&gt;. */
+    String[] listPresets(String directory) {
+        final String[] names = new File(ETC_DIR, directory).list((d, n) -> n.endsWith(".nix"));
         if (names == null) {
             return new String[0];
         }
@@ -330,20 +450,18 @@ public final class IchthysConfigService extends SystemService {
         return out;
     }
 
-    String presetText(String name) {
+    /** The text of /product/etc/ichthys/&lt;directory&gt;/&lt;name&gt;.nix. */
+    static String presetFile(String directory, String name) {
         if (name == null || !name.matches("[a-z0-9_-]+")) {
             throw new IllegalArgumentException("bad preset name " + name);
         }
         try {
-            return new String(Files.readAllBytes(new File(PRESETS_DIR, name + ".nix").toPath()),
+            return new String(Files.readAllBytes(
+                    new File(new File(ETC_DIR, directory), name + ".nix").toPath()),
                     StandardCharsets.UTF_8);
         } catch (IOException e) {
-            throw new IllegalArgumentException("no preset " + name);
+            throw new IllegalArgumentException("no " + directory + "/" + name + ".nix");
         }
-    }
-
-    private LinkedHashMap<String, Object> loadPreset(String name) {
-        return evaluate(presetText(name));
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -354,8 +472,28 @@ public final class IchthysConfigService extends SystemService {
                 "ichthys/" + userId));
     }
 
+    /**
+     * Whether applies from {@code source} may share a generation. Interactive sources do; the
+     * shell, anonymous API callers, rollbacks and the baseline always get their own, so that
+     * "apply a, apply b, rollback" goes back to a.
+     */
+    static boolean coalesces(String source) {
+        return source != null && !source.isEmpty() && !"shell".equals(source)
+                && !"api".equals(source) && !SOURCE_DEFAULT.equals(source)
+                && !source.startsWith("rollback");
+    }
+
+    /** Who applied: the source without its detail ("Theme Studio: theme.preset"). */
+    static String origin(String source) {
+        final int colon = source.indexOf(':');
+        return (colon < 0 ? source : source.substring(0, colon)).trim();
+    }
+
     /** gen-N.nix + gen-N.meta files in one per-user directory. */
     static final class Generations {
+        /** Changed paths kept in the meta file for the summary of a shared generation. */
+        private static final int MAX_PATHS = 64;
+
         private final File mDir;
 
         Generations(File dir) {
@@ -408,7 +546,55 @@ public final class IchthysConfigService extends SystemService {
             return p;
         }
 
-        void save(int gen, String text, String summary, String source) {
+        /**
+         * Records the state after an apply: as a new generation, or, for a run of applies from
+         * one interactive source ({@link #coalesces}), as the new content of the current one.
+         * Generation N-1 then still is the state before the run and N the state after it.
+         *
+         * @param paths the options this apply changed
+         * @return the generation number now current
+         */
+        int record(String snapshot, List<String> paths, String source, long now) {
+            final int current = current();
+            final Properties m = meta(current);
+            final String origin = coalesces(source) ? origin(source) : null;
+            final long last = parse(m.getProperty("time"));
+            final long started = parse(m.getProperty("started"));
+            if (origin != null && current > 0 && origin.equals(m.getProperty("origin"))
+                    && now >= last && now - last <= COALESCE_WINDOW_MS
+                    && now - started <= COALESCE_MAX_MS) {
+                final List<String> all = new ArrayList<>();
+                for (String p : m.getProperty("paths", "").split(",")) {
+                    if (!p.isEmpty()) all.add(p);
+                }
+                for (String p : paths) {
+                    if (!all.contains(p)) all.add(p);
+                }
+                save(current, snapshot, ConfigDiff.summary(all),
+                        source.equals(m.getProperty("source")) ? source : origin, origin, started,
+                        all);
+                return current;
+            }
+            final int gen = current + 1;
+            save(gen, snapshot, ConfigDiff.summary(paths), source, origin, now, paths);
+            return gen;
+        }
+
+        private static long parse(String s) {
+            try {
+                return s == null ? 0 : Long.parseLong(s);
+            } catch (NumberFormatException e) {
+                return 0;
+            }
+        }
+
+        /**
+         * @param origin  who may add to this generation later ({@link #record}), or null
+         * @param started when the generation's first apply happened
+         * @param paths   the options changed in it, or null
+         */
+        void save(int gen, String text, String summary, String source, String origin,
+                long started, List<String> paths) {
             if (!mDir.isDirectory() && !mDir.mkdirs()) {
                 Slog.e(TAG, "cannot create " + mDir);
                 return;
@@ -418,6 +604,14 @@ public final class IchthysConfigService extends SystemService {
             p.setProperty("time", String.valueOf(System.currentTimeMillis()));
             p.setProperty("summary", summary == null ? "" : summary);
             p.setProperty("source", source == null ? "" : source);
+            if (origin != null) {
+                p.setProperty("origin", origin);
+                p.setProperty("started", String.valueOf(started));
+            }
+            if (paths != null) {
+                p.setProperty("paths", String.join(",",
+                        paths.subList(0, Math.min(paths.size(), MAX_PATHS))));
+            }
             final java.io.StringWriter sw = new java.io.StringWriter();
             try {
                 p.store(sw, null);
@@ -571,13 +765,13 @@ public final class IchthysConfigService extends SystemService {
         @Override
         public String[] listPresets() {
             checkCaller(UserHandle.USER_CURRENT);
-            return IchthysConfigService.this.listPresets();
+            return IchthysConfigService.this.listPresets(PRESETS);
         }
 
         @Override
         public String getPreset(String name) {
             checkCaller(UserHandle.USER_CURRENT);
-            return presetText(name);
+            return presetFile(PRESETS, name);
         }
 
         @Override

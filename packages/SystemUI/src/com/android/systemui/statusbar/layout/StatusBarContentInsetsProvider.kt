@@ -134,6 +134,15 @@ interface StatusBarContentInsetsProvider :
     fun getStatusBarContentAreaForCurrentRotation(): Rect
 
     fun getStatusBarPaddingTop(@Rotation rotation: Int? = null): Int
+
+    /**
+     * IchthysOS: keeps [padding] more pixels free at the end of the status bar content (right in
+     * LTR), next to the privacy dot's space, for the notification dot when it sits beside the
+     * stock privacy dot. Every content area / inset this provider returns shrinks by that much
+     * and the insets-changed listeners are notified. Main thread only, like the rest of this
+     * class.
+     */
+    fun setReservedEndPadding(@Px padding: Int) {}
 }
 
 @PerDisplaySingleton
@@ -160,6 +169,15 @@ constructor(
         lazy(LazyThreadSafetyMode.PUBLICATION) {
             context.resources.getBoolean(R.bool.config_enablePrivacyDot)
         }
+
+    /** IchthysOS: see [StatusBarContentInsetsProvider.setReservedEndPadding]. */
+    @Px private var reservedEndPadding = 0
+
+    override fun setReservedEndPadding(@Px padding: Int) {
+        if (reservedEndPadding == padding) return
+        reservedEndPadding = padding
+        clearCachedInsets()
+    }
 
     private val nameSuffix = if (displayId == DEFAULT_DISPLAY) "" else displayId.toString()
     private val dumpableName = TAG + nameSuffix
@@ -338,11 +356,11 @@ constructor(
         val minLeft: Int
         val minRight: Int
         if (configurationController.isLayoutRtl) {
-            minLeft = max(minDotPadding, roundedCornerPadding)
+            minLeft = max(minDotPadding, roundedCornerPadding) + reservedEndPadding
             minRight = roundedCornerPadding
         } else {
             minLeft = roundedCornerPadding
-            minRight = max(minDotPadding, roundedCornerPadding)
+            minRight = max(minDotPadding, roundedCornerPadding) + reservedEndPadding
         }
 
         val bottomAlignedMargin = getBottomAlignedMargin(targetRotation, rotatedResources)
@@ -419,6 +437,7 @@ constructor(
         insetsCache.snapshot().forEach { (key, rect) -> pw.println("$key -> $rect") }
         pw.println(insetsCache)
         pw.println("Bottom margin overrides: $marginBottomOverrides")
+        pw.println("Reserved end padding: $reservedEndPadding")
     }
 
     private fun getCacheKey(@Rotation rotation: Int, displayCutout: DisplayCutout?): CacheKey =

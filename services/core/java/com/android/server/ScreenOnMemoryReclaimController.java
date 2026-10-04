@@ -33,7 +33,7 @@ import android.util.Slog;
 
 /**
  * IchthysOS "Screen-on memory reclaim". When enabled (System setting
- * {@link Settings.System#SCREEN_ON_MEMORY_RECLAIM}, default on), a short delay after the screen
+ * {@link Settings.System#SCREEN_ON_MEMORY_RECLAIM}, default off), a short delay after the screen
  * turns on the controller kills the <em>cached</em> background processes to free memory, exactly
  * as the user-facing summary promises ("Kill cached background apps shortly after the screen turns
  * on to free memory").
@@ -132,6 +132,6 @@ public final class ScreenOnMemoryReclaimController {
 
     private boolean isEnabledForCurrentUser() {
         return Settings.System.getIntForUser(mContext.getContentResolver(),
-                KEY_ENABLED, 1 /* default on */, UserHandle.USER_CURRENT) == 1;
+                KEY_ENABLED, 0 /* default off */, UserHandle.USER_CURRENT) == 1;
     }
 }

@@ -69,6 +69,12 @@ public class StatusBarWeather extends TextView implements TunerService.Tunable,
 
     private static final String STATUS_BAR_WEATHER =
             "system:" + Settings.System.STATUS_BAR_WEATHER;
+    /**
+     * IchthysOS: statusBar.weather.anchorToCutout (default on). Read here, acted on by
+     * {@link StatusBarWeatherAnchor}.
+     */
+    private static final String WEATHER_ANCHOR_TO_CUTOUT =
+            "system:ichthys_statusbar_weather_anchor_cutout";
 
     private final OmniJawsClient mWeatherClient;
     private final int mIconSizePx;
@@ -78,6 +84,8 @@ public class StatusBarWeather extends TextView implements TunerService.Tunable,
     private boolean mAttached;
     private OmniJawsClient.WeatherInfo mWeatherInfo;
     private Typeface mStockTypeface;
+    private boolean mAnchoredToCutout = true;
+    private Runnable mAnchorSettingChangedListener;
 
     public StatusBarWeather(Context context) {
         this(context, null);
@@ -102,7 +110,8 @@ public class StatusBarWeather extends TextView implements TunerService.Tunable,
         applyShoalFace();
         if (!mAttached) {
             mAttached = true;
-            Dependency.get(TunerService.class).addTunable(this, STATUS_BAR_WEATHER);
+            Dependency.get(TunerService.class).addTunable(this, STATUS_BAR_WEATHER,
+                    WEATHER_ANCHOR_TO_CUTOUT);
         }
     }
 
@@ -145,7 +154,22 @@ public class StatusBarWeather extends TextView implements TunerService.Tunable,
                 mWeatherClient.removeObserver(getContext(), this);
                 updateVisibility();
             }
+        } else if (WEATHER_ANCHOR_TO_CUTOUT.equals(key)) {
+            mAnchoredToCutout = TunerService.parseIntegerSwitch(newValue, true);
+            if (mAnchorSettingChangedListener != null) {
+                mAnchorSettingChangedListener.run();
+            }
         }
+    }
+
+    /** IchthysOS: whether the weather is to be locked in place beside the camera cutout. */
+    public boolean isAnchoredToCutout() {
+        return mAnchoredToCutout;
+    }
+
+    /** IchthysOS: called when {@link #isAnchoredToCutout()} changes. */
+    public void setOnAnchorSettingChangedListener(Runnable listener) {
+        mAnchorSettingChangedListener = listener;
     }
 
     @Override

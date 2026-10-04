@@ -18,39 +18,34 @@ package com.android.server;
 
 import android.Manifest;
 import android.app.AppOpsManager;
-import android.app.Notification;
-import android.app.NotificationChannel;
-import android.app.NotificationManager;
-import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.ContentResolver;
 import android.content.Context;
-import android.content.IIntentReceiver;
-import android.content.IIntentSender;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.IntentSender;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageInfo;
-import android.content.pm.PackageInstaller;
 import android.content.pm.PackageManager;
+import android.content.pm.PackageManagerInternal;
 import android.content.pm.ResolveInfo;
+import android.content.pm.Signature;
+import android.content.pm.SigningDetails;
+import android.content.pm.SigningInfo;
 import android.net.Uri;
-import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
-import android.os.IBinder;
-import android.os.ParcelFileDescriptor;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.provider.MediaStore;
 import android.util.AtomicFile;
+import android.util.PackageUtils;
 import android.util.Slog;
 import android.util.Xml;
 
 import com.android.modules.utils.TypedXmlPullParser;
 import com.android.modules.utils.TypedXmlSerializer;
+import com.android.server.pm.pkg.PackageStateInternal;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -61,44 +56,89 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.TimeUnit;
 
 /**
- * Installs the ROM's bundled third-party apps as ordinary user apps, once per user.
+ * The system's side of the Ichthys Apps catalog ({@code /product/etc/ichthys/apps-catalog.json},
+ * generated from packages/apps/IchthysPrebuilts/catalog.list).
  *
- * <p>Shipping them as system prebuilts doesn't work for every APK: the package manager never
- * extracts native libraries for system apps, so upstream APKs with compressed JNI libs crash with
- * {@code dlopen failed}, and Play app bundles need their config splits installed alongside the
- * base APK. Installing them through a normal session fixes both, and makes them updatable and
- * uninstallable like any other app.
- *
- * <p>Payloads live in {@code /product/etc/ichthys-preinstall/<package>/*.apk} (base plus any
- * splits). Obtainium is set as installer of record and update owner, so it can later update these
- * apps without a prompt. An app the user uninstalls is remembered and never reinstalled.
+ * <p>The ROM ships no third-party APK payloads any more: Ichthys Apps ({@link #ICHTHYS_APPS})
+ * downloads, installs and updates every catalog app on the device. What stays here is what only
+ * the system can do:
+ * <ul>
+ * <li>the one-time setup some apps need to work as intended (all-files access, being the default
+ *     file picker or camera, storage access for Termux, ...), once per user, whoever installs the
+ *     app. A catalog entry names its setup actions; they run when the package is installed and
+ *     its signing certificate matches one of the entry's pins;
+ * <li>telling a genuine catalog app from any other package ({@link #isBundledPreinstall}), for
+ *     Ichthys Guard's new-app quarantine;
+ * <li>migrations from earlier builds, which installed today's catalog apps from payloads in
+ *     /product with Obtainium as their update owner.
+ * </ul>
  * (kusti420/ichthysos-tracker#44, #6)
  */
 public final class IchthysPreinstallController {
     private static final String TAG = "IchthysPreinstall";
 
-    private static final File PAYLOAD_DIR = new File("/product/etc/ichthys-preinstall");
-
-    /** Whether {@code pkg} is one of the apps this controller installs from the ROM. */
-    public static boolean isBundledPreinstall(String pkg) {
-        return pkg != null && !pkg.contains("/") && new File(PAYLOAD_DIR, pkg).isDirectory();
-    }
-    private static final File OBTAINIUM_APPS_JSON = new File(PAYLOAD_DIR, "obtainium-apps.json");
     private static final File STATE_FILE = new File("/data/system/ichthys_preinstall.xml");
+    /** The catalog: package, signing cert pins and setup of every app Ichthys Apps handles. */
+    private static final File APPS_CATALOG = new File("/product/etc/ichthys/apps-catalog.json");
 
+    /** Retired: earlier builds bundled it as the updater. Only named for the migration. */
     private static final String OBTAINIUM = "dev.imranr.obtainium";
-    // Made the default camera when first installed (the GCam port the owner picked, #46).
-    private static final String DEFAULT_CAMERA = "com.camera.lmc88r2";
+    /** Ichthys Apps: installs and updates the catalog apps. */
+    private static final String ICHTHYS_APPS = "org.ichthys.apps";
+
+    /** package name -> catalog entry. The file is part of the image, so it is read once. */
+    private static volatile Map<String, CatalogApp> sCatalog;
+
+    /**
+     * Whether {@code pkg} is a genuine catalog app: a package the ROM's catalog lists (to be
+     * installed by Ichthys Apps, or bundled as a system app) whose installed copy is signed
+     * with one of the entry's pinned certificates. A package that merely has a catalog app's
+     * name is not one.
+     *
+     * <p>The name is from when these apps were payloads in the image, installed on first unlock;
+     * the callers (Ichthys Guard, the notification manager) mean "one of the ROM's own apps, not
+     * something the user picked up elsewhere". May be called from any thread in system_server.
+     */
+    public static boolean isBundledPreinstall(String pkg) {
+        if (pkg == null) {
+            return false;
+        }
+        final CatalogApp app = catalog().get(pkg);
+        if (app == null) {
+            return false;
+        }
+        final PackageManagerInternal pmi = LocalServices.getService(PackageManagerInternal.class);
+        final PackageStateInternal state = pmi == null ? null : pmi.getPackageStateInternal(pkg);
+        final SigningDetails signing = state == null ? null : state.getSigningDetails();
+        // All signers pinned, or a pinned certificate in the signing lineage.
+        return signing != null && signing.hasAncestorOrSelfWithDigest(app.certs);
+    }
+
+    // Setup actions a catalog entry can name in its "setup" list.
+    /** "All files access" (MANAGE_EXTERNAL_STORAGE app op), if the app asks for it. */
+    private static final String SETUP_ALL_FILES_ACCESS = "allFilesAccess";
+    /** Default for OPEN_DOCUMENT / GET_CONTENT. */
+    private static final String SETUP_FILE_PICKER = "filePicker";
+    /** Default viewer for archive types. */
+    private static final String SETUP_ARCHIVE_OPENER = "archiveOpener";
+    /** Default for the camera intents (#46). */
+    private static final String SETUP_DEFAULT_CAMERA = "defaultCamera";
+    /** Legacy storage permissions plus all-files access, as termux-setup-storage asks for. */
+    private static final String SETUP_STORAGE_ACCESS = "storageAccess";
+
     private static final String[] CAMERA_ACTIONS = {
         MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA,
         MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA_SECURE,
@@ -108,7 +148,7 @@ public final class IchthysPreinstallController {
     };
     // Gets storage access up front, as if termux-setup-storage had already been run.
     private static final String TERMUX = "com.termux";
-    private static final String[] TERMUX_STORAGE_PERMISSIONS = {
+    private static final String[] STORAGE_PERMISSIONS = {
         Manifest.permission.READ_EXTERNAL_STORAGE,
         Manifest.permission.WRITE_EXTERNAL_STORAGE,
     };
@@ -116,18 +156,25 @@ public final class IchthysPreinstallController {
     // Stock DocumentsUI stays the system document manager for CREATE_DOCUMENT /
     // OPEN_DOCUMENT_TREE; its OPEN_DOCUMENT / GET_CONTENT filters have no priority so that a
     // preferred activity can win (the resolver skips preferred activities when the top two
-    // candidates differ in priority).
+    // candidates differ in priority). ZArchiver's activities are named so that the right one is
+    // preferred when several of its activities match; any other app gets its first match.
     private static final String ZARCHIVER = "ru.zdevs.zarchiver";
     private static final ComponentName ZARCHIVER_MAIN =
             new ComponentName(ZARCHIVER, "ru.zdevs.zarchiver.ZArchiver");
     private static final ComponentName ZARCHIVER_PICKER =
             new ComponentName(ZARCHIVER, "ru.zdevs.zarchiver.ZSelectFile");
-    private static final String[] ZARCHIVER_PICKER_ACTIONS = {
+    /**
+     * The payload apps earlier builds set up right after installing them (ZArchiver as file
+     * manager, the old default camera), see {@link #setUpCatalogApp}.
+     */
+    private static final Set<String> SET_UP_BY_EARLIER_BUILDS =
+            Set.of(ZARCHIVER, "com.camera.lmc88r2");
+    private static final String[] PICKER_ACTIONS = {
         Intent.ACTION_OPEN_DOCUMENT,
         Intent.ACTION_GET_CONTENT,
     };
-    // Archive types opened in ZArchiver's browser (its main activity's archive filter).
-    private static final String[] ZARCHIVER_ARCHIVE_TYPES = {
+    // Archive types opened by the archive opener (ZArchiver's main activity's archive filter).
+    private static final String[] ARCHIVE_TYPES = {
         "application/zip", "application/x-zip-compressed", "application/zipx",
         "application/x-7z-compressed", "application/7z",
         "application/vnd.rar", "application/rar", "application/x-rar-compressed",
@@ -142,28 +189,61 @@ public final class IchthysPreinstallController {
         "application/x-lzh", "application/x-lzx", "application/lzx", "application/lza",
         "application/x-ace-compressed",
     };
-    private static final String CHANNEL_ID = "ichthys_preinstall";
-    private static final int NOTIFICATION_ID = 0x1c7;
-    private static final long COMMIT_TIMEOUT_SECONDS = 180;
-
     private static final String STATE_INSTALLED = "installed";
-    private static final String STATE_FAILED = "failed";
-    /** Pseudo package name recording that the Obtainium prompt was already shown to a user. */
-    private static final String OBTAINIUM_PROMPTED = ":obtainium-prompted";
-    /** Pseudo package name recording that Termux's storage access was granted to a user. */
-    private static final String TERMUX_STORAGE_GRANTED = ":termux-storage-granted";
-    /** Pseudo package name recording that ZArchiver was set up as file manager for a user. */
-    private static final String ZARCHIVER_SET_UP = ":zarchiver-set-up";
+    /**
+     * Pseudo package name recording that a catalog app's setup ran for a user:
+     * {@code ":" + id + SET_UP_SUFFIX}. ZArchiver's (":zarchiver-set-up") is the key earlier
+     * builds used for its file manager setup, so a device that had it keeps it.
+     */
+    private static final String SET_UP_SUFFIX = "-set-up";
+    /**
+     * Keys earlier builds recorded a setup under, by package: Termux's storage access was granted
+     * right after its payload was installed. A user who has one counts as set up.
+     */
+    private static final Map<String, String> LEGACY_SET_UP_KEYS =
+            Map.of(TERMUX, ":termux-storage-granted");
+    /**
+     * Pseudo package name, system user only, recording that the catalog apps' update ownership
+     * was taken back from Obtainium (see {@link #releaseObtainiumUpdateOwnership}). "-2": the
+     * catalog has grown by the apps that used to be payloads (Termux, CoMaps, Mullvad VPN,
+     * mpvEx, KernelSU-Next) and by the bundled system apps, so a device that ran the first
+     * migration (":update-ownership-released", proprietary apps only) runs it once more.
+     */
+    private static final String UPDATE_OWNERSHIP_RELEASED = ":update-ownership-released-2";
 
     private final Context mContext;
     private final Handler mHandler;
-    /** userId -> Obtainium seeding attempts so far. Only touched on {@link #mHandler}. */
-    private final Map<Integer, Integer> mSeedAttempts = new HashMap<>();
-    private static final int SEED_MAX_ATTEMPTS = 5;
-    private static final long SEED_RETRY_MS = 30_000;
     private final AtomicFile mStateFile = new AtomicFile(STATE_FILE);
-    /** userId -> (packageName -> state). Only touched on {@link #mHandler}. */
+    /**
+     * userId -> (key -> state). The keys are the pseudo package names above, and the package
+     * names of the payloads earlier builds installed (see {@link #SET_UP_BY_EARLIER_BUILDS}).
+     * Only touched on {@link #mHandler}.
+     */
     private final Map<Integer, Map<String, String>> mState = new HashMap<>();
+
+    /** An {@link #APPS_CATALOG} entry, as far as setup is concerned. */
+    private static final class CatalogApp {
+        final String id;
+        final String packageName;
+        /**
+         * SHA-256 of the accepted signing certificates, upper-case hex (what
+         * {@link PackageUtils#computeSha256Digest} and {@link SigningDetails} compare with).
+         */
+        final Set<String> certs;
+        /** Setup action names, in order. */
+        final List<String> setup;
+
+        CatalogApp(String id, String packageName, Set<String> certs, List<String> setup) {
+            this.id = id;
+            this.packageName = packageName;
+            this.certs = certs;
+            this.setup = setup;
+        }
+
+        String setUpKey() {
+            return ":" + id + SET_UP_SUFFIX;
+        }
+    }
 
     public IchthysPreinstallController(Context context) {
         mContext = context;
@@ -174,7 +254,7 @@ public final class IchthysPreinstallController {
 
     /** Called from SystemServer once third-party apps can start. */
     public void onBootPhaseReady() {
-        if (!PAYLOAD_DIR.isDirectory()) {
+        if (!APPS_CATALOG.isFile()) {
             return;
         }
         mHandler.post(() -> {
@@ -199,6 +279,26 @@ public final class IchthysPreinstallController {
                 }
             }, UserHandle.ALL, filter, null, mHandler);
 
+            // Fresh installs by anyone (Ichthys Apps, a store, adb): set up catalog apps. A full
+            // removal (the app and its data) forgets the setup, so a later install gets it again.
+            final IntentFilter packages = new IntentFilter(Intent.ACTION_PACKAGE_ADDED);
+            packages.addAction(Intent.ACTION_PACKAGE_FULLY_REMOVED);
+            packages.addDataScheme("package");
+            mContext.registerReceiverAsUser(new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    if (intent.getData() == null) {
+                        return;
+                    }
+                    final String pkg = intent.getData().getSchemeSpecificPart();
+                    if (Intent.ACTION_PACKAGE_FULLY_REMOVED.equals(intent.getAction())) {
+                        onPackageFullyRemoved(pkg, getSendingUserId());
+                    } else if (!intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)) {
+                        onPackageAdded(pkg, getSendingUserId());
+                    }
+                }
+            }, UserHandle.ALL, packages, null, mHandler);
+
             // Users unlocked before the receiver was registered.
             final UserManager um = mContext.getSystemService(UserManager.class);
             for (UserHandle user : um.getUserHandles(/* excludeDying= */ true)) {
@@ -210,221 +310,262 @@ public final class IchthysPreinstallController {
     }
 
     private void processUser(int userId) {
-        final UserManager um = mContext.getSystemService(UserManager.class);
-        if (um.hasUserRestriction(UserManager.DISALLOW_INSTALL_APPS, UserHandle.of(userId))) {
-            Slog.i(TAG, "installs disallowed for user " + userId + ", skipping");
-            return;
-        }
-        final File[] packageDirs = PAYLOAD_DIR.listFiles(File::isDirectory);
-        if (packageDirs == null) {
-            return;
-        }
-        Arrays.sort(packageDirs);
         final Map<String, String> userState = mState.computeIfAbsent(userId, k -> new HashMap<>());
         final Context userContext = mContext.createContextAsUser(UserHandle.of(userId), 0);
         final PackageManager pm = userContext.getPackageManager();
         boolean changed = false;
 
-        for (File dir : packageDirs) {
-            final String pkg = dir.getName();
-            final boolean installed = isInstalled(pm, pkg);
-            final String state = userState.get(pkg);
-            if (installed) {
-                if (!STATE_INSTALLED.equals(state)) {
-                    userState.put(pkg, STATE_INSTALLED);
-                    changed = true;
-                }
-                continue;
-            }
-            if (STATE_INSTALLED.equals(state)) {
-                // We installed it before and it's gone: the user uninstalled it. Respect that.
-                continue;
-            }
-            final File[] apks = dir.listFiles((d, name) -> name.endsWith(".apk"));
-            if (apks == null || apks.length == 0) {
-                continue;
-            }
-            final boolean ok = install(userContext, pm, pkg, apks);
-            userState.put(pkg, ok ? STATE_INSTALLED : STATE_FAILED);
-            if (ok && DEFAULT_CAMERA.equals(pkg)) {
-                makeDefaultCamera(pm);
-            }
+        // Once per device (the update owner is not per user), from the system user, whose
+        // packages relinquishUpdateOwnership() looks at for a system caller.
+        if (userId == UserHandle.USER_SYSTEM
+                && !userState.containsKey(UPDATE_OWNERSHIP_RELEASED)) {
+            releaseObtainiumUpdateOwnership(pm);
+            userState.put(UPDATE_OWNERSHIP_RELEASED, STATE_INSTALLED);
             changed = true;
         }
 
-        // Once per user, never again: a later revocation by the user sticks. Keyed separately from
-        // the install state so a Termux installed by an earlier build gets it once too.
-        if (!userState.containsKey(TERMUX_STORAGE_GRANTED) && isInstalled(pm, TERMUX)) {
-            grantTermuxStorage(pm, userId);
-            userState.put(TERMUX_STORAGE_GRANTED, STATE_INSTALLED);
-            changed = true;
-        }
-
-        // Same once-per-user rule: a default the user later changes, or all-files access they
-        // revoke, stays that way.
-        if (!userState.containsKey(ZARCHIVER_SET_UP) && isInstalled(pm, ZARCHIVER)) {
-            setUpZArchiver(pm, userId);
-            userState.put(ZARCHIVER_SET_UP, STATE_INSTALLED);
-            changed = true;
-        }
-
-        if (!userState.containsKey(OBTAINIUM_PROMPTED) && OBTAINIUM_APPS_JSON.isFile()
-                && isInstalled(pm, OBTAINIUM)) {
-            // Seed Obtainium's store directly (no tap). Emulated storage can still be coming up
-            // right after unlock, so retry a few times before falling back to the import prompt.
-            final int attempt = mSeedAttempts.getOrDefault(userId, 0);
-            if (seedObtainium(userId)
-                    || (attempt >= SEED_MAX_ATTEMPTS && postObtainiumPrompt(userId))) {
-                userState.put(OBTAINIUM_PROMPTED, STATE_INSTALLED);
-                mSeedAttempts.remove(userId);
-                changed = true;
-            } else if (attempt < SEED_MAX_ATTEMPTS) {
-                mSeedAttempts.put(userId, attempt + 1);
-                mHandler.postDelayed(() -> processUser(userId), SEED_RETRY_MS);
-            }
+        // Catalog apps installed while this user was locked or before this ran (setup pending).
+        for (CatalogApp app : catalog().values()) {
+            changed |= setUpCatalogApp(pm, userId, userState, app);
         }
         if (changed) {
             writeState();
         }
     }
 
-    private boolean install(Context userContext, PackageManager pm, String pkg, File[] apks) {
-        final PackageInstaller installer = pm.getPackageInstaller();
-        final PackageInstaller.SessionParams params = new PackageInstaller.SessionParams(
-                PackageInstaller.SessionParams.MODE_FULL_INSTALL);
-        params.setAppPackageName(pkg);
-        params.setInstallReason(PackageManager.INSTALL_REASON_DEVICE_SETUP);
-        long total = 0;
-        for (File apk : apks) {
-            total += apk.length();
+    /** A package was freshly installed for {@code userId}, by any installer. */
+    private void onPackageAdded(String pkg, int userId) {
+        if (pkg == null || userId < 0) {
+            return;
         }
-        params.setSize(total);
-        // The package installer resets the installer to null if it isn't installed for this user,
-        // so only ask for it when it is.
-        if (isInstalled(pm, OBTAINIUM)) {
-            params.setInstallerPackageName(OBTAINIUM);
-            params.setRequestUpdateOwnership(true);
+        final CatalogApp app = catalog().get(pkg);
+        if (app == null || app.setup.isEmpty()) {
+            return;
         }
-
-        int sessionId = -1;
         try {
-            sessionId = installer.createSession(params);
-            try (PackageInstaller.Session session = installer.openSession(sessionId)) {
-                for (File apk : apks) {
-                    try (ParcelFileDescriptor pfd = ParcelFileDescriptor.open(apk,
-                            ParcelFileDescriptor.MODE_READ_ONLY)) {
-                        session.write(apk.getName(), 0, apk.length(), pfd);
-                    }
-                }
-                final LinkedBlockingQueue<Intent> result = new LinkedBlockingQueue<>();
-                session.commit(resultSender(result));
-                final Intent intent = result.poll(COMMIT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-                final int status = intent == null ? PackageInstaller.STATUS_FAILURE
-                        : intent.getIntExtra(PackageInstaller.EXTRA_STATUS,
-                                PackageInstaller.STATUS_FAILURE);
-                if (status == PackageInstaller.STATUS_SUCCESS) {
-                    Slog.i(TAG, "installed " + pkg + " for user " + userContext.getUserId());
-                    return true;
-                }
-                Slog.w(TAG, "installing " + pkg + " failed: status=" + status + " "
-                        + (intent == null ? "timeout"
-                                : intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)));
-                return false;
+            final PackageManager pm = mContext.createContextAsUser(UserHandle.of(userId), 0)
+                    .getPackageManager();
+            final Map<String, String> userState =
+                    mState.computeIfAbsent(userId, k -> new HashMap<>());
+            if (setUpCatalogApp(pm, userId, userState, app)) {
+                writeState();
             }
-        } catch (Exception e) {
-            Slog.w(TAG, "installing " + pkg + " failed", e);
-            if (sessionId != -1) {
-                try {
-                    installer.abandonSession(sessionId);
-                } catch (Exception ignored) {
-                    // Already committed or gone.
-                }
-            }
-            return false;
+        } catch (RuntimeException e) {
+            Slog.w(TAG, "could not set up " + pkg + " for user " + userId, e);
         }
     }
 
     /**
-     * One notification per user: tapping it opens Obtainium's {@code obtainium://apps/} deep link
-     * with every bundled app's source preconfigured, which Obtainium imports after one confirmation.
+     * A catalog app and its data are gone for {@code userId}: its permissions and defaults went
+     * with it, so the record that it was set up goes too and the next install is set up afresh.
      */
+    private void onPackageFullyRemoved(String pkg, int userId) {
+        final CatalogApp app = pkg == null ? null : catalog().get(pkg);
+        final Map<String, String> userState = mState.get(userId);
+        if (app == null || userState == null) {
+            return;
+        }
+        boolean changed = userState.remove(app.setUpKey()) != null;
+        // What earlier builds recorded for it: neither applies to a later install.
+        changed |= userState.remove(pkg) != null;
+        final String legacyKey = LEGACY_SET_UP_KEYS.get(pkg);
+        if (legacyKey != null) {
+            changed |= userState.remove(legacyKey) != null;
+        }
+        if (changed) {
+            writeState();
+        }
+    }
+
     /**
-     * Pre-registers the bundled apps in Obtainium by writing one {@code <package>.json} per app
-     * (Obtainium's own stored-app format) into its
-     * {@code Android/data/dev.imranr.obtainium/files/app_data/}, which Obtainium loads at startup
-     * without asking. Only ExternalStorageProvider may write another app's Android/data, so the
-     * files go through its system-only {@code ichthys_seed_app_data} call. Existing files are
-     * left alone. Obtainium fills in defaults and the installed versions on its first check.
+     * Runs a catalog app's setup actions for a user, once per install: a default the user later
+     * changes, or a permission they revoke, stays that way. Only for the genuine app, i.e. when
+     * its signing certificate is one of the entry's pins.
      *
-     * @return true if the files were written (or already there)
+     * <p>Earlier builds installed some of today's catalog apps from payloads and set them up
+     * right then. Such an app, still recorded as installed by that pass
+     * ({@link #SET_UP_BY_EARLIER_BUILDS}) or under its old key ({@link #LEGACY_SET_UP_KEYS}),
+     * counts as set up.
+     *
+     * @return whether {@code userState} changed
      */
-    private boolean seedObtainium(int userId) {
-        try {
-            final JSONArray apps = new JSONArray(new String(
-                    Files.readAllBytes(OBTAINIUM_APPS_JSON.toPath()), StandardCharsets.UTF_8));
-            final String[] names = new String[apps.length()];
-            final String[] contents = new String[apps.length()];
-            for (int i = 0; i < apps.length(); i++) {
-                final JSONObject app = apps.getJSONObject(i);
-                names[i] = app.getString("id") + ".json";
-                contents[i] = app.toString();
-            }
-            final Bundle extras = new Bundle();
-            extras.putString("subdir", "files/app_data");
-            extras.putStringArray("names", names);
-            extras.putStringArray("contents", contents);
-            final Context userContext = mContext.createContextAsUser(UserHandle.of(userId), 0);
-            final Bundle out = userContext.getContentResolver().call(
-                    "com.android.externalstorage.documents", "ichthys_seed_app_data", OBTAINIUM,
-                    extras);
-            final boolean ok = out != null && out.getBoolean("ok");
-            Slog.i(TAG, "seeded Obtainium for user " + userId + ": ok=" + ok + " written="
-                    + (out == null ? 0 : out.getInt("written")));
-            return ok;
-        } catch (Exception e) {
-            Slog.w(TAG, "could not seed Obtainium for user " + userId, e);
+    private boolean setUpCatalogApp(PackageManager pm, int userId, Map<String, String> userState,
+            CatalogApp app) {
+        final String key = app.setUpKey();
+        if (app.setup.isEmpty() || userState.containsKey(key)
+                || !isInstalled(pm, app.packageName)) {
             return false;
         }
-    }
-
-    private boolean postObtainiumPrompt(int userId) {
-        final String json;
-        try {
-            json = new String(Files.readAllBytes(OBTAINIUM_APPS_JSON.toPath()),
-                    StandardCharsets.UTF_8).trim();
-        } catch (Exception e) {
-            Slog.w(TAG, "could not read " + OBTAINIUM_APPS_JSON, e);
+        final String legacyKey = LEGACY_SET_UP_KEYS.get(app.packageName);
+        if ((legacyKey != null && userState.containsKey(legacyKey))
+                || (SET_UP_BY_EARLIER_BUILDS.contains(app.packageName)
+                        && STATE_INSTALLED.equals(userState.get(app.packageName)))) {
+            userState.put(key, STATE_INSTALLED);
+            return true;
+        }
+        if (!isSignedByPin(pm, app)) {
+            // Not recorded: the genuine app, installed later, still gets set up.
+            Slog.w(TAG, app.packageName + " for user " + userId
+                    + " isn't signed with a pinned certificate, not setting it up");
             return false;
         }
-        final Intent view = new Intent(Intent.ACTION_VIEW,
-                Uri.parse("obtainium://apps/" + Uri.encode(json)))
-                .setPackage(OBTAINIUM)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        final Context userContext = mContext.createContextAsUser(UserHandle.of(userId), 0);
-        final PendingIntent pi = PendingIntent.getActivity(userContext, 0, view,
-                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-
-        final NotificationManager nm = userContext.getSystemService(NotificationManager.class);
-        nm.createNotificationChannel(new NotificationChannel(CHANNEL_ID, "Bundled apps",
-                NotificationManager.IMPORTANCE_DEFAULT));
-        final Notification n = new Notification.Builder(userContext, CHANNEL_ID)
-                .setSmallIcon(android.R.drawable.stat_sys_download_done)
-                .setContentTitle("Keep bundled apps up to date")
-                .setContentText("Tap to add them to Obtainium")
-                .setContentIntent(pi)
-                .setAutoCancel(true)
-                .build();
-        nm.notify(NOTIFICATION_ID, n);
+        for (String action : app.setup) {
+            runSetupAction(pm, userId, app.packageName, action);
+        }
+        userState.put(key, STATE_INSTALLED);
+        Slog.i(TAG, "set up " + app.packageName + " for user " + userId + ": " + app.setup);
         return true;
     }
 
     /**
-     * Prefers {@link #DEFAULT_CAMERA} for every camera intent it handles, so the camera shortcut
-     * and "take photo" requests skip the chooser. Only done at install time; the user can change
-     * it later like any default.
+     * Whether {@code app} is signed with one of its pinned certificates: one of the APK's signers
+     * or, for a rotated key, a certificate in its signing lineage (the pinned key vouched for
+     * the rotation).
+     */
+    private static boolean isSignedByPin(PackageManager pm, CatalogApp app) {
+        try {
+            final SigningInfo signing = pm.getPackageInfo(app.packageName,
+                    PackageManager.GET_SIGNING_CERTIFICATES).signingInfo;
+            if (signing == null) {
+                return false;
+            }
+            final Signature[] certs = signing.hasMultipleSigners()
+                    ? signing.getApkContentsSigners() : signing.getSigningCertificateHistory();
+            if (certs == null) {
+                return false;
+            }
+            for (Signature cert : certs) {
+                final String digest = PackageUtils.computeSha256Digest(cert.toByteArray());
+                if (digest != null && app.certs.contains(digest)) {
+                    return true;
+                }
+            }
+        } catch (PackageManager.NameNotFoundException | RuntimeException e) {
+            Slog.w(TAG, "could not read the signing certificates of " + app.packageName, e);
+        }
+        return false;
+    }
+
+    /**
+     * One-time migration: earlier builds installed today's catalog apps from payloads with
+     * Obtainium as their update owner, and an update by anyone but the update owner needs the
+     * user's confirmation. Clears that ownership (as the system may), so {@link #ICHTHYS_APPS},
+     * which holds INSTALL_PACKAGES, can update them silently. Apps Obtainium doesn't own are left
+     * alone. Where the OTA removed Obtainium (it was a system app and never updated itself),
+     * there is nothing to clear: an update owner that isn't installed doesn't count.
+     */
+    private void releaseObtainiumUpdateOwnership(PackageManager pm) {
+        for (CatalogApp app : catalog().values()) {
+            try {
+                if (!OBTAINIUM.equals(pm.getInstallSourceInfo(app.packageName)
+                        .getUpdateOwnerPackageName())) {
+                    continue;
+                }
+                pm.relinquishUpdateOwnership(app.packageName);
+                Slog.i(TAG, "released " + OBTAINIUM + "'s update ownership of "
+                        + app.packageName + " for " + ICHTHYS_APPS);
+            } catch (PackageManager.NameNotFoundException e) {
+                // Not installed.
+            } catch (RuntimeException e) {
+                Slog.w(TAG, "could not release the update ownership of " + app.packageName, e);
+            }
+        }
+    }
+
+    /** Runs one named setup action for {@code pkg}; unknown names are logged and skipped. */
+    private void runSetupAction(PackageManager pm, int userId, String pkg, String action) {
+        try {
+            switch (action) {
+                case SETUP_ALL_FILES_ACCESS:
+                    allowAllFilesAccess(pm, pkg);
+                    break;
+                case SETUP_FILE_PICKER:
+                    makeDefaultFilePicker(pm, pkg);
+                    break;
+                case SETUP_ARCHIVE_OPENER:
+                    makeDefaultArchiveOpener(pm, pkg);
+                    break;
+                case SETUP_DEFAULT_CAMERA:
+                    makeDefaultCamera(pm, pkg);
+                    break;
+                case SETUP_STORAGE_ACCESS:
+                    grantStorageAccess(pm, userId, pkg);
+                    break;
+                default:
+                    Slog.w(TAG, "unknown setup action \"" + action + "\" for " + pkg);
+            }
+        } catch (RuntimeException e) {
+            Slog.w(TAG, "setup action " + action + " failed for " + pkg, e);
+        }
+    }
+
+    /** The catalog by package name; empty if it is missing or unreadable. Any thread. */
+    private static Map<String, CatalogApp> catalog() {
+        Map<String, CatalogApp> catalog = sCatalog;
+        if (catalog == null) {
+            // Racing threads read the same file; whichever result is kept is the same.
+            catalog = Collections.unmodifiableMap(loadCatalog());
+            sCatalog = catalog;
+        }
+        return catalog;
+    }
+
+    private static Map<String, CatalogApp> loadCatalog() {
+        if (!APPS_CATALOG.isFile()) {
+            return Collections.emptyMap();
+        }
+        final Map<String, CatalogApp> out = new LinkedHashMap<>();
+        try {
+            final JSONArray apps = new JSONObject(new String(
+                    Files.readAllBytes(APPS_CATALOG.toPath()), StandardCharsets.UTF_8))
+                    .getJSONArray("apps");
+            for (int i = 0; i < apps.length(); i++) {
+                final JSONObject entry = apps.optJSONObject(i);
+                if (entry == null) {
+                    continue;
+                }
+                final String id = entry.optString("id", "");
+                final String pkg = entry.optString("package", "");
+                final Set<String> certs = new HashSet<>();
+                final JSONArray certArray = entry.optJSONArray("certs");
+                for (int j = 0; certArray != null && j < certArray.length(); j++) {
+                    // Accept "AB:CD:..." too; compared as plain upper-case hex.
+                    final String cert = certArray.optString(j, "").replace(":", "")
+                            .toUpperCase(Locale.ROOT);
+                    if (cert.length() == 64) {
+                        certs.add(cert);
+                    }
+                }
+                final List<String> setup = new ArrayList<>();
+                final JSONArray setupArray = entry.optJSONArray("setup");
+                for (int j = 0; setupArray != null && j < setupArray.length(); j++) {
+                    final String action = setupArray.optString(j, "");
+                    if (!action.isEmpty()) {
+                        setup.add(action);
+                    }
+                }
+                if (id.isEmpty() || pkg.isEmpty() || certs.isEmpty()) {
+                    // No pins, no setup: there would be no telling the real app from another.
+                    Slog.w(TAG, "catalog entry " + i + " (" + id + ") lacks id, package or certs");
+                    continue;
+                }
+                out.put(pkg, new CatalogApp(id, pkg, Collections.unmodifiableSet(certs),
+                        Collections.unmodifiableList(setup)));
+            }
+        } catch (Exception e) {
+            Slog.w(TAG, "could not read " + APPS_CATALOG + ", no catalog app setup", e);
+            return Collections.emptyMap();
+        }
+        return out;
+    }
+
+    /**
+     * Prefers {@code pkg} for every camera intent it handles, so the camera shortcut and "take
+     * photo" requests skip the chooser. Only done once, at setup; the user can change it later
+     * like any default.
      */
     @SuppressWarnings("deprecation") // addPreferredActivity: what ResolverActivity's "Always" uses
-    private static void makeDefaultCamera(PackageManager pm) {
+    private static void makeDefaultCamera(PackageManager pm, String pkg) {
         for (String action : CAMERA_ACTIONS) {
             final Intent intent = new Intent(action);
             final List<ResolveInfo> handlers =
@@ -436,7 +577,7 @@ public final class IchthysPreinstallController {
                 final ActivityInfo ai = handlers.get(i).activityInfo;
                 set[i] = new ComponentName(ai.packageName, ai.name);
                 bestMatch = Math.max(bestMatch, handlers.get(i).match);
-                if (DEFAULT_CAMERA.equals(ai.packageName) && preferred == null) {
+                if (pkg.equals(ai.packageName) && preferred == null) {
                     preferred = set[i];
                 }
             }
@@ -461,53 +602,43 @@ public final class IchthysPreinstallController {
      * without it the soft-restricted storage grant is silently ineffective for a pre-Q app.
      * The ~/storage symlinks themselves are created by termux-setup.sh (init).
      */
-    private void grantTermuxStorage(PackageManager pm, int userId) {
+    private void grantStorageAccess(PackageManager pm, int userId, String pkg) {
         final UserHandle user = UserHandle.of(userId);
         final PackageInfo info;
         try {
-            info = pm.getPackageInfo(TERMUX, PackageManager.GET_PERMISSIONS);
+            info = pm.getPackageInfo(pkg, PackageManager.GET_PERMISSIONS);
         } catch (PackageManager.NameNotFoundException e) {
             return;
         }
         final List<String> requested = info.requestedPermissions == null
                 ? List.of() : Arrays.asList(info.requestedPermissions);
-        for (String perm : TERMUX_STORAGE_PERMISSIONS) {
+        for (String perm : STORAGE_PERMISSIONS) {
             if (!requested.contains(perm)) {
                 continue;
             }
             try {
-                pm.addWhitelistedRestrictedPermission(TERMUX, perm,
+                pm.addWhitelistedRestrictedPermission(pkg, perm,
                         PackageManager.FLAG_PERMISSION_WHITELIST_INSTALLER);
             } catch (RuntimeException e) {
-                Slog.w(TAG, "could not allowlist " + perm + " for " + TERMUX, e);
+                Slog.w(TAG, "could not allowlist " + perm + " for " + pkg, e);
             }
             try {
-                pm.grantRuntimePermission(TERMUX, perm, user);
+                pm.grantRuntimePermission(pkg, perm, user);
             } catch (RuntimeException e) {
-                Slog.w(TAG, "could not grant " + perm + " to " + TERMUX, e);
+                Slog.w(TAG, "could not grant " + perm + " to " + pkg, e);
             }
         }
-        if (requested.contains(Manifest.permission.MANAGE_EXTERNAL_STORAGE)
-                && info.applicationInfo != null) {
-            try {
-                mContext.getSystemService(AppOpsManager.class).setUidMode(
-                        AppOpsManager.OPSTR_MANAGE_EXTERNAL_STORAGE, info.applicationInfo.uid,
-                        AppOpsManager.MODE_ALLOWED);
-            } catch (RuntimeException e) {
-                Slog.w(TAG, "could not allow all-files access for " + TERMUX, e);
-            }
-        }
-        Slog.i(TAG, "granted storage access to " + TERMUX + " for user " + userId);
+        allowAllFilesAccess(pm, pkg);
+        Slog.i(TAG, "granted storage access to " + pkg + " for user " + userId);
     }
 
     /**
-     * Makes ZArchiver the file manager: "All files access" (the only storage permission it asks
-     * for on R+; without it its picker shows "Access is denied"), the default for
-     * OPEN_DOCUMENT / GET_CONTENT, and the default viewer for archives.
+     * "All files access", if {@code pkg} asks for it. For ZArchiver it is the only storage
+     * permission it asks for on R+; without it its picker shows "Access is denied".
      */
-    private void setUpZArchiver(PackageManager pm, int userId) {
+    private void allowAllFilesAccess(PackageManager pm, String pkg) {
         try {
-            final PackageInfo info = pm.getPackageInfo(ZARCHIVER, PackageManager.GET_PERMISSIONS);
+            final PackageInfo info = pm.getPackageInfo(pkg, PackageManager.GET_PERMISSIONS);
             final List<String> requested = info.requestedPermissions == null
                     ? List.of() : Arrays.asList(info.requestedPermissions);
             if (requested.contains(Manifest.permission.MANAGE_EXTERNAL_STORAGE)
@@ -517,13 +648,16 @@ public final class IchthysPreinstallController {
                         AppOpsManager.MODE_ALLOWED);
             }
         } catch (PackageManager.NameNotFoundException | RuntimeException e) {
-            Slog.w(TAG, "could not allow all-files access for " + ZARCHIVER, e);
+            Slog.w(TAG, "could not allow all-files access for " + pkg, e);
         }
+    }
 
+    /** Makes {@code pkg} the default for OPEN_DOCUMENT / GET_CONTENT. */
+    private static void makeDefaultFilePicker(PackageManager pm, String pkg) {
         // Pickers: one "*/*" entry per action, which also covers requests for a specific type
         // (a preferred filter with "*/*" matches every type). The candidate set is the "*/*"
         // query, i.e. every handler of any type, so later narrower queries are subsets of it.
-        for (String action : ZARCHIVER_PICKER_ACTIONS) {
+        for (String action : PICKER_ACTIONS) {
             final Intent intent = new Intent(action)
                     .addCategory(Intent.CATEGORY_OPENABLE)
                     .setType("*/*");
@@ -535,12 +669,16 @@ public final class IchthysPreinstallController {
             } catch (IntentFilter.MalformedMimeTypeException e) {
                 continue; // can't happen
             }
-            addPreferred(pm, intent, filter, ZARCHIVER_PICKER);
+            addPreferred(pm, intent, filter, pkg, ZARCHIVER_PICKER);
         }
+        Slog.i(TAG, "made " + pkg + " the default file picker");
+    }
 
+    /** Makes {@code pkg} the default viewer for archives. */
+    private static void makeDefaultArchiveOpener(PackageManager pm, String pkg) {
         // Archives: one entry per type, like the resolver's "Always" records it, each with the
         // exact handler set for that type.
-        for (String type : ZARCHIVER_ARCHIVE_TYPES) {
+        for (String type : ARCHIVE_TYPES) {
             final Intent intent = new Intent(Intent.ACTION_VIEW)
                     .setDataAndType(Uri.parse("content://ichthys.invalid/file"), type);
             final IntentFilter filter = new IntentFilter(Intent.ACTION_VIEW);
@@ -552,27 +690,37 @@ public final class IchthysPreinstallController {
             } catch (IntentFilter.MalformedMimeTypeException e) {
                 continue;
             }
-            addPreferred(pm, intent, filter, ZARCHIVER_MAIN);
+            addPreferred(pm, intent, filter, pkg, ZARCHIVER_MAIN);
         }
-        Slog.i(TAG, "set up " + ZARCHIVER + " as file manager for user " + userId);
+        Slog.i(TAG, "made " + pkg + " the default archive opener");
     }
 
     /**
-     * Records {@code preferred} as the "Always" choice for {@code intent}, the way
+     * Records an activity of {@code pkg} as the "Always" choice for {@code intent}, the way
      * ResolverActivity does: {@code filter} describes the intent, and the set is every activity
      * that currently resolves it (the resolver drops the preference once a handler outside the
-     * set appears). Skipped when {@code preferred} doesn't handle it or there is no choice.
+     * set appears). The activity is {@code hint} if it is {@code pkg}'s and in the set, else the
+     * first of {@code pkg}'s. Skipped when {@code pkg} doesn't handle it or there is no choice.
      */
     @SuppressWarnings("deprecation") // addPreferredActivity: what ResolverActivity's "Always" uses
     private static void addPreferred(PackageManager pm, Intent intent, IntentFilter filter,
-            ComponentName preferred) {
+            String pkg, ComponentName hint) {
         final Set<ComponentName> set = new LinkedHashSet<>();
+        ComponentName preferred = null;
         int bestMatch = 0;
         for (ResolveInfo ri : pm.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)) {
-            set.add(new ComponentName(ri.activityInfo.packageName, ri.activityInfo.name));
+            final ComponentName cn =
+                    new ComponentName(ri.activityInfo.packageName, ri.activityInfo.name);
+            set.add(cn);
             bestMatch = Math.max(bestMatch, ri.match);
+            if (preferred == null && pkg.equals(cn.getPackageName())) {
+                preferred = cn;
+            }
         }
-        if (!set.contains(preferred) || set.size() < 2) {
+        if (hint != null && pkg.equals(hint.getPackageName()) && set.contains(hint)) {
+            preferred = hint;
+        }
+        if (preferred == null || set.size() < 2) {
             return;
         }
         try {
@@ -591,17 +739,6 @@ public final class IchthysPreinstallController {
         } catch (PackageManager.NameNotFoundException e) {
             return false;
         }
-    }
-
-    private static IntentSender resultSender(LinkedBlockingQueue<Intent> result) {
-        final IIntentSender.Stub sender = new IIntentSender.Stub() {
-            @Override
-            public void send(int code, Intent intent, String resolvedType, IBinder allowlistToken,
-                    IIntentReceiver finishedReceiver, String requiredPermission, Bundle options) {
-                result.offer(intent);
-            }
-        };
-        return new IntentSender((IIntentSender) sender);
     }
 
     private void readState() {

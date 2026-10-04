@@ -75,6 +75,18 @@ public final class Binding {
         }
     }
 
+    /** Two bindings are equal when they name the same value on the device. */
+    @Override
+    public boolean equals(Object other) {
+        return other instanceof Binding && ((Binding) other).store == store
+                && ((Binding) other).key.equals(key);
+    }
+
+    @Override
+    public int hashCode() {
+        return store.hashCode() * 31 + key.hashCode();
+    }
+
     @Override
     public String toString() {
         return store.name().toLowerCase() + ":" + key;
