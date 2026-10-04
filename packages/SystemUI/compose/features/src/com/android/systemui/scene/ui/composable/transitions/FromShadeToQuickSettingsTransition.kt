@@ -40,13 +40,18 @@ fun TransitionBuilder.shadeToQuickSettingsTransition(
     // shows through it early and gradually. Reversed (Quick Settings to Shade) it fades back in
     // over the same stretch.
     fractionRange(start = 0.3f, end = 0.7f) { fade(Notifications.Elements.NotificationScrim) }
-    timestampRange(endMillis = 83) {
-        fade(Elements.FooterActions)
-        // IchthysOS "Shoal": the docked media strip sits right above the footer actions and comes
-        // and goes with them. Fully there this early, it shows through the notification panel as
-        // that fades out over it, instead of popping in when the panel has left.
-        fade(ShoalMediaDock.Elements.Dock)
-    }
+    timestampRange(endMillis = 83) { fade(Elements.FooterActions) }
+
+    // IchthysOS "Shoal": the media card of the shade becomes the docked strip of quick settings.
+    // The card rides down to the strip's place above the footer actions and the strip comes the
+    // same way from the card's place, bottom edges together. The strip is in the scene below, so
+    // it is hidden behind the card until the card fades out over it. Before, the card faded out
+    // where it stood while the strip was already waiting at the bottom. Reversed (Quick Settings
+    // to Shade) the strip rises into the card.
+    transformation(MediaCarousel, TravelToCounterpart.Factory(ShoalMediaDock.Elements.Dock))
+    transformation(ShoalMediaDock.Elements.Dock, TravelToCounterpart.Factory(MediaCarousel))
+    fractionRange(end = 0.15f) { fade(ShoalMediaDock.Elements.Dock) }
+    fractionRange(start = 0.15f, end = 0.6f) { fade(MediaCarousel) }
 
     fractionRange(start = 0.43f, end = 1f - SHARED_TILE_PICKER_THRESHOLD) {
         fade(Elements.QuickSettingsContent)
@@ -62,7 +67,6 @@ fun TransitionBuilder.shadeToQuickSettingsTransition(
     // overlap.
     fractionRange(end = 0.5f) { fade(QqsTileElementMatcher) }
     anchoredTranslate(QqsTileElementMatcher, Elements.GridAnchor)
-    fade(MediaCarousel)
 
     val translationY = ShadeHeader.Dimensions.CollapsedHeightForTransitions
     translate(ShadeHeader.Elements.CollapsedContentStart, y = translationY)
