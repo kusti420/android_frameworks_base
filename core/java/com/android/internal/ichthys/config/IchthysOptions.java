@@ -147,12 +147,19 @@ final class IchthysOptions {
         // Notification dot and privacy indicator (SystemUI statusbar/ichthys/indicator). Consumers
         // treat an unset key as the default below.
         s.add(Option.bool("statusBar.notificationDot.enabled", Boolean.TRUE,
-                "Show a dot in the status bar corner while there are unseen, non-silent "
-                        + "notifications.",
+                "Show a notification dot in the status bar corner.",
                 setting(SYSTEM, "ichthys_notif_dot_enabled")));
+        s.add(Option.enumeration("statusBar.notificationDot.logic",
+                new String[] {"light", "unseen"}, new String[] {"0", "1"}, "light",
+                "What lights the notification dot. \"light\": the notification light of a "
+                        + "phone with an LED, by Android's own rules: notifications whose "
+                        + "category may blink the light, only while the screen is off (so on "
+                        + "the always-on display), until they are looked at. \"unseen\": any "
+                        + "unseen, non-silent notification, with the screen on as well.",
+                setting(SYSTEM, "ichthys_notif_dot_logic")));
         s.add(Option.bool("statusBar.notificationDot.aod", Boolean.TRUE,
                 "Keep the notification dot on the always-on display (dimmed, with burn-in "
-                        + "drift).",
+                        + "drift). With logic = light this is the only place it shows.",
                 setting(SYSTEM, "ichthys_notif_dot_aod")));
         s.add(Option.enumeration("statusBar.notificationDot.color",
                 new String[] {"accent", "white", "app"}, new String[] {"0", "1", "2"}, "accent",

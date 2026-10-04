@@ -443,4 +443,15 @@ oneway interface IStatusBar
      * Called when the configuration has been changed.
      */
     void onConfigurationChanged();
+
+    /**
+     * IchthysOS: the state of the notification light, for a device that shows it on screen
+     * instead of an LED. Sent whenever the notification service updates the light.
+     *
+     * @param on whether the light is flashing
+     * @param argb its colour
+     * @param onMs how long a flash lasts
+     * @param offMs how long the pause between flashes lasts
+     */
+    void setNotificationLight(boolean on, int argb, int onMs, int offMs);
 }

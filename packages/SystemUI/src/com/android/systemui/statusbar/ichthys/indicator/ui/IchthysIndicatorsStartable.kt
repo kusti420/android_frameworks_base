@@ -46,11 +46,16 @@ import com.android.systemui.display.naturalBounds
 import com.android.systemui.doze.util.BurnInHelperWrapper
 import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor
 import com.android.systemui.plugins.DarkIconDispatcher
+import com.android.systemui.privacy.PrivacyItem
+import com.android.systemui.privacy.PrivacyItemController
 import com.android.systemui.privacy.PrivacyType
 import com.android.systemui.shade.domain.interactor.ShadeInteractor
 import com.android.systemui.statusbar.events.PrivacyDotViewController
-import com.android.systemui.statusbar.events.PrivacyIndicatorState
 import com.android.systemui.statusbar.ichthys.indicator.data.IchthysIndicatorSettingsRepository
+import com.android.systemui.statusbar.ichthys.indicator.data.IchthysPrivacyRingState
+import com.android.systemui.statusbar.ichthys.indicator.data.NotificationDotLogic
+import com.android.systemui.statusbar.ichthys.indicator.data.NotificationLightModel
+import com.android.systemui.statusbar.ichthys.indicator.data.NotificationLightRepository
 import com.android.systemui.statusbar.ichthys.indicator.data.NotificationDotColor
 import com.android.systemui.statusbar.ichthys.indicator.data.PrivacyIndicatorStyle
 import com.android.systemui.statusbar.ichthys.indicator.domain.NotificationDotInteractor
@@ -82,16 +87,20 @@ import kotlinx.coroutines.flow.onStart
  * **Notification dot.** A filled circle the size of the privacy dot at the privacy dot's place:
  * right after the status bar content area, vertically centred in it, from
  * [StatusBarContentInsetsProvider] exactly like PrivacyDotViewController places the dot (so it
- * follows rotation, RTL and cutouts). It shows while [NotificationDotInteractor] has an unseen
- * notification to announce and the shade is closed; while dozing it uses the always-on display's
- * notification set, is dimmed, and drifts by the burn-in helper's offset on every doze tick.
+ * follows rotation, RTL and cutouts). With statusBar.notificationDot.logic = light (the default)
+ * it is the notification light of a phone with an LED, on the always-on display: lit exactly while
+ * the notification service has the light flashing ([NotificationLightRepository]). With unseen it
+ * shows while [NotificationDotInteractor] has an unseen notification to announce and the shade is
+ * closed, awake or dozing. On the always-on display it is dimmed and drifts by the burn-in
+ * helper's offset on every doze tick.
  *
  * **Privacy indicator.** With statusBar.privacyIndicator.style = cutoutRing the stock corner dot
  * stays hidden and a ring is drawn around the front camera: the configured camera protection path
  * if the device has one, otherwise the live display cutout path (or its bounding rects), in the
- * current rotation. It shows exactly when the dot would ([PrivacyDotViewController
- * .indicatorState]) and fades like it. Without a cutout, or with style = dot, the stock dot is
- * used; the notification dot then takes the slot just inside it, which
+ * current rotation. It shows for as long as [PrivacyItemController] lists something in use (the
+ * camera, the microphone, and location if those indicators are on), wherever the user is: the
+ * shade, the lock screen, a full-screen app. Without a cutout, or with style = dot, the stock dot
+ * is used; the notification dot then takes the slot just inside it, which
  * [StatusBarContentInsetsProvider.setReservedEndPadding] keeps free of status bar content.
  *
  * Everything here runs on the main thread.
@@ -106,7 +115,9 @@ constructor(
     private val windowManager: WindowManager,
     private val displayManager: DisplayManager,
     private val settings: IchthysIndicatorSettingsRepository,
+    private val ringState: IchthysPrivacyRingState,
     private val notificationDotInteractor: NotificationDotInteractor,
+    private val notificationLightRepository: NotificationLightRepository,
     private val keyguardInteractor: KeyguardInteractor,
     private val shadeInteractor: ShadeInteractor,
     private val darkIconInteractor: DarkIconInteractor,
@@ -114,6 +125,7 @@ constructor(
     private val configurationController: ConfigurationController,
     private val contentInsetsProvider: StatusBarContentInsetsProvider,
     private val privacyDotViewController: PrivacyDotViewController,
+    private val privacyItemController: PrivacyItemController,
     private val displaySubcomponents: PerDisplayRepository<SystemUIDisplaySubcomponent>,
 ) : CoreStartable {
 
@@ -135,6 +147,27 @@ constructor(
     private var ringGeometry: PrivacyRingGeometry? = null
     private var ringColorByType = false
     private var privacyState = PrivacyIndicatorState()
+
+    /**
+     * What is in use right now, straight from the list of privacy items. The ring used to follow
+     * the corner dot's state, which the status bar only settles once its chip animation has run:
+     * a use that began or ended meanwhile (going to the camera and back) was missed or kept.
+     */
+    private val privacyInUse = MutableStateFlow(PrivacyIndicatorState())
+
+    // A field on purpose: PrivacyItemController holds its callbacks weakly.
+    private val privacyItemsCallback =
+        object : PrivacyItemController.Callback {
+            override fun onPrivacyItemsChanged(privacyItems: List<PrivacyItem>) {
+                val types = privacyItems.mapTo(mutableSetOf()) { it.privacyType }
+                privacyInUse.value =
+                    if (types.isEmpty()) {
+                        privacyInUse.value.copy(visible = false)
+                    } else {
+                        PrivacyIndicatorState(visible = true, types = types)
+                    }
+            }
+        }
 
     private val sysUICutoutProvider: SysUICutoutProvider?
         get() = displaySubcomponents[Display.DEFAULT_DISPLAY]?.sysUICutoutProvider
@@ -173,10 +206,11 @@ constructor(
             mainHandler,
         )
 
+        privacyItemController.addCallback(privacyItemsCallback)
         scope.launch { layout.collect { applyLayout(it) } }
         scope.launch { dotUiState.collect { renderDot(it) } }
         scope.launch {
-            combine(privacyDotViewController.indicatorState, ringActive, environmentChanges) {
+            combine(privacyInUse, ringActive, environmentChanges) {
                     state,
                     _,
                     _ ->
@@ -290,6 +324,7 @@ constructor(
         )
 
         ringActive.value = ring
+        ringState.isRingActive = ring
         renderRing()
     }
 
@@ -337,8 +372,16 @@ constructor(
 
     private data class DotSettings(
         val enabled: Boolean,
+        val logic: NotificationDotLogic,
         val onAod: Boolean,
         val color: NotificationDotColor,
+    )
+
+    /** What the dot may announce: by the unseen rule awake and dozing, and the light's state. */
+    private data class DotSources(
+        val statusBarDot: NotificationDotModel?,
+        val aodDot: NotificationDotModel?,
+        val light: NotificationLightModel?,
     )
 
     private data class DeviceState(
@@ -364,6 +407,7 @@ constructor(
         combine(
                 combine(
                     settings.notificationDotEnabled,
+                    settings.notificationDotLogic,
                     settings.notificationDotOnAod,
                     settings.notificationDotColor,
                     ::DotSettings,
@@ -378,30 +422,46 @@ constructor(
                 combine(
                     notificationDotInteractor.statusBarDot,
                     notificationDotInteractor.aodDot,
-                    ::Pair,
+                    notificationLightRepository.light,
+                    ::DotSources,
                 ),
                 darkIconInteractor.darkState(Display.DEFAULT_DISPLAY),
                 environmentChanges,
-            ) { dotSettings, device, (statusBarDot, aodDot), darkState, _ ->
-                // Dozing: what the always-on display may show. Awake: what the status bar may
-                // show, and only while there is a status bar.
-                val model =
-                    when {
-                        !dotSettings.enabled -> null
-                        device.dozing -> aodDot.takeIf { dotSettings.onAod }
-                        device.statusBarHidden -> null
-                        else -> statusBarDot
-                    }
-                DotUiState(
-                    visible = model != null && !device.shadeExpanded,
-                    color = dotColor(dotSettings.color, model, device, darkState),
-                )
+            ) { dotSettings, device, sources, darkState, _ ->
+                if (dotSettings.logic == NotificationDotLogic.LIGHT) {
+                    // The dot is the notification light. That only ever flashes with the screen
+                    // off, so the always-on display is the one place it can show; the dot holds
+                    // still there instead of flashing, which would keep the phone awake.
+                    val light = sources.light
+                    DotUiState(
+                        visible =
+                            dotSettings.enabled &&
+                                dotSettings.onAod &&
+                                light != null &&
+                                device.dozing,
+                        color = dotColor(dotSettings.color, light?.argb, device, darkState),
+                    )
+                } else {
+                    // Dozing: what the always-on display may show. Awake: what the status bar
+                    // may show, and only while there is a status bar.
+                    val model =
+                        when {
+                            !dotSettings.enabled -> null
+                            device.dozing -> sources.aodDot.takeIf { dotSettings.onAod }
+                            device.statusBarHidden -> null
+                            else -> sources.statusBarDot
+                        }
+                    DotUiState(
+                        visible = model != null && !device.shadeExpanded,
+                        color = dotColor(dotSettings.color, model?.appColor, device, darkState),
+                    )
+                }
             }
             .distinctUntilChanged()
 
     private fun dotColor(
         source: NotificationDotColor,
-        model: NotificationDotModel?,
+        appColor: Int?,
         device: DeviceState,
         darkState: DarkState,
     ): Int =
@@ -418,7 +478,7 @@ constructor(
                     DarkIconDispatcher.DEFAULT_ICON_TINT
                 }
             NotificationDotColor.APP ->
-                model?.appColor?.let { ContrastColorUtil.ensureTextContrastOnBlack(it) }
+                appColor?.let { ContrastColorUtil.ensureTextContrastOnBlack(it) }
                     ?: IchthysIndicatorTokens.accent(context)
         }
 
@@ -585,3 +645,10 @@ constructor(
         const val EXCLUDE_FROM_SCREENSHOTS = true
     }
 }
+
+/** Whether the privacy ring shows, and for what. */
+private data class PrivacyIndicatorState(
+    val visible: Boolean = false,
+    /** What is in use. Not cleared when the ring hides, so it can fade out unchanged. */
+    val types: Set<PrivacyType> = emptySet(),
+)

@@ -82,6 +82,12 @@ public interface StatusBarManagerInternal {
     void showChargingAnimation(int batteryLevel);
 
     /**
+     * IchthysOS: tells the status bar what the notification light is doing, for a device that
+     * shows it on screen instead of an LED.
+     */
+    void setNotificationLight(boolean on, int argb, int onMs, int offMs);
+
+    /**
      * Show picture-in-picture menu.
      */
     void showPictureInPictureMenu();

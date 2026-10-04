@@ -25,6 +25,18 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
+/** What turns the notification dot on and off (statusBar.notificationDot.logic). */
+enum class NotificationDotLogic {
+    /**
+     * The notification light: the dot is the LED of a phone that has one. It is lit by
+     * notifications whose channel may blink the light, only while the screen is off, and stays
+     * until they are looked at. See NotificationLightRepository.
+     */
+    LIGHT,
+    /** Any unseen, non-silent notification, with the screen on as well as off. */
+    UNSEEN,
+}
+
 /** Where the notification dot takes its colour from (statusBar.notificationDot.color). */
 enum class NotificationDotColor {
     /** The theme accent, the same one the Shoal status bar uses. */
@@ -56,6 +68,13 @@ constructor(systemSettings: SystemSettingsRepository, secureSettings: SecureSett
     /** statusBar.notificationDot.enabled */
     val notificationDotEnabled: Flow<Boolean> =
         systemSettings.boolSetting(KEY_NOTIF_DOT_ENABLED, defaultValue = true)
+
+    /** statusBar.notificationDot.logic */
+    val notificationDotLogic: Flow<NotificationDotLogic> =
+        systemSettings
+            .intSetting(KEY_NOTIF_DOT_LOGIC, defaultValue = 0)
+            .map { if (it == 1) NotificationDotLogic.UNSEEN else NotificationDotLogic.LIGHT }
+            .distinctUntilChanged()
 
     /** statusBar.notificationDot.aod */
     val notificationDotOnAod: Flow<Boolean> =
@@ -108,6 +127,7 @@ constructor(systemSettings: SystemSettingsRepository, secureSettings: SecureSett
 
     companion object {
         const val KEY_NOTIF_DOT_ENABLED = "ichthys_notif_dot_enabled"
+        const val KEY_NOTIF_DOT_LOGIC = "ichthys_notif_dot_logic"
         const val KEY_NOTIF_DOT_AOD = "ichthys_notif_dot_aod"
         const val KEY_NOTIF_DOT_COLOR = "ichthys_notif_dot_color"
         const val KEY_NOTIF_DOT_REPLACE_ICONS = "ichthys_notif_dot_replace_icons"

@@ -32,6 +32,7 @@ import static com.android.server.notification.Flags.favoritesIncomingCallLights;
 
 import android.Manifest.permission;
 import android.annotation.IntDef;
+import android.annotation.Nullable;
 import android.app.ActivityManager;
 import android.app.ActivityTaskManager;
 import android.app.KeyguardManager;
@@ -80,8 +81,10 @@ import com.android.internal.logging.nano.MetricsProto;
 import com.android.internal.logging.nano.MetricsProto.MetricsEvent;
 import com.android.internal.util.VibrationStatsWriter;
 import com.android.server.EventLogTags;
+import com.android.server.LocalServices;
 import com.android.server.lights.LightsManager;
 import com.android.server.lights.LogicalLight;
+import com.android.server.statusbar.StatusBarManagerInternal;
 
 import java.io.PrintWriter;
 import java.lang.annotation.Retention;
@@ -1091,6 +1094,10 @@ public final class NotificationAttentionHelper {
             }
         }
 
+        // IchthysOS: the same decision as for the LED below, for the light drawn on screen.
+        final boolean flashing = ledNotification != null && !isInCall() && !mScreenOn;
+        setOnScreenLight(flashing && mNotificationPulseEnabled ? ledNotification.getLight() : null);
+
         if (mNotificationLight == null) {
             return;
         }
@@ -1109,7 +1116,25 @@ public final class NotificationAttentionHelper {
     }
 
     private void stopNotificationLight() {
+        setOnScreenLight(null);
         if (mNotificationLight != null) mNotificationLight.turnOff();
+    }
+
+    /**
+     * IchthysOS: a phone without a notification LED shows the light on screen instead (the
+     * notification dot, drawn by the status bar). Null turns it off.
+     */
+    private void setOnScreenLight(@Nullable NotificationRecord.Light light) {
+        final StatusBarManagerInternal statusBar =
+                LocalServices.getService(StatusBarManagerInternal.class);
+        if (statusBar == null) {
+            return;
+        }
+        if (light == null) {
+            statusBar.setNotificationLight(false, 0, 0, 0);
+        } else {
+            statusBar.setNotificationLight(true, light.color, light.onMs, light.offMs);
+        }
     }
 
     private void startPriorityNotificationLight() {

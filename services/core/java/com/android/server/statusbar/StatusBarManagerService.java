@@ -562,6 +562,11 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         }
 
         @Override
+        public void setNotificationLight(boolean on, int argb, int onMs, int offMs) {
+            runWithStatusBarIfPresent(bar -> bar.setNotificationLight(on, argb, onMs, offMs));
+        }
+
+        @Override
         public void showPictureInPictureMenu() {
             runWithStatusBarIfPresent(IStatusBar::showPictureInPictureMenu);
         }

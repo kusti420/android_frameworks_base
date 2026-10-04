@@ -195,6 +195,8 @@ public class CommandQueue extends IStatusBar.Stub implements
     private static final int MSG_END_MOTION_CUES = 89 << MSG_SHIFT;
     private static final int MSG_ON_DISPLAY_INFO_CHANGED = 90 << MSG_SHIFT;
     private static final int MSG_ON_CONFIGURATION_CHANGED = 91 << MSG_SHIFT;
+    // IchthysOS
+    private static final int MSG_SET_NOTIFICATION_LIGHT = 120 << MSG_SHIFT;
 
     public static final int FLAG_EXCLUDE_NONE = 0;
     public static final int FLAG_EXCLUDE_SEARCH_PANEL = 1 << 0;
@@ -389,6 +391,9 @@ public class CommandQueue extends IStatusBar.Stub implements
         default void handleShowShutdownUi(boolean isReboot, String reason) { }
 
         default void showWirelessChargingAnimation(int batteryLevel) {  }
+
+        /** IchthysOS: see {@link IStatusBar#setNotificationLight(boolean, int, int, int)}. */
+        default void setNotificationLight(boolean on, int argb, int onMs, int offMs) { }
 
         default void onRotationProposal(int rotation, boolean isValid) { }
 
@@ -1140,6 +1145,18 @@ public class CommandQueue extends IStatusBar.Stub implements
             mHandler.obtainMessage(MSG_SHOW_SHUTDOWN_UI, isReboot ? 1 : 0, 0, reason)
                     .sendToTarget();
         }
+    }
+
+    @Override
+    public void setNotificationLight(boolean on, int argb, int onMs, int offMs) {
+        // Only the newest state matters.
+        mHandler.removeMessages(MSG_SET_NOTIFICATION_LIGHT);
+        final SomeArgs args = SomeArgs.obtain();
+        args.argi1 = on ? 1 : 0;
+        args.argi2 = argb;
+        args.argi3 = onMs;
+        args.argi4 = offMs;
+        mHandler.obtainMessage(MSG_SET_NOTIFICATION_LIGHT, args).sendToTarget();
     }
 
     @Override
@@ -1928,6 +1945,15 @@ public class CommandQueue extends IStatusBar.Stub implements
                         callback.showWirelessChargingAnimation(msg.arg1);
                     }
                     break;
+                case MSG_SET_NOTIFICATION_LIGHT: {
+                    final SomeArgs lightArgs = (SomeArgs) msg.obj;
+                    for (Callbacks callback : mCallbacks) {
+                        callback.setNotificationLight(lightArgs.argi1 != 0, lightArgs.argi2,
+                                lightArgs.argi3, lightArgs.argi4);
+                    }
+                    lightArgs.recycle();
+                    break;
+                }
                 case MSG_SHOW_PINNING_TOAST_ENTER_EXIT:
                     for (Callbacks callback : mCallbacks) {
                         callback.showPinningEnterExitToast((Boolean) msg.obj);
