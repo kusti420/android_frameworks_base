@@ -27,6 +27,8 @@ import kotlinx.coroutines.flow.Flow
 class QSPreferencesInteractor @Inject constructor(private val repo: QSPreferencesRepository) {
     val largeTilesSpecs: Flow<Set<TileSpec>> = repo.largeTilesSpecs
     val editTooltipShown: Flow<Boolean> = repo.editTooltipShown
+    /** IchthysOS "Shoal": tiles in the junction slots, top to bottom; null is a free slot. */
+    val junctionTilesSpecs: Flow<List<TileSpec?>> = repo.junctionTilesSpecs
 
     fun setLargeTilesSpecs(specs: Set<TileSpec>) {
         repo.writeLargeTileSpecs(specs)
@@ -34,6 +36,14 @@ class QSPreferencesInteractor @Inject constructor(private val repo: QSPreference
 
     fun removeLargeTilesSpecs(specs: Set<TileSpec>) {
         repo.removeLargeTileSpecs(specs)
+    }
+
+    fun setJunctionTilesSpecs(slots: List<TileSpec?>) {
+        repo.writeJunctionTileSpecs(slots)
+    }
+
+    fun removeJunctionTilesSpecs(specs: Set<TileSpec>) {
+        repo.removeJunctionTileSpecs(specs)
     }
 
     fun setEditTooltipShown(value: Boolean) {

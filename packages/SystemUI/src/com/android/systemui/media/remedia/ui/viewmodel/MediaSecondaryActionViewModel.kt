@@ -20,7 +20,12 @@ import com.android.systemui.common.shared.model.Icon
 
 /** Models UI state for a secondary action button within media controls. */
 sealed interface MediaSecondaryActionViewModel {
-    data class Action(val icon: Icon, val onClick: (() -> Unit)?) : MediaSecondaryActionViewModel
+    data class Action(
+        val icon: Icon,
+        val onClick: (() -> Unit)?,
+        /** IchthysOS: see MediaAction.isStandardSkip. */
+        val isStandardSkip: Boolean = false,
+    ) : MediaSecondaryActionViewModel
 
     data object ReserveSpace : MediaSecondaryActionViewModel
 

@@ -38,5 +38,7 @@ constructor(
         uiEventLogger.log(QSEditEvent.QS_EDIT_RESET)
         currentTilesInteractor.resetTiles()
         iconTilesInteractor.resetToDefault()
+        // IchthysOS "Shoal": the default layout has no junction tiles.
+        iconTilesInteractor.setJunctionTiles(emptyList())
     }
 }

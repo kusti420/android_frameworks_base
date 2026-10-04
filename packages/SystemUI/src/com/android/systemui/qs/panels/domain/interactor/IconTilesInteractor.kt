@@ -51,6 +51,17 @@ constructor(
             .onEach { logChange(it) }
             .stateIn(scope, SharingStarted.Eagerly, repo.defaultLargeTiles)
 
+    /**
+     * IchthysOS "Shoal": the tiles in the junction slots between the big tiles, top to bottom. A
+     * null entry is a free slot. See ShoalJunctions for which slots the layout shows.
+     */
+    val junctionTilesSpecs =
+        preferencesInteractor.junctionTilesSpecs.stateIn(
+            scope,
+            SharingStarted.Eagerly,
+            emptyList(),
+        )
+
     fun isIconTile(spec: TileSpec): Boolean = !largeTilesSpecs.value.contains(spec)
 
     /** Set the large tiles to be [specs] */
@@ -66,6 +77,16 @@ constructor(
     /** Remove [specs] from the current set of large tiles */
     fun removeLargeTiles(specs: Set<TileSpec>) {
         preferencesInteractor.removeLargeTilesSpecs(specs)
+    }
+
+    /** IchthysOS "Shoal": set the junction slots to be [slots] */
+    fun setJunctionTiles(slots: List<TileSpec?>) {
+        preferencesInteractor.setJunctionTilesSpecs(slots)
+    }
+
+    /** IchthysOS "Shoal": free the junction slots that hold any of [specs] */
+    fun removeJunctionTiles(specs: Set<TileSpec>) {
+        preferencesInteractor.removeJunctionTilesSpecs(specs)
     }
 
     fun resetToDefault() {

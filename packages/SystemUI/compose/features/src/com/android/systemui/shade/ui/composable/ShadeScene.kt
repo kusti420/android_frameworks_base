@@ -100,10 +100,12 @@ import com.android.systemui.qs.composefragment.ui.GridAnchor
 import com.android.systemui.qs.footer.ui.compose.FooterActionsWithAnimatedVisibility
 import com.android.systemui.qs.panels.ui.compose.EditMode
 import com.android.systemui.qs.panels.ui.compose.QuickQuickSettings
+import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalQsEnabled
 import com.android.systemui.qs.shared.ui.QuickSettings
 import com.android.systemui.qs.shared.ui.QuickSettings.Elements.SplitShadeQuickSettings
 import com.android.systemui.qs.ui.composable.QuickSettingsContent
 import com.android.systemui.qs.ui.composable.QuickSettingsShade
+import com.android.systemui.qs.ui.composable.ShoalMediaDockHost
 import com.android.systemui.res.R
 import com.android.systemui.scene.session.ui.composable.SaveableSession
 import com.android.systemui.scene.shared.model.Scenes
@@ -644,20 +646,37 @@ private fun ContentScope.SplitShade(
 
                                 Element(QS.rootElementKey, Modifier) {
                                     Column {
-                                        Box(
-                                            Modifier.weight(1f)
-                                                .sysuiResTag("expanded_qs_scroll_view")
-                                                .verticalScroll(rememberScrollState())
-                                                .wrapContentHeight(
-                                                    align = Alignment.Top,
-                                                    unbounded = true,
-                                                )
+                                        // IchthysOS "Shoal": as in the Quick Settings scene, the
+                                        // media player is a strip docked above the footer actions
+                                        // rather than a carousel inside the scrolling content. In
+                                        // the grid style the host is a plain box, and the inner
+                                        // box fills it, so the scrolling part is laid out as
+                                        // before.
+                                        ShoalMediaDockHost(
+                                            isDocked = rememberShoalQsEnabled(),
+                                            viewModelFactory =
+                                                qsContainerViewModel.mediaViewModelFactory,
+                                            onCarouselDismissed =
+                                                qsContainerViewModel::onMediaSwipeToDismiss,
+                                            modifier = Modifier.weight(1f),
+                                            horizontalPadding =
+                                                dimensionResource(R.dimen.qs_horizontal_margin),
                                         ) {
-                                            QuickSettingsContent(
-                                                qsContainerViewModel,
-                                                mediaInRow = false,
-                                                mediaSquishiness = { tileSquishiness },
-                                            )
+                                            Box(
+                                                Modifier.fillMaxHeight()
+                                                    .sysuiResTag("expanded_qs_scroll_view")
+                                                    .verticalScroll(rememberScrollState())
+                                                    .wrapContentHeight(
+                                                        align = Alignment.Top,
+                                                        unbounded = true,
+                                                    )
+                                            ) {
+                                                QuickSettingsContent(
+                                                    qsContainerViewModel,
+                                                    mediaInRow = false,
+                                                    mediaSquishiness = { tileSquishiness },
+                                                )
+                                            }
                                         }
                                         FooterActionsWithAnimatedVisibility(
                                             viewModel = footerActionsViewModel,

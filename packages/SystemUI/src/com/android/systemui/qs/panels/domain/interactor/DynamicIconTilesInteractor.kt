@@ -50,7 +50,12 @@ constructor(
             }
             .filter { it.isNotEmpty() }
             .onEach { logChange(it) }
-            .collect { removedTiles -> iconTilesInteractor.removeLargeTiles(removedTiles) }
+            .collect { removedTiles ->
+                iconTilesInteractor.removeLargeTiles(removedTiles)
+                // IchthysOS "Shoal": a removed tile gives its junction back too, so that adding
+                // it again later starts it as an ordinary circle.
+                iconTilesInteractor.removeJunctionTiles(removedTiles)
+            }
     }
 
     @AssistedFactory

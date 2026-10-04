@@ -21,6 +21,7 @@ import com.android.compose.animation.Easings
 import com.android.compose.animation.scene.TransitionBuilder
 import com.android.systemui.notifications.ui.composable.Notifications
 import com.android.systemui.qs.shared.ui.QuickSettings
+import com.android.systemui.qs.ui.composable.ShoalMediaDock
 import com.android.systemui.shade.ui.composable.Shade
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -38,6 +39,8 @@ fun TransitionBuilder.shadeToAlwaysOnDisplayTransition() {
         fade(QuickSettings.Elements.QuickQuickSettingsAndMedia)
         fade(QuickSettings.Elements.SplitShadeQuickSettings)
         fade(QuickSettings.Elements.FooterActions)
+        // IchthysOS "Shoal": the docked media strip goes with the footer actions.
+        fade(ShoalMediaDock.Elements.Dock)
         fade(Notifications.Elements.NotificationScrim)
     }
 

@@ -38,6 +38,13 @@ constructor(
     val largeTilesState =
         hydrator.hydratedStateOf(traceName = "largeTiles", source = iconTilesViewModel.largeTiles)
 
+    /** IchthysOS "Shoal": see [IconTilesViewModel.junctionTiles]. */
+    val junctionTilesState =
+        hydrator.hydratedStateOf(
+            traceName = "junctionTiles",
+            source = iconTilesViewModel.junctionTiles,
+        )
+
     override suspend fun onActivated(): Nothing {
         coroutineScope {
             launch { hydrator.activate() }

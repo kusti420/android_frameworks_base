@@ -28,7 +28,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -38,13 +37,24 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathOperation
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalResources
@@ -53,7 +63,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.android.compose.animation.Expandable
@@ -77,6 +90,7 @@ import com.android.systemui.qs.pipeline.shared.TileSpec
 import com.android.systemui.qs.shared.ui.QuickSettings.Elements.toElementKey
 import com.android.systemui.qs.tileimpl.QSTileImpl
 import com.android.systemui.res.R
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
 
 /**
@@ -85,6 +99,8 @@ import kotlinx.coroutines.CoroutineScope
  * two-column tiles with their subtitle,
  * every other tile as an icon-only circle in an offset honeycomb (rows alternating N / N-1, each
  * lower row rising [ShoalQs.OVERLAP] into the one above) - the same lattice motif as the Shoal status bar.
+ * Where four big tiles meet, a junction slot can hold one more tile as a small circle (see
+ * [ShoalJunctions]).
  *
  * The tiles are drawn by [ShoalWideTile] / [ShoalCircleTile] rather than the stock [Tile]: the stock
  * tile follows crDroid's qs_panel_style, whose default "card" look has a transparent container, so
@@ -121,12 +137,23 @@ internal object ShoalQs {
 
     /** Vertical space between the wide tiles and the honeycomb. */
     val SECTION_GAP = 12.dp
+
+    // Junction tiles: a circle where four wide tiles meet, in a scoop cut out of their corners.
+    /** Diameter of a junction tile's circle. */
+    val JUNCTION = 40.dp
+    /** Ground left between the circle and the scooped corners. */
+    val JUNCTION_MOAT = 3.dp
+    /** Diameter of the scoop; also the junction tile's touch target. */
+    val JUNCTION_SCOOP = JUNCTION + JUNCTION_MOAT * 2
+    /** Glyph size in a junction tile. */
+    val JUNCTION_ICON = 18.dp
 }
 
 @Composable
 internal fun ContentScope.ShoalTileGrid(
     tiles: List<TileViewModel>,
     largeTiles: Set<TileSpec>,
+    junctionTiles: List<TileSpec?>,
     squishiness: () -> Float,
     coroutineScope: CoroutineScope,
     tileHapticsViewModelFactory: TileHapticsViewModel.Factory,
@@ -136,39 +163,71 @@ internal fun ContentScope.ShoalTileGrid(
     enableRevealEffect: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val split =
-        remember(tiles, largeTiles) {
-            // Big tiles are the stock "large tiles" set (resizable in edit mode, persisted per
-            // user); they keep their relative order and always sit above the honeycomb.
-            tiles.partition { it.spec in largeTiles }
+    // Big tiles are the stock "large tiles" set (resizable in edit mode, persisted per user); they
+    // keep their relative order and always sit above the honeycomb. Junction tiles are the ones
+    // named in the junction slots; a slot only shows while its junction exists.
+    val slotOffset = LocalShoalJunctionOffset.current
+    val layout =
+        remember(tiles, largeTiles, junctionTiles, slotOffset) {
+            shoalLayout(tiles, largeTiles, junctionTiles, slotOffset) { it.spec }
         }
-    val (wide, small) = split
+    val wide = layout.wide
+    val small = layout.circles
     val accent = rememberShoalAccent()
     val fonts = rememberShoalQsFonts()
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(ShoalQs.SECTION_GAP)) {
         if (wide.isNotEmpty()) {
-            Column(verticalArrangement = Arrangement.spacedBy(ShoalQs.WIDE_GAP)) {
-                wide.chunked(2).forEach { pair ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(ShoalQs.WIDE_GAP)) {
-                        pair.forEach { tile ->
-                            Element(
-                                tile.spec.toElementKey(),
-                                Modifier.weight(1f).height(ShoalQs.WIDE_HEIGHT),
-                            ) {
-                                ShoalWideTile(
-                                    tile = tile,
-                                    accent = accent,
-                                    fonts = fonts,
-                                    squishiness = squishiness,
-                                    tileHapticsViewModelFactory = tileHapticsViewModelFactory,
-                                    detailsViewModel = detailsViewModel,
-                                    modifier = Modifier.fillMaxSize(),
-                                )
-                            }
+            // Only junctions with a tile in them are drawn, and only those scoop the corners
+            // around them: a free junction leaves the four tiles as they are.
+            val occupied =
+                remember(layout) {
+                    layout.junctions.indices.filter { layout.junctions[it] != null }
+                }
+            ShoalWideLayout(
+                wideCount = wide.size,
+                junctions = occupied,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                // Keyed by tile: a tile that moves (into a junction, say) takes what it remembers
+                // with it instead of leaving it to whichever tile gets its old place.
+                wide.forEachIndexed { index, tile ->
+                    val row = index / 2
+                    key(tile.spec) {
+                        Element(tile.spec.toElementKey(), Modifier) {
+                            ShoalWideTile(
+                                tile = tile,
+                                accent = accent,
+                                fonts = fonts,
+                                squishiness = squishiness,
+                                tileHapticsViewModelFactory = tileHapticsViewModelFactory,
+                                detailsViewModel = detailsViewModel,
+                                scoopAbove = ShoalJunctions.below(row - 1) in occupied,
+                                scoopBelow = ShoalJunctions.below(row) in occupied,
+                                // The first tile of a row meets the junction with its end-side
+                                // corners, the second one with its start-side corners.
+                                innerOnEnd = index % 2 == 0,
+                                modifier = Modifier.fillMaxSize(),
+                            )
                         }
-                        // Keep a lone last wide tile at half width.
-                        if (pair.size == 1) Spacer(Modifier.weight(1f))
+                    }
+                }
+                occupied.forEach { junction ->
+                    val tile = layout.junctions[junction] ?: return@forEach
+                    key(tile.spec) {
+                        Element(tile.spec.toElementKey(), Modifier) {
+                            ShoalCircleTile(
+                                tile = tile,
+                                accent = accent,
+                                squishiness = squishiness,
+                                tileHapticsViewModelFactory = tileHapticsViewModelFactory,
+                                detailsViewModel = detailsViewModel,
+                                requestToggleTextFeedback = requestToggleTextFeedback,
+                                iconSize = ShoalQs.JUNCTION_ICON,
+                                inset = ShoalQs.JUNCTION_MOAT,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
                     }
                 }
             }
@@ -177,20 +236,143 @@ internal fun ContentScope.ShoalTileGrid(
             val rows = remember(small.size) { honeycombRows(small.size) }
             HoneycombLayout(rows = rows, modifier = Modifier.fillMaxWidth()) {
                 small.forEach { tile ->
-                    Element(tile.spec.toElementKey(), Modifier) {
-                        ShoalCircleTile(
-                            tile = tile,
-                            accent = accent,
-                            squishiness = squishiness,
-                            tileHapticsViewModelFactory = tileHapticsViewModelFactory,
-                            detailsViewModel = detailsViewModel,
-                            requestToggleTextFeedback = requestToggleTextFeedback,
-                            modifier = Modifier.fillMaxSize(),
-                        )
+                    key(tile.spec) {
+                        Element(tile.spec.toElementKey(), Modifier) {
+                            ShoalCircleTile(
+                                tile = tile,
+                                accent = accent,
+                                squishiness = squishiness,
+                                tileHapticsViewModelFactory = tileHapticsViewModelFactory,
+                                detailsViewModel = detailsViewModel,
+                                requestToggleTextFeedback = requestToggleTextFeedback,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+/**
+ * Places the wide tiles two per row (a lone last tile keeps half the width) and the junction
+ * tiles on the meeting points between rows.
+ *
+ * The first [wideCount] children are the wide tiles in order; the rest are the junction tiles of
+ * the junctions listed in [junctions], each given a [ShoalQs.JUNCTION_SCOOP] square centred on its
+ * junction. They come last so that they draw, and take touches, above the tile corners.
+ */
+@Composable
+internal fun ShoalWideLayout(
+    wideCount: Int,
+    junctions: List<Int>,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    Layout(content = content, modifier = modifier) { measurables, constraints ->
+        val gap = ShoalQs.WIDE_GAP.roundToPx()
+        val rowHeight = ShoalQs.WIDE_HEIGHT.roundToPx()
+        val scoop = ShoalQs.JUNCTION_SCOOP.roundToPx()
+        val width = if (constraints.hasBoundedWidth) constraints.maxWidth else constraints.minWidth
+        val tileWidth = ((width - gap) / 2).coerceAtLeast(0)
+        val widePlaceables =
+            measurables.take(wideCount).map { it.measure(Constraints.fixed(tileWidth, rowHeight)) }
+        val junctionPlaceables =
+            measurables.drop(wideCount).map { it.measure(Constraints.fixed(scoop, scoop)) }
+        val rows = (wideCount + 1) / 2
+        val height = if (rows == 0) 0 else rows * rowHeight + (rows - 1) * gap
+        layout(width, height) {
+            widePlaceables.forEachIndexed { index, placeable ->
+                placeable.placeRelative(
+                    x = (index % 2) * (tileWidth + gap),
+                    y = (index / 2) * (rowHeight + gap),
+                )
+            }
+            junctionPlaceables.forEachIndexed { index, placeable ->
+                val junction = junctions.getOrNull(index) ?: return@forEachIndexed
+                // The same point the scooped corners are cut around: half a gutter beyond the
+                // first column's end edge and the upper row's bottom edge.
+                val row = ShoalJunctions.rowAbove(junction)
+                val centerX = tileWidth + gap / 2f
+                val centerY = (row + 1) * rowHeight + row * gap + gap / 2f
+                placeable.placeRelative(
+                    x = (centerX - scoop / 2f).roundToInt(),
+                    y = (centerY - scoop / 2f).roundToInt(),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The outline of a wide tile next to a shown junction: the [ShoalQs.WIDE_RADIUS] pill with a
+ * concave scoop of [ShoalQs.JUNCTION_SCOOP] diameter around each junction it touches. A real
+ * outline rather than a ground-coloured disc painted over the tiles, so it also holds over a
+ * panel background that is not flat.
+ *
+ * @param scoopAbove a junction is shown on the boundary above this tile's row
+ * @param scoopBelow a junction is shown on the boundary below this tile's row
+ * @param innerOnEnd the junctions are on the tile's end side (the first tile of a row)
+ */
+internal data class ShoalScoopedShape(
+    val scoopAbove: Boolean,
+    val scoopBelow: Boolean,
+    val innerOnEnd: Boolean,
+) : Shape {
+    override fun createOutline(
+        size: Size,
+        layoutDirection: LayoutDirection,
+        density: Density,
+    ): Outline {
+        val radius = minOf(with(density) { ShoalQs.WIDE_RADIUS.toPx() }, size.minDimension / 2f)
+        val pill = RoundRect(0f, 0f, size.width, size.height, CornerRadius(radius))
+        val scoops = scoops(size, layoutDirection, density) ?: return Outline.Rounded(pill)
+        val tile = Path().apply { addRoundRect(pill) }
+        return Outline.Generic(Path.combine(PathOperation.Difference, tile, scoops))
+    }
+
+    /** The discs cut out of a tile of [size], in the tile's coordinates; null without a scoop. */
+    fun scoops(size: Size, layoutDirection: LayoutDirection, density: Density): Path? {
+        if (!scoopAbove && !scoopBelow) return null
+        with(density) {
+            val halfGap = ShoalQs.WIDE_GAP.roundToPx() / 2f
+            val scoopRadius = ShoalQs.JUNCTION_SCOOP.toPx() / 2f
+            val innerOnRight = innerOnEnd == (layoutDirection == LayoutDirection.Ltr)
+            val centerX = if (innerOnRight) size.width + halfGap else -halfGap
+            // Measured from the full tile height, not from size.height: while the panel is
+            // squishing open the tile is shorter but the junction below has not moved.
+            val fullHeight = ShoalQs.WIDE_HEIGHT.roundToPx().toFloat()
+            val scoops = Path()
+            if (scoopAbove) {
+                scoops.addOval(Rect(Offset(centerX, -halfGap), scoopRadius))
+            }
+            if (scoopBelow) {
+                scoops.addOval(Rect(Offset(centerX, fullHeight + halfGap), scoopRadius))
+            }
+            return scoops
+        }
+    }
+}
+
+/**
+ * A circle inset by [inset] on every side: the visible part of a junction tile, whose bounds (and
+ * touch target) are the whole scoop. Still a rounded outline, which is all [Expandable] can
+ * animate from.
+ */
+private data class ShoalInsetCircle(val inset: Dp) : Shape {
+    override fun createOutline(
+        size: Size,
+        layoutDirection: LayoutDirection,
+        density: Density,
+    ): Outline {
+        val insetPx = with(density) { inset.toPx() }
+        val diameter = (size.minDimension - 2 * insetPx).coerceAtLeast(0f)
+        val left = (size.width - diameter) / 2f
+        val top = (size.height - diameter) / 2f
+        return Outline.Rounded(
+            RoundRect(left, top, left + diameter, top + diameter, CornerRadius(diameter / 2f))
+        )
     }
 }
 
@@ -257,12 +439,16 @@ private fun ShoalTileSurface(
     squishiness: () -> Float,
     hapticsViewModel: TileHapticsViewModel,
     modifier: Modifier = Modifier,
+    // What the tile is clipped to, when that is not [shape]. The launch animation can only start
+    // from a (rounded) rectangle, so the Expandable keeps [shape] and a scooped tile or the wider
+    // touch target of a junction tile is done with the clip.
+    clipShape: Shape = shape,
     content: @Composable (Expandable) -> Unit,
 ) {
     Expandable(
         expandable = if (dynamicTargetResolutionEnabled()) tile.expandable else null,
         controller = rememberExpandableController(color = { color }, shape = shape),
-        modifier = modifier.clip(shape).verticalSquish(squishiness),
+        modifier = modifier.clip(clipShape).verticalSquish(squishiness),
         useModifierBasedImplementation = true,
     ) {
         content(hapticsViewModel.createStateAwareExpandable(it))
@@ -271,7 +457,8 @@ private fun ShoalTileSurface(
 
 /**
  * Wide two-column tile ([ShoalQs.WIDE_HEIGHT] tall, [ShoalQs.WIDE_RADIUS] radius): icon + label +
- * subtitle, always a filled surface.
+ * subtitle, always a filled surface. [scoopAbove] / [scoopBelow] / [innerOnEnd] carve the corners
+ * next to a shown junction, see [ShoalScoopedShape].
  */
 @Composable
 private fun ShoalWideTile(
@@ -282,6 +469,9 @@ private fun ShoalWideTile(
     tileHapticsViewModelFactory: TileHapticsViewModel.Factory,
     detailsViewModel: DetailsViewModel?,
     modifier: Modifier = Modifier,
+    scoopAbove: Boolean = false,
+    scoopBelow: Boolean = false,
+    innerOnEnd: Boolean = true,
 ) {
     val state = rememberShoalTileState(tile, tileHapticsViewModelFactory)
     val uiState = state.uiState
@@ -289,12 +479,21 @@ private fun ShoalWideTile(
     val background by animateColorAsState(colors.background, label = "ShoalWideTileBackground")
     val content by animateColorAsState(colors.content, label = "ShoalWideTileContent")
     val shape = RoundedCornerShape(ShoalQs.WIDE_RADIUS)
+    val clipShape =
+        if (scoopAbove || scoopBelow) {
+            remember(scoopAbove, scoopBelow, innerOnEnd) {
+                ShoalScoopedShape(scoopAbove, scoopBelow, innerOnEnd)
+            }
+        } else {
+            shape
+        }
     val isDualTarget = uiState.handlesToggleClick
 
     ShoalTileSurface(
         tile = tile,
         color = background,
         shape = shape,
+        clipShape = clipShape,
         squishiness = squishiness,
         hapticsViewModel = state.hapticsViewModel,
         modifier = modifier.sysuiResTag("tile_expandable"),
@@ -405,7 +604,12 @@ private fun ShoalWideTile(
     }
 }
 
-/** Icon-only honeycomb circle: accent fill + ink glyph when on, #172125 + light glyph when off. */
+/**
+ * Icon-only honeycomb circle: accent fill + ink glyph when on, #172125 + light glyph when off.
+ *
+ * A junction tile is the same tile with a smaller glyph ([iconSize]) and an [inset]: its bounds
+ * are the scoop it sits in and take the touches, the circle is drawn [inset] inside them.
+ */
 @Composable
 private fun ShoalCircleTile(
     tile: TileViewModel,
@@ -415,6 +619,8 @@ private fun ShoalCircleTile(
     detailsViewModel: DetailsViewModel?,
     requestToggleTextFeedback: (TileSpec) -> Unit,
     modifier: Modifier = Modifier,
+    iconSize: Dp = ShoalQs.CIRCLE_ICON,
+    inset: Dp = 0.dp,
 ) {
     val state = rememberShoalTileState(tile, tileHapticsViewModelFactory)
     val uiState = state.uiState
@@ -423,11 +629,13 @@ private fun ShoalCircleTile(
     val content by animateColorAsState(colors.content, label = "ShoalCircleContent")
     val isDualTarget = uiState.handlesToggleClick
     val isClickable = uiState.handlesMainClick
+    val shape = if (inset > 0.dp) remember(inset) { ShoalInsetCircle(inset) } else CircleShape
 
     ShoalTileSurface(
         tile = tile,
         color = background,
-        shape = CircleShape,
+        shape = shape,
+        clipShape = CircleShape,
         squishiness = squishiness,
         hapticsViewModel = state.hapticsViewModel,
         modifier = modifier.sysuiResTag("tile_expandable"),
@@ -455,6 +663,17 @@ private fun ShoalCircleTile(
         Box(
             modifier =
                 Modifier.fillMaxSize()
+                    // Keep the press ripple on the circle: with an inset the clickable is larger
+                    // than what is drawn, and the ring between the two is the moat.
+                    .thenIf(inset > 0.dp) {
+                        Modifier.drawWithContent {
+                            val circle =
+                                Path().apply {
+                                    addOval(Rect(center, size.minDimension / 2f - inset.toPx()))
+                                }
+                            clipPath(circle) { this@drawWithContent.drawContent() }
+                        }
+                    }
                     .tileCombinedClickable(
                         onClick = {
                             if (!isClickable) return@tileCombinedClickable
@@ -484,7 +703,7 @@ private fun ShoalCircleTile(
             SmallTileContent(
                 iconProvider = state.iconProvider,
                 color = content,
-                size = { ShoalQs.CIRCLE_ICON },
+                size = { iconSize },
             )
         }
     }
@@ -604,57 +823,81 @@ internal fun honeycombRows(count: Int, max: Int = ShoalQs.MAX_PER_ROW): List<Hon
         }
 }
 
-/** Places circles on [rows]: centred lattice, each row raised by [overlap] into the one above. */
+/** Where [HoneycombLayout] puts its circles: the cell size and each circle's top-left corner. */
+internal class HoneycombGeometry(val cell: Int, val positions: List<IntOffset>, val height: Int)
+
+/**
+ * The positions of [count] circles on [rows] in a layout [maxWidth] wide: centred lattice, each
+ * row raised by [overlap] into the one above. The lattice is centred and is not mirrored for
+ * right-to-left.
+ */
+internal fun Density.honeycombGeometry(
+    rows: List<HoneycombRow>,
+    count: Int,
+    maxWidth: Int,
+    cell: Dp = ShoalQs.CELL,
+    gap: Dp = ShoalQs.GAP,
+    overlap: Dp = ShoalQs.OVERLAP,
+): HoneycombGeometry {
+    val max = ShoalQs.MAX_PER_ROW
+    val gapPx = gap.roundToPx()
+    val cellPx = minOf(cell.roundToPx(), (maxWidth - (max - 1) * gapPx) / max).coerceAtLeast(1)
+    // Keep the nesting proportional if the circles had to shrink.
+    val overlapPx = (overlap.toPx() * cellPx / cell.toPx()).toInt()
+    val pitch = cellPx + gapPx
+    val fullRowWidth = max * cellPx + (max - 1) * gapPx
+    val startX = (maxWidth - fullRowWidth) / 2
+    val rowStep = cellPx - overlapPx
+    val positions = ArrayList<IntOffset>(count)
+    rows.forEachIndexed { r, row ->
+        val rowX = startX + row.halfOffset * pitch / 2
+        for (i in 0 until row.size) {
+            if (positions.size >= count) break
+            positions += IntOffset(rowX + i * pitch, r * rowStep)
+        }
+    }
+    // Anything the row plan didn't cover (shouldn't happen) goes on extra full rows.
+    var extraRow = rows.size
+    var inRow = 0
+    while (positions.size < count) {
+        val offset = if ((extraRow - rows.size) % 2 == 0) 0 else pitch / 2
+        positions += IntOffset(startX + offset + inRow * pitch, extraRow * rowStep)
+        inRow++
+        if (inRow == max - (extraRow - rows.size) % 2) {
+            inRow = 0
+            extraRow++
+        }
+    }
+    val usedRows = if (positions.isEmpty()) 0 else positions.maxOf { it.y } / rowStep + 1
+    val height = if (usedRows == 0) 0 else usedRows * rowStep + overlapPx
+    return HoneycombGeometry(cellPx, positions, height)
+}
+
+/**
+ * Places circles on [rows] (see [honeycombGeometry]). [onGeometry] is told where they went, for
+ * the editor's drop targets.
+ */
 @Composable
-private fun HoneycombLayout(
+internal fun HoneycombLayout(
     rows: List<HoneycombRow>,
     modifier: Modifier = Modifier,
     cell: Dp = ShoalQs.CELL,
     gap: Dp = ShoalQs.GAP,
     overlap: Dp = ShoalQs.OVERLAP,
+    onGeometry: ((HoneycombGeometry) -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     Layout(content = content, modifier = modifier) { measurables, constraints ->
-        val max = ShoalQs.MAX_PER_ROW
-        val gapPx = gap.roundToPx()
         val maxWidth =
             if (constraints.hasBoundedWidth) constraints.maxWidth
-            else (cell.roundToPx() * (max + 1))
-        val cellPx = minOf(cell.roundToPx(), (maxWidth - (max - 1) * gapPx) / max).coerceAtLeast(1)
-        // Keep the nesting proportional if the circles had to shrink.
-        val overlapPx = (overlap.toPx() * cellPx / cell.toPx()).toInt()
-        val placeables = measurables.map { it.measure(Constraints.fixed(cellPx, cellPx)) }
-        val pitch = cellPx + gapPx
-        val fullRowWidth = max * cellPx + (max - 1) * gapPx
-        val startX = (maxWidth - fullRowWidth) / 2
-        val rowStep = cellPx - overlapPx
-        val positions = ArrayList<Pair<Int, Int>>(placeables.size)
-        var index = 0
-        rows.forEachIndexed { r, row ->
-            val rowX = startX + row.halfOffset * pitch / 2
-            for (i in 0 until row.size) {
-                if (index >= placeables.size) break
-                positions += (rowX + i * pitch) to (r * rowStep)
-                index++
-            }
-        }
-        // Anything the row plan didn't cover (shouldn't happen) goes on extra full rows.
-        var extraRow = rows.size
-        var inRow = 0
-        while (positions.size < placeables.size) {
-            val offset = if ((extraRow - rows.size) % 2 == 0) 0 else pitch / 2
-            positions += (startX + offset + inRow * pitch) to (extraRow * rowStep)
-            inRow++
-            if (inRow == max - (extraRow - rows.size) % 2) {
-                inRow = 0
-                extraRow++
-            }
-        }
-        val usedRows = if (placeables.isEmpty()) 0 else positions.maxOf { it.second } / rowStep + 1
-        val height = if (usedRows == 0) 0 else usedRows * rowStep + overlapPx
-        layout(maxWidth, height) {
+            else (cell.roundToPx() * (ShoalQs.MAX_PER_ROW + 1))
+        val geometry = honeycombGeometry(rows, measurables.size, maxWidth, cell, gap, overlap)
+        onGeometry?.invoke(geometry)
+        val placeables =
+            measurables.map { it.measure(Constraints.fixed(geometry.cell, geometry.cell)) }
+        layout(maxWidth, geometry.height) {
             placeables.forEachIndexed { i, placeable ->
-                placeable.place(positions[i].first, positions[i].second)
+                placeable.place(geometry.positions[i].x, geometry.positions[i].y)
             }
         }
     }

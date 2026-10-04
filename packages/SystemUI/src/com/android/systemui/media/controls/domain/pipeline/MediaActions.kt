@@ -179,6 +179,8 @@ private fun getStandardAction(
                 { controller.transportControls.skipToPrevious() },
                 context.getString(R.string.controls_media_button_prev),
                 null,
+                // IchthysOS: see MediaAction.isStandardSkip.
+                isStandardSkip = true,
             )
         }
         PlaybackState.ACTION_SKIP_TO_NEXT -> {
@@ -187,6 +189,8 @@ private fun getStandardAction(
                 { controller.transportControls.skipToNext() },
                 context.getString(R.string.controls_media_button_next),
                 null,
+                // IchthysOS: see MediaAction.isStandardSkip.
+                isStandardSkip = true,
             )
         }
         else -> null

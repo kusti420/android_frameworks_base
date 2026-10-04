@@ -377,6 +377,31 @@ constructor(
                         )
                         interactor.setIsGutsVisible(true)
                     }
+
+                    // IchthysOS: the two members the docked quick settings player needs on top of
+                    // what a card already offers (see MediaCardViewModel).
+                    override val isActive: Boolean
+                        get() = session.isActive
+
+                    override val onSwipeDismiss: (() -> Boolean)?
+                        get() {
+                            if (!session.canBeHidden) return null
+                            return {
+                                val accepted =
+                                    !falsingSystem.isFalseTouch(Classifier.MEDIA_CAROUSEL_SWIPE)
+                                if (accepted) {
+                                    mediaUiEventLogger.logSwipeDismiss()
+                                    // The same call and delay as the guts' "Hide" button; the
+                                    // delay leaves time for the strip to slide away.
+                                    interactor.hide(
+                                        session.key,
+                                        MEDIA_PLAYER_ANIMATION_DELAY_MS,
+                                        userInitiated = true,
+                                    )
+                                }
+                                accepted
+                            }
+                        }
                 }
             }
             .let {
@@ -495,6 +520,8 @@ constructor(
                                 }
                             }
                         },
+                    // IchthysOS: see MediaAction.isStandardSkip.
+                    isStandardSkip = isStandardSkip,
                 )
             is MediaActionModel.ReserveSpace -> MediaSecondaryActionViewModel.ReserveSpace
             is MediaActionModel.None -> MediaSecondaryActionViewModel.None

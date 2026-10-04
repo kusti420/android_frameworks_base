@@ -49,6 +49,7 @@ final class IchthysOptions {
         registerBackground(s);
         registerUi(s);
         registerApps(s);
+        registerBluetooth(s);
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -239,10 +240,42 @@ final class IchthysOptions {
                 new String[] {"followStatusBar", "hidden", "inside", "left", "right"},
                 new String[] {"-1", "0", "1", "2", "3"}, "followStatusBar",
                 "Battery percentage in the QS header.", setting(SYSTEM, "qs_show_battery_percent")));
+
+        // --- Docked media player (begin) ---
+        // The strip above the footer actions of the Shoal quick settings (SystemUI
+        // ShoalMediaDock.kt). Two per-user switches on Look > Quick settings; the reader counts an
+        // unset key as off.
+        s.add(Option.bool("quickSettings.mediaDock.reserveSpace", Boolean.FALSE,
+                "Keep the docked media player's place empty while nothing plays, so the footer "
+                        + "never moves (quickSettings.style = \"shoal\").",
+                setting(SECURE, "ichthys_qs_media_dock_reserve")));
+        s.add(Option.bool("quickSettings.mediaDock.customAction", Boolean.FALSE,
+                "Fourth button on the docked media player: the app's first custom action "
+                        + "(quickSettings.style = \"shoal\").",
+                setting(SECURE, "ichthys_qs_media_dock_custom_action")));
+        // --- Docked media player (end) ---
+
         s.add(Option.enumeration("quickSettings.style", new String[] {"grid", "shoal"},
                 new String[] {"grid", "shoal"}, "shoal",
                 "Tile layout: the standard grid, or the Shoal honeycomb of circles.",
                 setting(SECURE, "ichthys_qs_style")));
+
+        // --- Junction tiles (begin) ---
+        // The tiles sitting where four big tiles of the Shoal quick settings meet (SystemUI
+        // ShoalJunctions.kt). One entry per junction from the top down; "-" leaves a junction
+        // free, so "rotation" "-" "location" fills the first and the third. An empty string
+        // would not do: a stored list drops empty entries and the tiles after it would move up.
+        // No default (no junction tiles) and preserved: it is the layout the user arranged in
+        // the tile editor, which writes the same key. Which tiles are big has no option; that
+        // set lives in SystemUI's own preferences.
+        s.add(Option.stringList("quickSettings.junctions",
+                "Tiles in the junctions between the big tiles, top to bottom, by tile spec "
+                        + "(e.g. \"rotation\" \"-\" \"location\"; \"-\" leaves a junction "
+                        + "free). A junction exists between two full rows of big tiles; a tile "
+                        + "whose junction is missing shows as the first circle "
+                        + "(quickSettings.style = \"shoal\").",
+                setting(SECURE, "ichthys_qs_junctions")).preserved());
+        // --- Junction tiles (end) ---
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -432,5 +465,23 @@ final class IchthysOptions {
                 "Set by Ichthys Apps' first-boot screen once the app list is confirmed; until "
                         + "then it offers the Recommended list instead of installing.",
                 setting(SECURE, "ichthys_apps_confirmed")).preserved());
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // bluetooth.*
+
+    private static void registerBluetooth(OptionSchema s) {
+        // SystemUI's IchthysPodBatteryController; the switches are in Settings > Connected
+        // devices > Connection preferences > Bluetooth. An unset key is the default below.
+        s.add(Option.bool("bluetooth.airpodsBattery", Boolean.TRUE,
+                "Show the battery of each earbud and the case for connected AirPods, read from "
+                        + "the earbuds over their own control channel.",
+                setting(SECURE, "ichthys_airpods_battery")));
+        s.add(Option.bool("bluetooth.airpodsBroadcastFallback", Boolean.FALSE,
+                "When the control channel of the connected AirPods is unavailable, read the "
+                        + "levels that nearby AirPods broadcast over Bluetooth LE instead (tens "
+                        + "of percent; a broadcast cannot be tied to the connected pair, so it "
+                        + "may be someone else's).",
+                setting(SECURE, "ichthys_airpods_battery_broadcast_fallback")));
     }
 }

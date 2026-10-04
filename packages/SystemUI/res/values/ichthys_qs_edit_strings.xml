@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    IchthysOS: strings of the "Shoal" quick settings tile editor (ShoalEditTileGrid.kt). Kept in
+    their own file so the feature can be lifted out (or rebased over an AOSP strings.xml) without a
+    merge conflict.
+-->
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+    <!-- Button that leaves the tile editor. [CHAR LIMIT=12] -->
+    <string name="ichthys_qs_edit_done">Done</string>
+
+    <!-- Label above the wide two-column tiles in the tile editor; shown in capitals, followed by
+         how many there are. [CHAR LIMIT=20] -->
+    <string name="ichthys_qs_edit_big_tiles">Big tiles</string>
+    <!-- Label above the small round tiles in the tile editor; shown in capitals, followed by how
+         many there are. [CHAR LIMIT=20] -->
+    <string name="ichthys_qs_edit_circles">Circles</string>
+    <!-- Short hint next to the "Big tiles" label. [CHAR LIMIT=24] -->
+    <string name="ichthys_qs_edit_drag_to_reorder">drag to reorder</string>
+    <!-- Shown in place of the big tiles when there are none. [CHAR LIMIT=50] -->
+    <string name="ichthys_qs_edit_no_big_tiles">Drop a tile here to make it big</string>
+    <!-- Shown in place of the round tiles when there are none. [CHAR LIMIT=50] -->
+    <string name="ichthys_qs_edit_no_circles">Drop a tile here to make it a circle</string>
+
+    <!-- Hint under the tiles while nothing is selected. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_qs_edit_hint_idle">Hold a tile to move it. Tap one for its options.</string>
+    <!-- Hint under the tiles while a tile is selected and no junction can take it. A junction is
+         the spot where four big tiles meet. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_qs_edit_hint_selected"><xliff:g id="tile" example="Flashlight">%1$s</xliff:g> is selected.</string>
+    <!-- Hint under the tiles while a tile is selected and it can be moved to the junctions that
+         are marked with a dashed ring. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_qs_edit_hint_selected_junctions"><xliff:g id="tile" example="Flashlight">%1$s</xliff:g> is selected. The marked junctions can take it.</string>
+    <!-- Hint under the tiles after an empty junction was tapped: the next tile tapped in the list
+         of available tiles goes there. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_qs_edit_hint_pick">Pick a tile below for junction <xliff:g id="number" example="2">%1$d</xliff:g>.</string>
+
+    <!-- Title of the tray of tiles that are not in the panel yet; followed by how many there
+         are. [CHAR LIMIT=20] -->
+    <string name="ichthys_qs_edit_available">Available</string>
+    <!-- Short hint in the tray of available tiles. [CHAR LIMIT=28] -->
+    <string name="ichthys_qs_edit_tray_hint">tap to add or drag up</string>
+    <!-- Short hint in the tray after an empty junction was tapped. [CHAR LIMIT=28] -->
+    <string name="ichthys_qs_edit_tray_hint_pick">for junction <xliff:g id="number" example="2">%1$d</xliff:g></string>
+    <!-- Short hint in the tray while a tile of the panel is being dragged. [CHAR LIMIT=28] -->
+    <string name="ichthys_qs_edit_tray_hint_remove">drop here to remove</string>
+    <!-- Filter chip in the tray that shows the tiles of every category. [CHAR LIMIT=12] -->
+    <string name="ichthys_qs_edit_category_all">All</string>
+
+    <!-- Where the selected tile is: a wide tile on the left of a row. [CHAR LIMIT=40] -->
+    <string name="ichthys_qs_edit_place_big_left">big tile, row <xliff:g id="row" example="3">%1$d</xliff:g> left</string>
+    <!-- Where the selected tile is: a wide tile on the right of a row. [CHAR LIMIT=40] -->
+    <string name="ichthys_qs_edit_place_big_right">big tile, row <xliff:g id="row" example="3">%1$d</xliff:g> right</string>
+    <!-- Where the selected tile is: one of the small round tiles. [CHAR LIMIT=40] -->
+    <string name="ichthys_qs_edit_place_circle">circle, row <xliff:g id="row" example="1">%1$d</xliff:g></string>
+    <!-- Where the selected tile is: in a junction, the spot where four big tiles meet.
+         [CHAR LIMIT=40] -->
+    <string name="ichthys_qs_edit_place_junction">junction <xliff:g id="number" example="2">%1$d</xliff:g></string>
+
+    <!-- Action for the selected tile: show it as a small round tile. [CHAR LIMIT=14] -->
+    <string name="ichthys_qs_edit_make_small">Make small</string>
+    <!-- Action for the selected tile: show it as a wide tile. [CHAR LIMIT=14] -->
+    <string name="ichthys_qs_edit_make_big">Make big</string>
+    <!-- Action for the selected tile: move it to the first free junction. [CHAR LIMIT=14] -->
+    <string name="ichthys_qs_edit_to_junction">To junction</string>
+    <!-- Content description of the button that clears the selection. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_qs_edit_deselect">Deselect</string>
+
+    <!-- Content description of a junction with no tile in it. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_qs_edit_junction_empty">Junction <xliff:g id="number" example="2">%1$d</xliff:g>, empty</string>
+    <!-- Content description of a tile that sits in a junction. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_qs_edit_junction_tile"><xliff:g id="tile" example="Location">%1$s</xliff:g>, junction <xliff:g id="number" example="2">%2$d</xliff:g></string>
+</resources>

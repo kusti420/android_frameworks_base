@@ -19,6 +19,9 @@ package com.android.systemui.qs.panels.data.repository
 import android.content.Context
 import android.content.IntentFilter
 import android.content.SharedPreferences
+import android.database.ContentObserver
+import android.os.UserHandle
+import android.provider.Settings
 import androidx.core.content.edit
 import com.android.systemui.backup.BackupHelper
 import com.android.systemui.backup.BackupHelper.Companion.ACTION_RESTORE_FINISHED
@@ -41,8 +44,12 @@ import com.android.systemui.util.kotlin.emitOnStart
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
@@ -95,6 +102,41 @@ constructor(
             }
             .flowOn(backgroundDispatcher)
 
+    private val junctionSettingChanges: Flow<Unit> =
+        callbackFlow {
+                val observer =
+                    object : ContentObserver(null) {
+                        override fun onChange(selfChange: Boolean) {
+                            trySend(Unit)
+                        }
+                    }
+                context.contentResolver.registerContentObserver(
+                    Settings.Secure.getUriFor(JUNCTION_TILES_SETTING),
+                    false,
+                    observer,
+                    UserHandle.USER_ALL,
+                )
+                awaitClose { context.contentResolver.unregisterContentObserver(observer) }
+            }
+            .conflate()
+
+    /**
+     * IchthysOS "Shoal": the tiles in the junction slots (where four big tiles meet) for the
+     * current user, top to bottom. A null entry is a free slot; trailing free slots are not
+     * stored.
+     *
+     * Unlike the large tiles this lives in Settings.Secure ([JUNCTION_TILES_SETTING]) and not in
+     * the shared preferences, so that the ichthys.nix option quickSettings.junctions (bound to
+     * the same key by IchthysConfigService) and the tile editor read and write one value.
+     */
+    val junctionTilesSpecs: Flow<List<TileSpec?>> =
+        userRepository.selectedUserInfo
+            .flatMapLatest { userInfo ->
+                junctionSettingChanges.emitOnStart().map { readJunctionTileSpecs(userInfo.id) }
+            }
+            .distinctUntilChanged()
+            .flowOn(backgroundDispatcher)
+
     /** Whether or not the edit icon tooltip was shown for the current user. */
     val editTooltipShown: Flow<Boolean> =
         combine(backupRestorationEvents, userRepository.selectedUserInfo, ::Pair)
@@ -123,6 +165,50 @@ constructor(
             writeLargeTileSpecs(largeSpecs - specs)
             setLargeTilesDefault(false)
         }
+    }
+
+    /**
+     * IchthysOS "Shoal": sets the junction slots for the current user. An empty list (or one with
+     * only free slots) deletes the key, which is the option's default.
+     */
+    fun writeJunctionTileSpecs(slots: List<TileSpec?>) {
+        writeJunctionTileSpecs(userRepository.getSelectedUserInfo().id, slots)
+    }
+
+    /**
+     * IchthysOS "Shoal": frees the junction slots holding any of [specs]. The other slots keep
+     * their position.
+     */
+    fun removeJunctionTileSpecs(specs: Set<TileSpec>) {
+        val userId = userRepository.getSelectedUserInfo().id
+        // Read the stored value rather than the flow's last one, so that a write that has just
+        // happened (an undo, the editor) is not overwritten with something older.
+        val stored = readJunctionTileSpecs(userId)
+        val freed = stored.map { if (it in specs) null else it }
+        if (freed != stored) {
+            writeJunctionTileSpecs(userId, freed)
+        }
+    }
+
+    private fun readJunctionTileSpecs(userId: Int): List<TileSpec?> {
+        return decodeJunctionTiles(
+            Settings.Secure.getStringForUser(
+                context.contentResolver,
+                JUNCTION_TILES_SETTING,
+                userId,
+            )
+        )
+    }
+
+    private fun writeJunctionTileSpecs(userId: Int, slots: List<TileSpec?>) {
+        val encoded = encodeJunctionTiles(slots)
+        logger.i("Junction tiles for user $userId: $encoded")
+        Settings.Secure.putStringForUser(
+            context.contentResolver,
+            JUNCTION_TILES_SETTING,
+            encoded,
+            userId,
+        )
     }
 
     /** Sets the value for whether or not the edit icon tooltip was shown for the current user. */
@@ -281,5 +367,42 @@ constructor(
                 setOf("wifi", "bt", "cell", "dnd"),
             )
         const val FILE_NAME = "quick_settings_prefs"
+
+        /**
+         * IchthysOS "Shoal": Settings.Secure key of the junction slots, the ichthys.nix option
+         * quickSettings.junctions. Tile specs joined with "," from the top junction down, with
+         * [JUNCTION_FREE] for a free slot ("rotation,-,location").
+         */
+        const val JUNCTION_TILES_SETTING = "ichthys_qs_junctions"
+        /**
+         * Marks a free slot. Not an empty entry, because the option's list type drops those and
+         * the slots after it would move up.
+         */
+        const val JUNCTION_FREE = "-"
+
+        /** Parses a stored [JUNCTION_TILES_SETTING] value; anything that is not a tile is free. */
+        fun decodeJunctionTiles(stored: String?): List<TileSpec?> {
+            if (stored.isNullOrEmpty()) return emptyList()
+            return stored
+                .split(",")
+                .map { entry ->
+                    val spec = entry.trim()
+                    if (spec.isEmpty() || spec == JUNCTION_FREE) {
+                        null
+                    } else {
+                        TileSpec.create(spec).takeIf { it != TileSpec.Invalid }
+                    }
+                }
+                .dropLastWhile { it == null }
+        }
+
+        /** The stored form of [slots], or null (delete the key) when no slot holds a tile. */
+        fun encodeJunctionTiles(slots: List<TileSpec?>): String? {
+            val trimmed = slots.dropLastWhile { it == null || it == TileSpec.Invalid }
+            if (trimmed.isEmpty()) return null
+            return trimmed.joinToString(",") { spec ->
+                if (spec == null || spec == TileSpec.Invalid) JUNCTION_FREE else spec.spec
+            }
+        }
     }
 }

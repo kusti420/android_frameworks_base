@@ -29,6 +29,7 @@ import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
@@ -48,9 +49,12 @@ import com.android.systemui.lifecycle.rememberViewModel
 import com.android.systemui.qs.panels.dagger.PaginatedBaseLayoutType
 import com.android.systemui.qs.panels.ui.compose.Dimensions.FooterHeight
 import com.android.systemui.qs.panels.ui.compose.Dimensions.InterPageSpacing
+import com.android.systemui.qs.panels.ui.compose.infinitegrid.LocalShoalJunctionOffset
+import com.android.systemui.qs.panels.ui.compose.infinitegrid.ShoalJunctions
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.ShoalQsColors
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalAccent
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalQsEnabled
+import com.android.systemui.qs.panels.ui.compose.infinitegrid.shoalPages
 import com.android.systemui.qs.panels.ui.compose.toolbar.EditModeButton
 import com.android.systemui.qs.panels.ui.viewmodel.PaginatedGridViewModel
 import com.android.systemui.qs.panels.ui.viewmodel.TileViewModel
@@ -84,17 +88,24 @@ constructor(
         val rows = viewModel.rows
         // IchthysOS "Shoal": pages are filled by the Shoal layout's own capacity (wide tiles two
         // per row, a denser honeycomb), not by the stock grid's row count, which split a half-empty
-        // panel onto a second page.
+        // panel onto a second page. See shoalPages in ShoalJunctions.kt.
         val shoalPaging = rememberShoalQsEnabled()
-        val shoalLarge =
+        val shoalIconTiles =
             (delegateGridViewModel as? com.android.systemui.qs.panels.ui.viewmodel.InfiniteGridViewModel)
                 ?.iconTilesViewModel
-                ?.largeTilesState
-                ?.value
+        val shoalLarge = shoalIconTiles?.largeTilesState?.value
+        val shoalJunctions = shoalIconTiles?.junctionTilesState?.value
         val pages =
-            remember(tiles, rows, shoalPaging, shoalLarge, *delegateGridViewModel.pageKeys) {
+            remember(
+                tiles,
+                rows,
+                shoalPaging,
+                shoalLarge,
+                shoalJunctions,
+                *delegateGridViewModel.pageKeys,
+            ) {
                 if (shoalPaging && shoalLarge != null) {
-                    shoalPages(tiles) { it.spec in shoalLarge }
+                    shoalPages(tiles, shoalLarge, shoalJunctions ?: emptyList()) { it.spec }
                 } else {
                     delegateGridViewModel.splitIntoPages(tiles, rows)
                 }
@@ -155,13 +166,19 @@ constructor(
             ) {
                 val page = pages[it]
 
-                with(delegateGridLayout) {
-                    TileGrid(
-                        tiles = page,
-                        modifier = Modifier,
-                        listening = listening,
-                        enableRevealEffect = false,
-                    )
+                // IchthysOS "Shoal": each page has its own junctions; tell the grid which slots
+                // of the junction list are this page's.
+                CompositionLocalProvider(
+                    LocalShoalJunctionOffset provides it * ShoalJunctions.PER_PAGE
+                ) {
+                    with(delegateGridLayout) {
+                        TileGrid(
+                            tiles = page,
+                            modifier = Modifier,
+                            listening = listening,
+                            enableRevealEffect = false,
+                        )
+                    }
                 }
             }
             FooterBar(
@@ -231,29 +248,4 @@ private fun FooterBar(
             EditModeButton(viewModel = editButtonViewModel, isVisible = isVisible())
         }
     }
-}
-
-/** Shoal page capacity: up to 5 rows of wide tiles and a 6/5/6 honeycomb per page. */
-private const val SHOAL_WIDE_PER_PAGE = 10
-private const val SHOAL_SMALL_PER_PAGE = 17
-
-private fun shoalPages(
-    tiles: List<TileViewModel>,
-    isLarge: (TileViewModel) -> Boolean,
-): List<List<TileViewModel>> {
-    val pages = mutableListOf<MutableList<TileViewModel>>()
-    var wide = 0
-    var small = 0
-    for (tile in tiles) {
-        val large = isLarge(tile)
-        val full = if (large) wide >= SHOAL_WIDE_PER_PAGE else small >= SHOAL_SMALL_PER_PAGE
-        if (pages.isEmpty() || full) {
-            pages.add(mutableListOf())
-            wide = 0
-            small = 0
-        }
-        pages.last().add(tile)
-        if (large) wide++ else small++
-    }
-    return pages
 }

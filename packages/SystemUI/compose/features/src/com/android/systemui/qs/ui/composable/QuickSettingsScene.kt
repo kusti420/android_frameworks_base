@@ -85,6 +85,7 @@ import com.android.systemui.notifications.ui.composable.ScrollingNotificationPan
 import com.android.systemui.qs.composefragment.ui.GridAnchor
 import com.android.systemui.qs.footer.ui.compose.FooterActionsWithAnimatedVisibility
 import com.android.systemui.qs.panels.ui.compose.EditMode
+import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalQsEnabled
 import com.android.systemui.qs.shared.ui.QuickSettings
 import com.android.systemui.qs.ui.composable.QuickSettingsScene.Companion.InternalScenes.Edit
 import com.android.systemui.qs.ui.composable.QuickSettingsScene.Companion.InternalScenes.QS
@@ -402,7 +403,18 @@ private fun ContentScope.QuickSettingsContent(
             modifier =
                 Modifier.fillMaxSize().overscroll(verticalOverscrollEffect).padding(navBarInsets),
         ) {
-            Box(modifier = Modifier.fillMaxSize().weight(1f)) {
+            // IchthysOS "Shoal": the media player is a strip docked between the scrolling part and
+            // the footer actions, in the non-scrolling part, instead of a carousel at the end of
+            // the scrolling content. In the grid style the host is the plain box that was here.
+            ShoalMediaDockHost(
+                isDocked = rememberShoalQsEnabled(),
+                viewModelFactory = viewModel.qsContainerViewModel.mediaViewModelFactory,
+                onCarouselDismissed = viewModel.qsContainerViewModel::onMediaSwipeToDismiss,
+                modifier = Modifier.fillMaxSize().weight(1f),
+                // In line with the tiles (see the paddings of QuickSettingsContent).
+                horizontalPadding =
+                    shadeHorizontalPadding + dimensionResource(id = R.dimen.qs_horizontal_margin),
+            ) {
                 Column(
                     modifier =
                         Modifier.disableSwipesWhenScrolling()

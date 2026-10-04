@@ -27,6 +27,7 @@ import com.android.compose.animation.scene.TransitionBuilder
 import com.android.compose.animation.scene.transformation.seekSharedElementToOffsetUntilRelease
 import com.android.systemui.notifications.ui.composable.Notifications
 import com.android.systemui.qs.shared.ui.QuickSettings
+import com.android.systemui.qs.ui.composable.ShoalMediaDock
 import com.android.systemui.shade.ui.composable.Shade
 import com.android.systemui.shade.ui.composable.ShadeHeader
 import kotlin.time.Duration.Companion.milliseconds
@@ -50,6 +51,8 @@ fun TransitionBuilder.toSingleShadeTransition(
     fractionRange(start = .58f) {
         fade(QuickSettings.Elements.SplitShadeQuickSettings)
         fade(QuickSettings.Elements.FooterActions)
+        // IchthysOS "Shoal": the docked media strip goes with the footer actions.
+        fade(ShoalMediaDock.Elements.Dock)
         if (isLargeScreenPortrait) {
             fade(QuickSettings.Elements.QuickQuickSettingsAndMedia)
             fade(Notifications.Elements.NotificationScrim)

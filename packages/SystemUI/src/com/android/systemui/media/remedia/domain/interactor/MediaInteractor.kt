@@ -370,6 +370,8 @@ constructor(
                             contentDescription?.let { ContentDescription.Loaded(it.toString()) },
                     ),
                 onClick = { action?.run() },
+                // IchthysOS: see MediaAction.isStandardSkip.
+                isStandardSkip = isStandardSkip,
             )
         } ?: MediaActionModel.None
     }

@@ -43,6 +43,7 @@ import com.android.systemui.media.remedia.ui.compose.Media
 import com.android.systemui.media.remedia.ui.compose.MediaPresentationStyle
 import com.android.systemui.qs.composefragment.ui.GridAnchor
 import com.android.systemui.qs.panels.ui.compose.TileGrid
+import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalQsEnabled
 import com.android.systemui.qs.shared.ui.QuickSettings.Elements
 import com.android.systemui.qs.ui.viewmodel.QuickSettingsContainerViewModel
 import com.android.systemui.res.R
@@ -55,6 +56,10 @@ fun ContentScope.QuickSettingsContent(
     modifier: Modifier = Modifier,
     mediaSquishiness: () -> Float = { 1f },
 ) {
+    // IchthysOS "Shoal": the player is docked above the footer actions, outside this scrolling
+    // content (see ShoalMediaDockHost), so the carousel must not be here a second time. The grid
+    // style keeps it where it was.
+    val isMediaDocked = rememberShoalQsEnabled()
     QuickSettingsPanelLayout(
         brightness =
             @Composable {
@@ -104,25 +109,30 @@ fun ContentScope.QuickSettingsContent(
                 }
             },
         media =
-            @Composable {
-                if (isAlwaysComposedContentVisible()) {
-                    Element(key = Media.Elements.MediaCarousel, modifier = Modifier) {
-                        Media(
-                            viewModelFactory = viewModel.mediaViewModelFactory,
-                            presentationStyle = MediaPresentationStyle.Default,
-                            behavior = QuickSettingsContainerViewModel.mediaUiBehavior,
-                            onDismissed = viewModel::onMediaSwipeToDismiss,
-                            mediaSquishiness = mediaSquishiness,
-                            location = Media.Location.QS,
-                        )
+            if (isMediaDocked) {
+                null
+            } else {
+                @Composable {
+                    if (isAlwaysComposedContentVisible()) {
+                        Element(key = Media.Elements.MediaCarousel, modifier = Modifier) {
+                            Media(
+                                viewModelFactory = viewModel.mediaViewModelFactory,
+                                presentationStyle = MediaPresentationStyle.Default,
+                                behavior = QuickSettingsContainerViewModel.mediaUiBehavior,
+                                onDismissed = viewModel::onMediaSwipeToDismiss,
+                                mediaSquishiness = mediaSquishiness,
+                                location = Media.Location.QS,
+                            )
+                        }
+                    } else {
+                        // Add an empty box when QS content is not visible to keep the same number
+                        // of elements.
+                        Box(modifier = Modifier)
                     }
-                } else {
-                    // Add an empty box when QS content is not visible to keep the same number of
-                    // elements.
-                    Box(modifier = Modifier)
                 }
             },
-        mediaInRow = mediaInRow,
+        // IchthysOS: without the carousel there is nothing to put beside the tiles.
+        mediaInRow = mediaInRow && !isMediaDocked,
         modifier =
             modifier
                 .element(Elements.QuickSettingsContent)
@@ -135,7 +145,8 @@ fun ContentScope.QuickSettingsContent(
 private fun QuickSettingsPanelLayout(
     brightness: @Composable () -> Unit,
     tiles: @Composable () -> Unit,
-    media: @Composable () -> Unit,
+    // IchthysOS: null when the media player is docked outside this layout.
+    media: (@Composable () -> Unit)?,
     mediaInRow: Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -151,7 +162,7 @@ private fun QuickSettingsPanelLayout(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(modifier = Modifier.weight(1f)) { tiles() }
-                Box(modifier = Modifier.weight(1f)) { media() }
+                Box(modifier = Modifier.weight(1f)) { media?.invoke() }
             }
         }
     } else {
@@ -162,7 +173,7 @@ private fun QuickSettingsPanelLayout(
         ) {
             brightness()
             tiles()
-            media()
+            media?.invoke()
         }
     }
 }

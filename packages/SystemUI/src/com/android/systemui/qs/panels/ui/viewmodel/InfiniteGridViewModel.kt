@@ -55,6 +55,8 @@ constructor(
                 columnsWithMediaViewModel.columns,
                 columnsWithMediaViewModel.largeSpan,
                 iconTilesViewModel.largeTilesState.value,
+                // IchthysOS "Shoal": a tile moving into or out of a junction changes the pages.
+                iconTilesViewModel.junctionTilesState.value,
             )
 
     override fun splitIntoPages(tiles: List<TileViewModel>, rows: Int): List<List<TileViewModel>> {

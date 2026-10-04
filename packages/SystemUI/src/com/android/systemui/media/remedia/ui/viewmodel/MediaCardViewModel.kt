@@ -65,4 +65,19 @@ interface MediaCardViewModel {
     val contentDescription: String
 
     val onLongClick: () -> Unit
+
+    /**
+     * IchthysOS: whether the session behind this card is active (not timed out or swiped away).
+     * The docked quick settings player (ShoalMediaDock) shows the first active card.
+     */
+    val isActive: Boolean
+        get() = true
+
+    /**
+     * IchthysOS: dismisses this session the way the "Hide" button of the guts does (stops a local
+     * session and removes its player), or `null` when the session can't be dismissed. Returns
+     * whether the dismissal was accepted; the falsing system may reject the swipe.
+     */
+    val onSwipeDismiss: (() -> Boolean)?
+        get() = null
 }

@@ -87,6 +87,7 @@ constructor(
         val columns = viewModel.columnsWithMediaViewModel.columns
         val largeTilesSpan = viewModel.columnsWithMediaViewModel.largeSpan
         val largeTiles by viewModel.iconTilesViewModel.largeTilesState
+        val junctionTiles by viewModel.iconTilesViewModel.junctionTilesState
         // Tiles or largeTiles may be updated while this is composed, so listen to any changes
         // Android 8.1-style QS: every tile occupies a single uniform grid cell (no large tiles),
         // rendered as icon-over-label. largeTiles/largeTilesSpan are intentionally still read so
@@ -103,6 +104,7 @@ constructor(
             ShoalTileGrid(
                 tiles = tiles,
                 largeTiles = largeTiles,
+                junctionTiles = junctionTiles,
                 squishiness = { squishiness },
                 coroutineScope = scope,
                 tileHapticsViewModelFactory = tileHapticsViewModelFactory,
@@ -203,23 +205,46 @@ constructor(
             remember(topBarActionsViewModel, showDualShadeSetting) {
                 topBarActionsViewModel.actions(showDualShadeSetting).toMutableStateList()
             }
-        // IchthysOS "Shoal": the live grid is two wide tiles per row over a honeycomb of circles,
-        // so edit it as a 4-column grid where big (large) tiles span 2 and small ones 1, with the
-        // big tiles first - the order the live grid shows them in. Big vs small is the stock
-        // large-tiles set (resize handle / tap on the selected tile), persisted per user.
-        val shoal = rememberShoalQsEnabled()
-        val columns = if (shoal) 4 else columnsViewModel.columns
-        val largeTilesSpan = if (shoal) 2 else columnsViewModel.largeSpan
         val largeTiles by viewModel.iconTilesViewModel.largeTilesState
 
-        val currentTiles by
-            rememberUpdatedState(
-                tiles
-                    .filter { it.isCurrent }
-                    .let { current ->
-                        if (shoal) current.sortedBy { it.tileSpec !in largeTiles } else current
+        val currentTiles by rememberUpdatedState(tiles.filter { it.isCurrent })
+
+        // IchthysOS "Shoal" has its own editor, which shows the panel as it is laid out (big
+        // tiles, junctions, honeycomb) instead of a grid of cells. It shares the snapshots (undo)
+        // and the reset dialog with the stock editor below.
+        if (rememberShoalQsEnabled()) {
+            val junctionTiles by viewModel.iconTilesViewModel.junctionTilesState
+            ShoalEditTileGrid(
+                tiles = tiles,
+                largeTiles = largeTiles,
+                junctionTiles = junctionTiles,
+                canUndo = snapshotViewModel.canUndo,
+                topBarActions = actions,
+                scrollState = scrollState,
+                onUndo = snapshotViewModel::undo,
+                onReset = { dialogDelegate.showDialog() },
+                onStopEditing = onStopEditing,
+                onLayout = { layout ->
+                    snapshotViewModel.takeSnapshot(
+                        currentTiles.map { it.tileSpec },
+                        largeTiles,
+                        junctionTiles,
+                    )
+                    // Slots and sizes first: both are in place by the time the new tile list
+                    // (written asynchronously) arrives, so a new tile shows up where it belongs.
+                    iconTilesViewModel.setShoalLayout(layout.big.toSet(), layout.slots)
+                    val specs = layout.tileSpecs()
+                    if (specs != currentTiles.map { it.tileSpec }) {
+                        onSetTiles(specs)
                     }
+                },
+                modifier = modifier,
             )
+            return
+        }
+
+        val columns = columnsViewModel.columns
+        val largeTilesSpan = columnsViewModel.largeSpan
         val listState =
             remember(columns, largeTilesSpan) {
                 EditTileListState(

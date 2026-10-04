@@ -25,9 +25,22 @@ import kotlinx.coroutines.flow.StateFlow
 interface IconTilesViewModel {
     val largeTiles: StateFlow<Set<TileSpec>>
 
+    /**
+     * IchthysOS "Shoal": the tiles in the junction slots between the big tiles, top to bottom. A
+     * null entry is a free slot.
+     */
+    val junctionTiles: StateFlow<List<TileSpec?>>
+
     fun isIconTile(spec: TileSpec): Boolean
 
     fun resize(spec: TileSpec, toIcon: Boolean)
+
+    /**
+     * IchthysOS "Shoal": sets which tiles are big and which sit in the junction slots in one go,
+     * as arranged in the Shoal tile editor. Unlike [resize] this also takes tiles that are only
+     * about to become current (a tile dragged in from the tray).
+     */
+    fun setShoalLayout(largeTiles: Set<TileSpec>, junctionTiles: List<TileSpec?>)
 }
 
 @SysUISingleton
@@ -35,7 +48,16 @@ class IconTilesViewModelImpl @Inject constructor(private val interactor: IconTil
     IconTilesViewModel {
     override val largeTiles = interactor.largeTilesSpecs
 
+    override val junctionTiles = interactor.junctionTilesSpecs
+
     override fun isIconTile(spec: TileSpec): Boolean = interactor.isIconTile(spec)
 
     override fun resize(spec: TileSpec, toIcon: Boolean) = interactor.resize(spec, toIcon)
+
+    override fun setShoalLayout(largeTiles: Set<TileSpec>, junctionTiles: List<TileSpec?>) {
+        // Written even when they look unchanged: the flows above trail the stores, and two quick
+        // edits could otherwise leave the first one in place.
+        interactor.setJunctionTiles(junctionTiles)
+        interactor.setLargeTiles(largeTiles)
+    }
 }

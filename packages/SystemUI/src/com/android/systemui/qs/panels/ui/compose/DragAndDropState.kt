@@ -171,6 +171,60 @@ fun Modifier.dragAndDropTileList(
     )
 }
 
+/**
+ * IchthysOS "Shoal": registers a composable as the one [DragAndDropTarget] of a whole editor.
+ *
+ * The Shoal editor lays its tiles out itself and works out from the position alone what a drop
+ * would do, so unlike [dragAndDropTileList] it only wants the raw events: where the drag is (in
+ * root coordinates, as [DragAndDropState.draggedPosition]) and that it finished. A drag that ends
+ * without a drop being delivered still finishes, like in [dragAndDropTileList].
+ *
+ * @param dragAndDropState The [DragAndDropState] of the editor
+ * @param onMoved Callback for every position of the drag
+ * @param onDrop Callback when the drag finishes, before [DragAndDropState.onDrop] clears it
+ */
+@Composable
+fun Modifier.dragAndDropTileArea(
+    dragAndDropState: DragAndDropState,
+    onMoved: (Offset) -> Unit,
+    onDrop: (TileSpec) -> Unit,
+): Modifier {
+    val currentOnMoved by rememberUpdatedState(onMoved)
+    val currentOnDrop by rememberUpdatedState(onDrop)
+    val target =
+        remember(dragAndDropState) {
+            object : DragAndDropTarget {
+                override fun onEnded(event: DragAndDropEvent) {
+                    onDropInternal()
+                }
+
+                override fun onMoved(event: DragAndDropEvent) {
+                    val offset = event.toOffset()
+                    dragAndDropState.onMoved(offset)
+                    currentOnMoved(offset)
+                }
+
+                override fun onDrop(event: DragAndDropEvent): Boolean {
+                    return onDropInternal()
+                }
+
+                private fun onDropInternal(): Boolean {
+                    return dragAndDropState.draggedCell?.let {
+                        currentOnDrop(it.tile.tileSpec)
+                        dragAndDropState.onDrop()
+                        true
+                    } ?: false
+                }
+            }
+        }
+    return dragAndDropTarget(
+        target = target,
+        shouldStartDragAndDrop = { event ->
+            event.mimeTypes().contains(QsDragAndDrop.TILESPEC_MIME_TYPE)
+        },
+    )
+}
+
 private fun DragAndDropEvent.toOffset(): Offset {
     return toAndroidDragEvent().run { Offset(x, y) }
 }

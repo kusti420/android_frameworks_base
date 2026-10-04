@@ -157,6 +157,12 @@ data class MediaAction(
     // to prevent continuously looping animations from restarting due to the arrival
     // of repeated media notifications that are visually identical.
     val rebindId: Int? = null,
+
+    // IchthysOS: true when this is the system's own skip-to-previous / skip-to-next button (the
+    // session supports the standard command), false for an app's custom action and everything
+    // else. The docked quick settings player (ShoalMediaDock) draws its own glyph for the standard
+    // skips and must keep the app's icon for a custom action that sits in the same slot.
+    val isStandardSkip: Boolean = false,
 )
 
 /** State of a media action from notification. */

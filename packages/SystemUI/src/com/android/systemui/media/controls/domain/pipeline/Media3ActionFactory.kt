@@ -295,6 +295,9 @@ constructor(
                         action = { executeAction(packageName, token, command) },
                         contentDescription = getDescriptionForAction(command),
                         background = null,
+                        // IchthysOS: see MediaAction.isStandardSkip. Besides play/pause, this
+                        // function is only asked for the previous / next commands.
+                        isStandardSkip = true,
                     )
                 }
             }

@@ -14,6 +14,7 @@ import com.android.systemui.media.remedia.ui.compose.Media.Elements.MediaCarouse
 import com.android.systemui.notifications.ui.composable.Notifications
 import com.android.systemui.qs.shared.ui.QuickSettings.Elements
 import com.android.systemui.qs.shared.ui.QuickSettings.SHARED_TILE_PICKER_THRESHOLD
+import com.android.systemui.qs.ui.composable.ShoalMediaDock
 import com.android.systemui.scene.shared.model.Scenes
 import com.android.systemui.shade.ui.composable.ShadeHeader
 import kotlin.time.Duration.Companion.milliseconds
@@ -39,7 +40,13 @@ fun TransitionBuilder.shadeToQuickSettingsTransition(
     // shows through it early and gradually. Reversed (Quick Settings to Shade) it fades back in
     // over the same stretch.
     fractionRange(start = 0.3f, end = 0.7f) { fade(Notifications.Elements.NotificationScrim) }
-    timestampRange(endMillis = 83) { fade(Elements.FooterActions) }
+    timestampRange(endMillis = 83) {
+        fade(Elements.FooterActions)
+        // IchthysOS "Shoal": the docked media strip sits right above the footer actions and comes
+        // and goes with them. Fully there this early, it shows through the notification panel as
+        // that fades out over it, instead of popping in when the panel has left.
+        fade(ShoalMediaDock.Elements.Dock)
+    }
 
     fractionRange(start = 0.43f, end = 1f - SHARED_TILE_PICKER_THRESHOLD) {
         fade(Elements.QuickSettingsContent)

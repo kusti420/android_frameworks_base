@@ -49,12 +49,23 @@ constructor(
         snapshots.removeLastOrNull()?.let {
             currentTilesInteractor.setTiles(it.tiles)
             iconTilesInteractor.setLargeTiles(it.largeTiles)
+            // IchthysOS "Shoal": the junction slots are part of the layout that is undone.
+            iconTilesInteractor.setJunctionTiles(it.junctionTiles)
         }
     }
 
-    /** Create a snapshot of the current tiles and large tiles and save it. */
-    fun takeSnapshot(tiles: List<TileSpec>, largeTiles: Set<TileSpec>) {
-        val snapshot = InfiniteGridSnapshot(tiles, largeTiles)
+    /**
+     * Create a snapshot of the current tiles and large tiles and save it.
+     *
+     * IchthysOS "Shoal": [junctionTiles] are the junction slots at the time of the snapshot; the
+     * stock grid editor never changes them and leaves the default.
+     */
+    fun takeSnapshot(
+        tiles: List<TileSpec>,
+        largeTiles: Set<TileSpec>,
+        junctionTiles: List<TileSpec?> = iconTilesInteractor.junctionTilesSpecs.value,
+    ) {
+        val snapshot = InfiniteGridSnapshot(tiles, largeTiles, junctionTiles)
         if (snapshot != snapshots.lastOrNull()) {
             snapshots.add(snapshot)
         }
@@ -73,7 +84,11 @@ constructor(
         fun create(): InfiniteGridSnapshotViewModel
     }
 
-    data class InfiniteGridSnapshot(val tiles: List<TileSpec>, val largeTiles: Set<TileSpec>)
+    data class InfiniteGridSnapshot(
+        val tiles: List<TileSpec>,
+        val largeTiles: Set<TileSpec>,
+        val junctionTiles: List<TileSpec?> = emptyList(),
+    )
 
     private companion object {
         const val SNAPSHOTS_MAX_SIZE = 10

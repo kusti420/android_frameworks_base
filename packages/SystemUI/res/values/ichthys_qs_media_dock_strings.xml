@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    IchthysOS: accessibility labels of the docked media player in quick settings (ShoalMediaDock).
+    Kept in their own file so the feature can be lifted out (or rebased over an AOSP strings.xml)
+    without a merge conflict.
+-->
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+    <!-- Click label of the docked player strip: tapping it opens the full player (seek bar, output
+         switcher, all actions) over the tiles. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_qs_media_dock_open">Open player</string>
+    <!-- Content description of the dimmed area behind the full player: tapping it closes the
+         player again. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_qs_media_dock_close">Close player</string>
+</resources>
