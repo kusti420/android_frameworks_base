@@ -40,6 +40,7 @@ val Kosmos.brightnessSliderViewModelFactory: BrightnessSliderViewModel.Factory b
                     brightnessWarningToast = brightnessWarningToast,
                     imageLoader = imageLoader,
                     nightLightControllerLazy = { mock() },
+                    nightLightDialogLazy = { mock() },
                 )
             }
         }

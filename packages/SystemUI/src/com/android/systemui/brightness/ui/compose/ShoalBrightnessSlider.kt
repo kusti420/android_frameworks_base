@@ -20,7 +20,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.DragInteraction
@@ -136,6 +136,7 @@ internal fun ShoalBrightnessSlider(
     nightMode: IchthysNightLightController.Mode?,
     nightTinted: Boolean,
     onToggleNightLight: () -> Unit,
+    onNightLightLongClick: () -> Unit,
     onDrag: (Int) -> Unit,
     onStop: (Int) -> Unit,
     modifier: Modifier = Modifier,
@@ -251,6 +252,8 @@ internal fun ShoalBrightnessSlider(
                         textStyle = TextStyle(fontSize = 12.sp, fontFamily = fonts.mono),
                         contentDescription = "$nightLabel, $nightState",
                         onClick = onToggleNightLight,
+                        // The tile's long press: its temperature and schedule dialog.
+                        onLongClick = onNightLightLongClick,
                     )
                     Spacer(Modifier.width(6.dp))
                 }
@@ -619,6 +622,7 @@ private fun ShoalPill(
     colors: ShoalBrightnessColors,
     textStyle: TextStyle,
     contentDescription: String,
+    onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(14.dp)
@@ -642,7 +646,7 @@ private fun ShoalPill(
                 .clip(shape)
                 .background(if (fill) colors.accent else Color.Transparent, shape)
                 .border(outlineWidth, outline, shape)
-                .clickable(enabled = enabled, onClick = onClick)
+                .combinedClickable(enabled = enabled, onLongClick = onLongClick, onClick = onClick)
                 .semantics { this.contentDescription = contentDescription }
                 .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,

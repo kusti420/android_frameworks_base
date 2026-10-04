@@ -107,6 +107,7 @@ import com.android.systemui.res.R
 import com.android.systemui.util.policy.PolicyRestriction
 // IchthysOS: crDroid's "Auto brightness icon" switch is a LineageSecureSettingSwitchPreference, so
 // its value lives in the lineagesettings provider, not android.provider.Settings.
+import kotlinx.coroutines.launch
 import lineageos.providers.LineageSettings
 import platform.test.motion.compose.values.MotionTestValueKey
 import platform.test.motion.compose.values.motionTestValues
@@ -621,6 +622,7 @@ fun BrightnessSliderContainer(
 
     val nightController = viewModel.nightLight
     val nightState = rememberNightLightState(context, nightController)
+    val nightDialogScope = rememberCoroutineScope()
 
     ShoalBrightnessSlider(
         gamma = gamma,
@@ -675,6 +677,9 @@ fun BrightnessSliderContainer(
                     else -> IchthysNightLightController.Mode.ON
                 }
             )
+        },
+        onNightLightLongClick = {
+            nightDialogScope.launch { viewModel.nightLightDialog.showDialog() }
         },
         // The setting is written once, when the floor drag ends, and never per drag frame: doing it
         // live would spam the settings provider and every observer of the floor value.
