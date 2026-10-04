@@ -52,6 +52,7 @@ import com.android.systemui.media.taptotransfer.MediaTttCommandLineHelper
 import com.android.systemui.media.taptotransfer.receiver.MediaTttChipControllerReceiver
 import com.android.systemui.media.taptotransfer.sender.MediaTttSenderCoordinator
 import com.android.systemui.mediaprojection.taskswitcher.MediaProjectionTaskSwitcherCoreStartable
+import com.android.systemui.qs.panels.ui.compose.infinitegrid.ShoalQsColorsStartable
 import com.android.systemui.shortcut.ShortcutKeyDispatcher
 import com.android.systemui.smartpixels.SmartPixelsController
 import com.android.systemui.statusbar.ImmersiveModeConfirmation
@@ -118,6 +119,12 @@ abstract class SystemUICoreStartableModule {
     abstract fun bindIchthysPodBatteryController(
         sysui: IchthysPodBatteryController
     ): CoreStartable
+
+    /** IchthysOS "Shoal": quick settings colours follow the theme tokens. */
+    @Binds
+    @IntoMap
+    @ClassKey(ShoalQsColorsStartable::class)
+    abstract fun bindShoalQsColorsStartable(sysui: ShoalQsColorsStartable): CoreStartable
 
     /** Inject into GlobalActionsComponent. */
     @Binds

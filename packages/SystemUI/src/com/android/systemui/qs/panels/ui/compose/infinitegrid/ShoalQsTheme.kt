@@ -26,8 +26,10 @@ import android.os.UserHandle
 import android.provider.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.ExperimentalTextApi
@@ -39,29 +41,88 @@ import org.json.JSONObject
 
 /**
  * IchthysOS "Shoal" quick settings palette and type. Everything here only applies while
- * Settings.Secure ichthys_qs_style = "shoal" (see [rememberShoalQsEnabled]), with one exception: the
- * brightness block is the same in every tile layout and takes its colours from the framework
- * ichthys_* tokens, not from this table (see ShoalBrightnessSlider).
+ * Settings.Secure ichthys_qs_style = "shoal" (see [rememberShoalQsEnabled]).
+ *
+ * The colours are the framework ichthys_* tokens, which the theme engine fills from ichthys.nix
+ * for dark and for light. They are read once and again whenever the theme or the night mode
+ * changes ([update], called by [ShoalQsColorsStartable]), and kept in snapshot state, so
+ * compositions and draw scopes that read them follow the theme without holding a context.
  */
 object ShoalQsColors {
+    private var palette by mutableStateOf(Palette())
+
     /** The ground the panel sits on. */
-    val Ink = Color(0xFF07090B)
+    val Ink: Color
+        get() = palette.ink
+
     /** Recessed track surface (footer buttons, edit-mode grid). */
-    val Track = Color(0xFF0C1013)
+    val Track: Color
+        get() = palette.track
+
     /** 1 dp hairline around recessed surfaces. */
-    val Hairline = Color(0xFF20282D)
+    val Hairline: Color
+        get() = palette.hairline
+
     /** Filled "off" surface for tiles. */
-    val TileOff = Color(0xFF172125)
+    val TileOff: Color
+        get() = palette.tileOff
+
     /** Foreground on off tiles. */
-    val OnTileOff = Color(0xFFF2F4F1)
+    val OnTileOff: Color
+        get() = palette.onTileOff
+
+    /** Foreground on the accent (active tiles). */
+    val OnAccent: Color
+        get() = palette.onAccent
+
     /** Primary label text. */
-    val Label = Color(0xFFC9CECA)
+    val Label: Color
+        get() = palette.label
+
     /** Secondary / numeric text. */
-    val Muted = Color(0xFF8B938F)
+    val Muted: Color
+        get() = palette.muted
+
     /** Inactive pager dot. */
-    val DotInactive = Color(0xFF2A3136)
+    val DotInactive: Color
+        get() = palette.dotInactive
+
     /** Fallback when no accent can be resolved (Koi). */
     val KoiAccent = Color(0xFFFF6B3D)
+
+    /** Re-reads the tokens; call on the main thread when the theme or night mode changed. */
+    fun update(context: Context) {
+        palette =
+            Palette(
+                ink = context.token(com.android.internal.R.color.ichthys_ink),
+                track = context.token(com.android.internal.R.color.ichthys_card),
+                hairline = context.token(com.android.internal.R.color.ichthys_hairline),
+                tileOff = context.token(com.android.internal.R.color.ichthys_tile),
+                onTileOff = context.token(com.android.internal.R.color.ichthys_text),
+                onAccent = context.token(com.android.internal.R.color.ichthys_on_accent),
+                label = context.token(com.android.internal.R.color.ichthys_body),
+                muted = context.token(com.android.internal.R.color.ichthys_muted),
+                dotInactive = context.token(com.android.internal.R.color.ichthys_outline),
+            )
+    }
+
+    private fun Context.token(id: Int): Color = Color(getColor(id))
+
+    /**
+     * The defaults are the dark koi ramp: what shows until the first [update], which runs when
+     * SystemUI starts, before any quick settings composition.
+     */
+    private data class Palette(
+        val ink: Color = Color(0xFF07090B),
+        val track: Color = Color(0xFF0C1013),
+        val hairline: Color = Color(0xFF20282D),
+        val tileOff: Color = Color(0xFF172125),
+        val onTileOff: Color = Color(0xFFF2F4F1),
+        val onAccent: Color = Color(0xFF07090B),
+        val label: Color = Color(0xFFC9CECA),
+        val muted: Color = Color(0xFF8B938F),
+        val dotInactive: Color = Color(0xFF2A3136),
+    )
 }
 
 // region style setting

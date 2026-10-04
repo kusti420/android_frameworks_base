@@ -500,7 +500,9 @@ public class FooterView extends StackScrollerDecorView {
         final boolean ink = ShoalShade.isInk(context);
         final int accent = ShoalShade.accent(context);
         mClearAllButton.setBackground(ShoalShade.pill(context, accent, 0, 40));
-        mClearAllButton.setTextColor(ShoalShade.INK);
+        // The theme's own colour for content on the accent, right in light and dark.
+        mClearAllButton.setTextColor(
+                context.getColor(com.android.internal.R.color.ichthys_on_accent));
         mClearAllButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f);
         mClearAllButton.setTypeface(ShoalShade.text(context, 600));
 

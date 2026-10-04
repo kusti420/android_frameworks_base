@@ -386,7 +386,7 @@ private data class ShoalTileColors(val background: Color, val content: Color)
 
 private fun shoalTileColors(uiState: TileUiState, accent: Color): ShoalTileColors =
     when (uiState.visualState) {
-        STATE_ACTIVE -> ShoalTileColors(accent, ShoalQsColors.Ink)
+        STATE_ACTIVE -> ShoalTileColors(accent, ShoalQsColors.OnAccent)
         STATE_UNAVAILABLE ->
             ShoalTileColors(
                 ShoalQsColors.TileOff.copy(alpha = 0.55f),
