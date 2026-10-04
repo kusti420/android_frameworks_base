@@ -157,10 +157,10 @@ internal sealed interface ShoalPlace {
  * [slots] only names current tiles and has no trailing free slots; it may be longer than the number
  * of junctions [big] has (see [displaced]).
  *
- * [collapsed] is the collapsed panel's own selection (Settings.Secure ichthys_qqs_tiles). It only
- * names tiles of the layout: being in it is on top of a tile's place among the three above, never
- * instead of it. Empty while nothing is picked, and the collapsed panel then follows the tile list
- * (see [collapsedOr]).
+ * [big], [slots] and [circles] are the expanded panel. [collapsed] is the collapsed panel's own
+ * selection (Settings.Secure ichthys_qqs_tiles), and independent of them: a tile can be in it and
+ * in the expanded panel, or in only one of the two. Empty while nothing is picked, and the
+ * collapsed panel then follows the expanded one (see [collapsedOr]).
  */
 internal data class ShoalEditLayout(
     val big: List<TileSpec>,
@@ -255,41 +255,20 @@ internal data class ShoalEditLayout(
         return (0 until junctionCount).filterTo(HashSet()) { toJunction(spec, it) != null }
     }
 
-    /** Takes [spec] out of quick settings, and with that out of the collapsed panel. */
-    fun remove(spec: TileSpec): ShoalEditLayout {
-        return without(spec).copy(collapsed = collapsed - spec).trimmed()
-    }
+    /** Takes [spec] out of the expanded panel. The collapsed panel keeps it if it has it. */
+    fun remove(spec: TileSpec): ShoalEditLayout = without(spec).trimmed()
 
     /**
      * The collapsed panel's tiles: the ones picked or, while none are, the first [limit] of [order]
-     * (the tile list), which is what the panel shows then. Every edit of the collapsed panel starts
-     * from this list, so the first one turns the automatic tiles into picked ones.
+     * (the expanded panel's tiles as the tile list has them), which is what the panel shows then.
+     * Every edit of the collapsed panel starts from this list, so the first one turns the automatic
+     * tiles into picked ones.
      */
     fun collapsedOr(order: List<TileSpec>, limit: Int): List<TileSpec> {
         return collapsed.ifEmpty { order.take(limit) }
     }
 
-    /**
-     * [spec] at [index] (the end by default) of the collapsed panel's [tiles] (see [collapsedOr]),
-     * wherever in them it was before, if at all.
-     */
-    fun collapsedAt(
-        tiles: List<TileSpec>,
-        spec: TileSpec,
-        index: Int = Int.MAX_VALUE,
-    ): ShoalEditLayout {
-        return copy(collapsed = (tiles - spec).inserted(index, spec))
-    }
-
-    /**
-     * The collapsed panel's [tiles] (see [collapsedOr]) without [spec]. Taking the last one out
-     * leaves nothing picked: the panel is back to following the tile list.
-     */
-    fun collapsedWithout(tiles: List<TileSpec>, spec: TileSpec): ShoalEditLayout {
-        return copy(collapsed = tiles - spec)
-    }
-
-    // The collapsed panel's tiles stay: the tile is only on its way to another place.
+    // The collapsed panel's tiles stay as they are: they do not depend on the expanded panel.
     private fun without(spec: TileSpec): ShoalEditLayout {
         return copy(
             big = big - spec,
@@ -315,14 +294,20 @@ internal data class ShoalEditLayout(
         /**
          * The layout of the [current] tiles, resolved the way [shoalLayout] resolves the panel
          * (without pages: the editor shows every row, and [ShoalJunctions] leaves the page seams
-         * without a junction). Of [collapsed] only the current tiles are kept, each once, as the
-         * collapsed panel reads it.
+         * without a junction).
+         *
+         * @param current the tiles of the expanded panel, in tile list order
+         * @param collapsed the collapsed panel's selection as stored. Only the tiles in the tile
+         *   list are kept, each once, as the collapsed panel reads it: those in [current] and those
+         *   in [collapsedOnly]
+         * @param collapsedOnly the tiles that are in the tile list for the collapsed panel only
          */
         fun of(
             current: List<TileSpec>,
             large: Set<TileSpec>,
             slots: List<TileSpec?>,
             collapsed: List<TileSpec> = emptyList(),
+            collapsedOnly: Set<TileSpec> = emptySet(),
         ): ShoalEditLayout {
             val currentSet = current.toSet()
             val seen = HashSet<TileSpec>()
@@ -334,7 +319,7 @@ internal data class ShoalEditLayout(
                 big = current.filter { it in large && it !in seen },
                 slots = cleanSlots,
                 circles = current.filter { it !in large && it !in seen },
-                collapsed = collapsed.filter { it in currentSet }.distinct(),
+                collapsed = collapsed.filter { it in currentSet || it in collapsedOnly }.distinct(),
             )
         }
     }

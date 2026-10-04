@@ -92,7 +92,10 @@ constructor(
         currentTilesInteractor.currentTiles
             .map { tiles -> tiles.map { it.spec } }
             .collect {
-                it.filter { it in trackIfNotAddedSpecs }
+                // IchthysOS: a tile the user only put in the collapsed panel has not been added
+                // to quick settings in the sense tracked here, and can still be auto-added.
+                val collapsedOnly = iconTilesInteractor.collapsedOnlyTilesSpecs.value
+                it.filter { it in trackIfNotAddedSpecs && it !in collapsedOnly }
                     .forEach { spec -> repository.markTileAdded(userId, spec) }
             }
     }
@@ -121,6 +124,10 @@ constructor(
                     is AutoAddSignal.Add -> {
                         if (signal.spec !in previouslyAdded.value) {
                             currentTilesInteractor.addTile(signal.spec, signal.position)
+                            // IchthysOS: a tile that was in the list for the collapsed panel only
+                            // was not added by the call above. Auto-adding is about the expanded
+                            // panel, so that is where it shows from now on.
+                            iconTilesInteractor.showInExpanded(setOf(signal.spec))
                             when (signal.size) {
                                 AutoAddSignal.AutoAddSize.LARGE ->
                                     iconTilesInteractor.addLargeTile(signal.spec)

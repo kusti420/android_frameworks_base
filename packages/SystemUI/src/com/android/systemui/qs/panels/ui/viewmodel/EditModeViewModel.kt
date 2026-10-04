@@ -28,6 +28,7 @@ import com.android.systemui.dagger.qualifiers.Background
 import com.android.systemui.qs.QSEditEvent
 import com.android.systemui.qs.panels.domain.interactor.EditTilesListInteractor
 import com.android.systemui.qs.panels.domain.interactor.GridLayoutTypeInteractor
+import com.android.systemui.qs.panels.domain.interactor.IconTilesInteractor
 import com.android.systemui.qs.panels.domain.interactor.TilesAvailabilityInteractor
 import com.android.systemui.qs.panels.shared.model.GridLayoutType
 import com.android.systemui.qs.panels.ui.compose.GridLayout
@@ -72,6 +73,7 @@ constructor(
     @Background private val bgDispatcher: CoroutineDispatcher,
     gridLayoutTypeInteractor: GridLayoutTypeInteractor,
     gridLayoutMap: Map<GridLayoutType, @JvmSuppressWildcards GridLayout>,
+    private val iconTilesInteractor: IconTilesInteractor,
 ) {
     private val _isEditing = MutableStateFlow(false)
 
@@ -99,6 +101,10 @@ constructor(
      *   tiles change.
      * * Tiles that are not available will be filtered out. None of them can be current (as they
      *   cannot be created), and they won't be able to be added.
+     *
+     * IchthysOS: "current" here means in the expanded panel, which is what the editors arrange. A
+     * tile that is in the tile list for the collapsed panel only is not current: the editors list
+     * it with the tiles that can be added, and adding it shows it in the expanded panel as well.
      */
     val tiles: Flow<List<EditTileViewModel>> =
         isEditing.flatMapLatest { isEditing ->
@@ -113,6 +119,9 @@ constructor(
                             .minus(currentTilesInteractor.currentTilesSpecs.toSet())
                     )
                 currentTilesInteractor.currentTiles
+                    .combine(iconTilesInteractor.collapsedOnlyTilesSpecs) { listed, collapsedOnly ->
+                        listed.filter { it.spec !in collapsedOnly }
+                    }
                     .map { tiles ->
                         val currentSpecs = tiles.map { it.spec }
                         val dualTargetSpecs =
@@ -185,7 +194,9 @@ constructor(
      * present, it will be moved to the new position.
      */
     fun addTile(tileSpec: TileSpec, position: Int = POSITION_AT_END) {
-        val specs = currentTilesInteractor.currentTilesSpecs.toMutableList()
+        // IchthysOS: the editors work on the expanded panel's tiles, and so do the three edits
+        // here. The interactor keeps the tile list right for the collapsed panel.
+        val specs = iconTilesInteractor.expandedTilesSpecs.toMutableList()
         val currentPosition = specs.indexOf(tileSpec)
         val moved = currentPosition != -1
 
@@ -212,7 +223,7 @@ constructor(
 
         // Setting the new tiles as one operation to avoid UI jank with tiles disappearing and
         // reappearing
-        currentTilesInteractor.setTiles(specs)
+        iconTilesInteractor.setExpandedTiles(specs)
     }
 
     /** Immediately removes [tileSpec] from the current tiles. */
@@ -222,12 +233,12 @@ constructor(
             /* uid= */ 0,
             /* packageName= */ tileSpec.metricSpec,
         )
-        currentTilesInteractor.removeTiles(listOf(tileSpec))
+        iconTilesInteractor.removeExpandedTile(tileSpec)
     }
 
     fun setTiles(tileSpecs: List<TileSpec>) {
-        val currentTiles = currentTilesInteractor.currentTilesSpecs
-        currentTilesInteractor.setTiles(tileSpecs)
+        val currentTiles = iconTilesInteractor.expandedTilesSpecs
+        iconTilesInteractor.setExpandedTiles(tileSpecs)
         applicationScope.launch(bgDispatcher) {
             calculateDiffsAndEmitUiEvents(currentTiles, tileSpecs)
         }

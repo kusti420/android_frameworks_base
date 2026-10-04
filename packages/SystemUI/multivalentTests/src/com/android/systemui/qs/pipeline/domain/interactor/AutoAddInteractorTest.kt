@@ -68,6 +68,9 @@ class AutoAddInteractorTest : SysuiTestCase() {
 
         whenever(currentTilesInteractor.userId).thenReturn(MutableStateFlow(USER))
         whenever(currentTilesInteractor.currentTiles).thenReturn(MutableStateFlow(emptyList()))
+        // IchthysOS: no tile is in the tile list for the collapsed panel only.
+        whenever(iconTilesInteractor.collapsedOnlyTilesSpecs)
+            .thenReturn(MutableStateFlow(emptySet()))
     }
 
     @Test

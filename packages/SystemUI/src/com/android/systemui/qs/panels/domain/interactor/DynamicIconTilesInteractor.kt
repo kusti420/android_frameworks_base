@@ -56,7 +56,7 @@ constructor(
                 // it again later starts it as an ordinary circle.
                 iconTilesInteractor.removeJunctionTiles(removedTiles)
                 // IchthysOS: and its place in the collapsed panel, which only shows tiles that
-                // are in quick settings.
+                // are in the tile list.
                 iconTilesInteractor.removeCollapsedTiles(removedTiles)
             }
     }

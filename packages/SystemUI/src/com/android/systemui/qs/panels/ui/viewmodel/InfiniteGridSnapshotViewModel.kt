@@ -47,27 +47,29 @@ constructor(
     /** Apply the most recent snapshot of current and large tiles. */
     fun undo() {
         snapshots.removeLastOrNull()?.let {
-            currentTilesInteractor.setTiles(it.tiles)
             iconTilesInteractor.setLargeTiles(it.largeTiles)
             // IchthysOS "Shoal": the junction slots are part of the layout that is undone.
             iconTilesInteractor.setJunctionTiles(it.junctionTiles)
-            // IchthysOS: and so is the collapsed panel's own selection of tiles.
-            iconTilesInteractor.setCollapsedTiles(it.collapsedTiles)
+            // IchthysOS: and so is the collapsed panel. The snapshot's tiles are the expanded
+            // panel's; setting both panels puts back the tile list and, with it, which tiles
+            // were in that list for the collapsed panel only.
+            iconTilesInteractor.setPanelTiles(it.tiles, it.collapsedTiles)
         }
     }
 
     /**
      * Create a snapshot of the current tiles and large tiles and save it.
      *
-     * IchthysOS "Shoal": [junctionTiles] are the junction slots at the time of the snapshot; the
-     * stock grid editor never changes them and leaves the default. The same goes for
-     * [collapsedTiles], the tiles picked for the collapsed panel.
+     * IchthysOS: [tiles] are the tiles of the expanded panel. [junctionTiles] are the junction
+     * slots at the time of the snapshot; the stock grid editor never changes them and leaves the
+     * default. The same goes for [collapsedTiles], the tiles picked for the collapsed panel; of
+     * those only the ones in the tile list count, as everywhere.
      */
     fun takeSnapshot(
         tiles: List<TileSpec>,
         largeTiles: Set<TileSpec>,
         junctionTiles: List<TileSpec?> = iconTilesInteractor.junctionTilesSpecs.value,
-        collapsedTiles: List<TileSpec> = iconTilesInteractor.collapsedTilesSpecs.value,
+        collapsedTiles: List<TileSpec> = currentCollapsedTiles(),
     ) {
         val snapshot = InfiniteGridSnapshot(tiles, largeTiles, junctionTiles, collapsedTiles)
         if (snapshot != snapshots.lastOrNull()) {
@@ -76,6 +78,11 @@ constructor(
 
         // Clear oldest snapshots if we're over the limit
         while (snapshots.size > SNAPSHOTS_MAX_SIZE) snapshots.removeFirstOrNull()
+    }
+
+    private fun currentCollapsedTiles(): List<TileSpec> {
+        val current = currentTilesInteractor.currentTilesSpecs.toSet()
+        return iconTilesInteractor.collapsedTilesSpecs.value.filter { it in current }
     }
 
     /** Clear the stack of snapshots. This is a irreversible action. */

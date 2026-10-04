@@ -33,9 +33,15 @@ interface IconTilesViewModel {
 
     /**
      * IchthysOS: the tiles picked for the collapsed panel, in order. Empty while none are picked:
-     * the collapsed panel then shows the first tiles of the tile list.
+     * the collapsed panel then shows the first tiles of the expanded one.
      */
     val collapsedTiles: StateFlow<List<TileSpec>>
+
+    /**
+     * IchthysOS: the tiles that are in the tile list for the collapsed panel only; the expanded
+     * panel does not show them.
+     */
+    val collapsedOnlyTiles: StateFlow<Set<TileSpec>>
 
     fun isIconTile(spec: TileSpec): Boolean
 
@@ -48,8 +54,12 @@ interface IconTilesViewModel {
      */
     fun setShoalLayout(largeTiles: Set<TileSpec>, junctionTiles: List<TileSpec?>)
 
-    /** IchthysOS: sets the collapsed panel's tiles; an empty list means the automatic ones. */
-    fun setCollapsedTiles(specs: List<TileSpec>)
+    /**
+     * IchthysOS: sets the tiles of the expanded and of the collapsed panel in one go, as arranged
+     * in the Shoal tile editor. The two are independent; an empty [collapsed] means the collapsed
+     * panel follows the expanded one.
+     */
+    fun setPanelTiles(expanded: List<TileSpec>, collapsed: List<TileSpec>)
 }
 
 @SysUISingleton
@@ -59,6 +69,7 @@ class IconTilesViewModelImpl @Inject constructor(private val interactor: IconTil
 
     override val junctionTiles = interactor.junctionTilesSpecs
     override val collapsedTiles = interactor.collapsedTilesSpecs
+    override val collapsedOnlyTiles = interactor.collapsedOnlyTilesSpecs
 
     override fun isIconTile(spec: TileSpec): Boolean = interactor.isIconTile(spec)
 
@@ -71,5 +82,7 @@ class IconTilesViewModelImpl @Inject constructor(private val interactor: IconTil
         interactor.setLargeTiles(largeTiles)
     }
 
-    override fun setCollapsedTiles(specs: List<TileSpec>) = interactor.setCollapsedTiles(specs)
+    override fun setPanelTiles(expanded: List<TileSpec>, collapsed: List<TileSpec>) {
+        interactor.setPanelTiles(expanded, collapsed)
+    }
 }

@@ -31,6 +31,8 @@ class QSPreferencesInteractor @Inject constructor(private val repo: QSPreference
     val junctionTilesSpecs: Flow<List<TileSpec?>> = repo.junctionTilesSpecs
     /** IchthysOS: tiles picked for the collapsed panel, in order; empty while none are picked. */
     val collapsedTilesSpecs: Flow<List<TileSpec>> = repo.collapsedTilesSpecs
+    /** IchthysOS: the tiles that are in the tile list for the collapsed panel only. */
+    val collapsedOnlyTilesSpecs: Flow<Set<TileSpec>> = repo.collapsedOnlyTilesSpecs
     /** IchthysOS: tiles per row of the collapsed panel. */
     val collapsedColumns: Flow<Int> = repo.collapsedColumns
 
@@ -56,6 +58,14 @@ class QSPreferencesInteractor @Inject constructor(private val repo: QSPreference
 
     fun removeCollapsedTilesSpecs(specs: Set<TileSpec>) {
         repo.removeCollapsedTileSpecs(specs)
+    }
+
+    fun setCollapsedOnlyTilesSpecs(specs: Set<TileSpec>) {
+        repo.writeCollapsedOnlyTileSpecs(specs)
+    }
+
+    fun removeCollapsedOnlyTilesSpecs(specs: Set<TileSpec>) {
+        repo.removeCollapsedOnlyTileSpecs(specs)
     }
 
     /** Null goes back to the default. */

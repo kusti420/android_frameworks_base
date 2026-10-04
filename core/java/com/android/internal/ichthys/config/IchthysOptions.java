@@ -292,17 +292,26 @@ final class IchthysOptions {
         // --- Collapsed panel (begin) ---
         // The collapsed quick settings (the row of tiles in the notification shade, before the
         // second swipe down) has a selection of tiles of its own (SystemUI
-        // QuickQuickSettingsViewModel.kt). It only names tiles that are in quick settings and
-        // never adds one; a name that is not a tile there is skipped. No default and preserved,
-        // like the junctions: it is what the user arranged in the tile editor, which writes the
-        // same key. Unset or empty, the panel shows the first tiles of the tile list.
+        // QuickQuickSettingsViewModel.kt), independent of the expanded panel. No default and
+        // preserved, like the junctions: it is what the user arranged in the tile editor, which
+        // writes the same key. Unset or empty, the panel shows the first tiles of the expanded
+        // one. A name only shows if the tile is in the tile list; the editor puts it there.
         s.add(Option.stringList("quickSettings.collapsed.tiles",
                 "Tiles of the collapsed quick settings, in order, by tile spec (e.g. "
-                        + "\"flashlight\" \"rotation\" \"bt\"). Only tiles that are in quick "
-                        + "settings are shown, as many as columns x rows hold "
-                        + "(quickSettings.layout.qqsTilesRows). Empty: the first tiles of quick "
-                        + "settings.",
+                        + "\"flashlight\" \"rotation\" \"bt\"), as many as columns x rows hold "
+                        + "(quickSettings.layout.qqsTilesRows). Arranged in the tile editor; a "
+                        + "tile named here by hand only shows if it is in quick settings. Empty: "
+                        + "the first tiles of the expanded quick settings.",
                 setting(SECURE, "ichthys_qqs_tiles")).preserved());
+        // The other half of that independence. Only a tile in the tile list (sysui_qs_tiles)
+        // exists, so a tile picked for the collapsed panel alone is in that list too, and this
+        // set is what keeps it out of the expanded panel. The editor writes the three together;
+        // SystemUI ignores an entry that quickSettings.collapsed.tiles does not name.
+        s.add(Option.stringList("quickSettings.collapsed.onlyTiles",
+                "Managed by the tile editor: the tiles that are in quick settings for the "
+                        + "collapsed panel only, by tile spec. The expanded panel leaves them "
+                        + "out. Not meant to be written by hand.",
+                setting(SECURE, "ichthys_qqs_only_tiles")).preserved());
         // No default: unset is the 7 per row the panel always had, and SystemUI owns that
         // number. The range is SystemUI's too (QSPreferencesRepository.COLLAPSED_COLUMNS_*).
         s.add(Option.integer("quickSettings.collapsed.columns", null, 3, 8,

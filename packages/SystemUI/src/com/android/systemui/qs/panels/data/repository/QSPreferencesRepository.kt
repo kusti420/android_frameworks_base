@@ -144,16 +144,32 @@ constructor(
      * user, in order. Empty while nothing is picked: the collapsed panel then shows the first tiles
      * of the tile list, as it always did.
      *
-     * The list only names tiles; it never adds one to quick settings. A spec that is not a current
-     * tile is skipped by the readers. Lives in Settings.Secure ([COLLAPSED_TILES_SETTING]) for the
-     * same reason as [junctionTilesSpecs]: the ichthys.nix option quickSettings.collapsed.tiles and
-     * the tile editor share the value.
+     * The list only names tiles; a spec that is not a current tile is skipped by the readers. The
+     * tile editor makes a tile current when it adds it here (see [collapsedOnlyTilesSpecs]). Lives
+     * in Settings.Secure ([COLLAPSED_TILES_SETTING]) for the same reason as [junctionTilesSpecs]:
+     * the ichthys.nix option quickSettings.collapsed.tiles and the tile editor share the value.
      */
     val collapsedTilesSpecs: Flow<List<TileSpec>> =
         userRepository.selectedUserInfo
             .flatMapLatest { userInfo ->
                 secureSettingChanges(COLLAPSED_TILES_SETTING).emitOnStart().map {
                     readCollapsedTileSpecs(userInfo.id)
+                }
+            }
+            .distinctUntilChanged()
+            .flowOn(backgroundDispatcher)
+
+    /**
+     * IchthysOS: the tiles that are current only because the collapsed panel shows them, for the
+     * current user. Only current tiles exist, so a tile picked for the collapsed panel alone has to
+     * be in the tile list like any other; this set is what keeps it out of the expanded panel.
+     * Written by the tile editor ([COLLAPSED_ONLY_TILES_SETTING]).
+     */
+    val collapsedOnlyTilesSpecs: Flow<Set<TileSpec>> =
+        userRepository.selectedUserInfo
+            .flatMapLatest { userInfo ->
+                secureSettingChanges(COLLAPSED_ONLY_TILES_SETTING).emitOnStart().map {
+                    readCollapsedOnlyTileSpecs(userInfo.id)
                 }
             }
             .distinctUntilChanged()
@@ -265,6 +281,47 @@ constructor(
         if (kept != stored) {
             writeCollapsedTileSpecs(userId, kept)
         }
+    }
+
+    /** IchthysOS: sets the tiles that are current for the collapsed panel only. */
+    fun writeCollapsedOnlyTileSpecs(specs: Set<TileSpec>) {
+        writeCollapsedOnlyTileSpecs(userRepository.getSelectedUserInfo().id, specs)
+    }
+
+    /**
+     * IchthysOS: [specs] are no longer tiles of the collapsed panel only: they left the tile list,
+     * or the expanded panel shows them now.
+     */
+    fun removeCollapsedOnlyTileSpecs(specs: Set<TileSpec>) {
+        val userId = userRepository.getSelectedUserInfo().id
+        // The stored value, not the flow's last one; see removeJunctionTileSpecs.
+        val stored = readCollapsedOnlyTileSpecs(userId)
+        val kept = stored - specs
+        if (kept != stored) {
+            writeCollapsedOnlyTileSpecs(userId, kept)
+        }
+    }
+
+    private fun readCollapsedOnlyTileSpecs(userId: Int): Set<TileSpec> {
+        return decodeCollapsedTiles(
+                Settings.Secure.getStringForUser(
+                    context.contentResolver,
+                    COLLAPSED_ONLY_TILES_SETTING,
+                    userId,
+                )
+            )
+            .toSet()
+    }
+
+    private fun writeCollapsedOnlyTileSpecs(userId: Int, specs: Set<TileSpec>) {
+        val encoded = encodeCollapsedTiles(specs.toList())
+        logger.i("Collapsed panel only tiles for user $userId: $encoded")
+        Settings.Secure.putStringForUser(
+            context.contentResolver,
+            COLLAPSED_ONLY_TILES_SETTING,
+            encoded,
+            userId,
+        )
     }
 
     /**
@@ -520,6 +577,12 @@ constructor(
          * ("flashlight,rotation,bt").
          */
         const val COLLAPSED_TILES_SETTING = "ichthys_qqs_tiles"
+        /**
+         * IchthysOS: Settings.Secure key of the tiles that are in the tile list for the collapsed
+         * panel only, the ichthys.nix option quickSettings.collapsed.onlyTiles. Tile specs joined
+         * with ","; the order means nothing.
+         */
+        const val COLLAPSED_ONLY_TILES_SETTING = "ichthys_qqs_only_tiles"
         /**
          * IchthysOS: Settings.Secure key of the collapsed panel's tiles per row, the ichthys.nix
          * option quickSettings.collapsed.columns.

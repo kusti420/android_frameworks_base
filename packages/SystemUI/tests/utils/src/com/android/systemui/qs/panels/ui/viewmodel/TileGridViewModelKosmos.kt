@@ -19,6 +19,7 @@ package com.android.systemui.qs.panels.ui.viewmodel
 import com.android.systemui.kosmos.Kosmos
 import com.android.systemui.qs.panels.domain.interactor.gridLayoutMap
 import com.android.systemui.qs.panels.domain.interactor.gridLayoutTypeInteractor
+import com.android.systemui.qs.panels.domain.interactor.iconTilesInteractor
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.infiniteGridLayout
 import com.android.systemui.qs.pipeline.domain.interactor.currentTilesInteractor
 
@@ -33,6 +34,7 @@ val Kosmos.tileGridViewModelFactory by
                     gridLayoutMap,
                     currentTilesInteractor,
                     infiniteGridLayout,
+                    iconTilesInteractor,
                 )
             }
         }

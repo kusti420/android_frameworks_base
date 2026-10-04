@@ -25,6 +25,7 @@ import com.android.systemui.kosmos.testDispatcher
 import com.android.systemui.qs.panels.domain.interactor.editTilesListInteractor
 import com.android.systemui.qs.panels.domain.interactor.gridLayoutMap
 import com.android.systemui.qs.panels.domain.interactor.gridLayoutTypeInteractor
+import com.android.systemui.qs.panels.domain.interactor.iconTilesInteractor
 import com.android.systemui.qs.panels.domain.interactor.tilesAvailabilityInteractor
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.infiniteGridLayout
 import com.android.systemui.qs.pipeline.domain.interactor.currentTilesInteractor
@@ -45,5 +46,6 @@ val Kosmos.editModeViewModel by
             testDispatcher,
             gridLayoutTypeInteractor,
             gridLayoutMap,
+            iconTilesInteractor,
         )
     }

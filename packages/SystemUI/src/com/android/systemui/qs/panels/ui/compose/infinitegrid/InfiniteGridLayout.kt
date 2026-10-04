@@ -210,13 +210,15 @@ constructor(
         val currentTiles by rememberUpdatedState(tiles.filter { it.isCurrent })
 
         // IchthysOS "Shoal" has its own editor, which shows the panel as it is laid out (big
-        // tiles, junctions, honeycomb) instead of a grid of cells. It shares the snapshots (undo)
-        // and the reset dialog with the stock editor below.
+        // tiles, junctions, honeycomb) instead of a grid of cells, and the collapsed panel on a
+        // page of its own. It shares the snapshots (undo) and the reset dialog with the stock
+        // editor below.
         if (rememberShoalQsEnabled()) {
             val junctionTiles by viewModel.iconTilesViewModel.junctionTilesState
-            // The collapsed panel (quick quick settings) is edited here too: which tiles it
-            // shows, and how many per row on how many rows.
+            // The collapsed panel (quick quick settings): which tiles it shows, which of those
+            // the expanded panel does not have, and how many per row on how many rows.
             val collapsedTiles by viewModel.iconTilesViewModel.collapsedTilesState
+            val collapsedOnlyTiles by viewModel.iconTilesViewModel.collapsedOnlyTilesState
             val collapsedColumns by viewModel.collapsedColumnsState
             val collapsedRows by viewModel.collapsedRowsState
             ShoalEditTileGrid(
@@ -224,6 +226,7 @@ constructor(
                 largeTiles = largeTiles,
                 junctionTiles = junctionTiles,
                 collapsedTiles = collapsedTiles,
+                collapsedOnlyTiles = collapsedOnlyTiles,
                 collapsedColumns = collapsedColumns,
                 collapsedRows = collapsedRows,
                 collapsedColumnsRange = viewModel.collapsedColumnsRange,
@@ -237,22 +240,20 @@ constructor(
                 onCollapsedColumns = viewModel::setCollapsedColumns,
                 onCollapsedRows = viewModel::setCollapsedRows,
                 onLayout = { layout ->
+                    // The current tiles here are the expanded panel's; the collapsed panel's
+                    // go into the snapshot as they stand.
                     snapshotViewModel.takeSnapshot(
                         currentTiles.map { it.tileSpec },
                         largeTiles,
                         junctionTiles,
-                        collapsedTiles,
                     )
                     // Slots and sizes first: both are in place by the time the new tile list
                     // (written asynchronously) arrives, so a new tile shows up where it belongs.
                     iconTilesViewModel.setShoalLayout(layout.big.toSet(), layout.slots)
-                    // The collapsed panel's tiles as well, written every time like the two
-                    // above. Empty means none are picked and deletes the key.
-                    iconTilesViewModel.setCollapsedTiles(layout.collapsed)
-                    val specs = layout.tileSpecs()
-                    if (specs != currentTiles.map { it.tileSpec }) {
-                        onSetTiles(specs)
-                    }
+                    // Then the tiles of both panels in one go, not through onSetTiles: the two
+                    // panels share the tile list, and which of its tiles are there for the
+                    // collapsed panel only can only be told from both.
+                    iconTilesViewModel.setPanelTiles(layout.tileSpecs(), layout.collapsed)
                 },
                 modifier = modifier,
             )

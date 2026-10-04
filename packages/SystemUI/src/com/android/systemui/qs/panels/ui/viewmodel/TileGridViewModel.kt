@@ -18,6 +18,7 @@ package com.android.systemui.qs.panels.ui.viewmodel
 
 import com.android.systemui.lifecycle.HydratedActivatable
 import com.android.systemui.qs.panels.domain.interactor.GridLayoutTypeInteractor
+import com.android.systemui.qs.panels.domain.interactor.IconTilesInteractor
 import com.android.systemui.qs.panels.shared.model.GridLayoutType
 import com.android.systemui.qs.panels.ui.compose.GridLayout
 import com.android.systemui.qs.pipeline.domain.interactor.CurrentTilesInteractor
@@ -33,6 +34,7 @@ constructor(
     gridLayoutMap: Map<GridLayoutType, @JvmSuppressWildcards GridLayout>,
     tilesInteractor: CurrentTilesInteractor,
     @Named("Default") defaultGridLayout: GridLayout,
+    iconTilesInteractor: IconTilesInteractor,
 ) : HydratedActivatable() {
 
     val gridLayout by
@@ -42,8 +44,19 @@ constructor(
 
     private val tileModels by tilesInteractor.currentTiles.hydratedStateOf()
 
+    private val collapsedOnlyTiles by iconTilesInteractor.collapsedOnlyTilesSpecs.hydratedStateOf()
+
+    /**
+     * The tiles of the expanded panel, for every layout of it.
+     *
+     * IchthysOS: that is the tile list without the tiles that are in it for the collapsed panel
+     * only. Leaving them out here keeps them out of the grid, its pages and its tile count alike.
+     */
     val tileViewModels: List<TileViewModel>
-        get() = tileModels.map { TileViewModel(it.tile, it.spec, it.expandable) }
+        get() =
+            tileModels
+                .filter { it.spec !in collapsedOnlyTiles }
+                .map { TileViewModel(it.tile, it.spec, it.expandable) }
 
     @AssistedFactory
     interface Factory {

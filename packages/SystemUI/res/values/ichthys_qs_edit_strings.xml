@@ -8,19 +8,27 @@
     <!-- Button that leaves the tile editor. [CHAR LIMIT=12] -->
     <string name="ichthys_qs_edit_done">Done</string>
 
-    <!-- Heading of the first part of the tile editor: the tiles shown while quick settings is
-         collapsed (the notification shade, before swiping down a second time). Followed by how
-         many tiles it shows out of how many it can. [CHAR LIMIT=24] -->
-    <string name="ichthys_qs_edit_collapsed_panel">Collapsed panel</string>
-    <!-- Heading of the second part of the tile editor: quick settings fully pulled down. Followed
-         by how many tiles it has. [CHAR LIMIT=24] -->
-    <string name="ichthys_qs_edit_expanded_panel">Expanded panel</string>
-    <!-- Next to the "Collapsed panel" heading: how many tiles it shows and how many fit.
+    <!-- Tab of the tile editor's first page: quick settings fully pulled down. The editor has two
+         pages, swiped between. [CHAR LIMIT=14] -->
+    <string name="ichthys_qs_edit_page_expanded">Expanded</string>
+    <!-- Tab of the tile editor's second page: the tiles shown while quick settings is collapsed
+         (the notification shade, before swiping down a second time). [CHAR LIMIT=14] -->
+    <string name="ichthys_qs_edit_page_collapsed">Collapsed</string>
+
+    <!-- Label above the collapsed panel's tiles on the editor's second page; shown in capitals,
+         followed by how many there are out of how many fit. [CHAR LIMIT=12] -->
+    <string name="ichthys_qs_edit_collapsed_tiles">Tiles</string>
+    <!-- Next to the "Tiles" label: how many tiles the collapsed panel shows and how many fit.
          [CHAR LIMIT=8] -->
     <string name="ichthys_qs_edit_collapsed_count"><xliff:g id="shown" example="7">%1$d</xliff:g>/<xliff:g id="fits" example="14">%2$d</xliff:g></string>
-    <!-- Short hint next to the "Collapsed panel" heading while no tiles were picked for it: it
-         shows the first tiles of the expanded panel, in their order. [CHAR LIMIT=20] -->
-    <string name="ichthys_qs_edit_collapsed_automatic">follows tile order</string>
+    <!-- Switch on the collapsed panel's page. On: the collapsed panel has no tiles of its own
+         and shows the first tiles of the expanded panel. [CHAR LIMIT=24] -->
+    <string name="ichthys_qs_edit_collapsed_follow">Follow expanded panel</string>
+    <!-- Hint under the collapsed panel's tiles while that switch is on. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_qs_edit_collapsed_hint_following">These are the first tiles of the expanded panel. Add, move or remove one to give this panel tiles of its own.</string>
+    <!-- Short hint in the tray of the collapsed panel's page when every place of the panel is
+         taken, so no tile can be added. [CHAR LIMIT=28] -->
+    <string name="ichthys_qs_edit_collapsed_full">no free place in the panel</string>
     <!-- Label of the control that sets how many tiles the collapsed panel has in one row; shown
          in capitals, followed by the number between a minus and a plus button.
          [CHAR LIMIT=10] -->
@@ -36,7 +44,7 @@
     <string name="ichthys_qs_edit_collapsed_rows_fewer">Fewer rows</string>
     <!-- Content description of the plus button of the "Rows" control. [CHAR LIMIT=NONE] -->
     <string name="ichthys_qs_edit_collapsed_rows_more">More rows</string>
-    <!-- Content description of a tile in the collapsed panel part of the editor.
+    <!-- Content description of a tile on the collapsed panel's page of the editor.
          [CHAR LIMIT=NONE] -->
     <string name="ichthys_qs_edit_collapsed_tile"><xliff:g id="tile" example="Flashlight">%1$s</xliff:g>, collapsed panel, place <xliff:g id="number" example="3">%2$d</xliff:g></string>
     <!-- Content description of a place in the collapsed panel that has no tile.
@@ -77,9 +85,6 @@
     <string name="ichthys_qs_edit_tray_hint_pick">for junction <xliff:g id="number" example="2">%1$d</xliff:g></string>
     <!-- Short hint in the tray while a tile of the panel is being dragged. [CHAR LIMIT=28] -->
     <string name="ichthys_qs_edit_tray_hint_remove">drop here to remove</string>
-    <!-- Short hint in the tray while a tile of the collapsed panel part is being dragged: dropped
-         here it leaves the collapsed panel and stays in quick settings. [CHAR LIMIT=30] -->
-    <string name="ichthys_qs_edit_tray_hint_remove_collapsed">drop to remove from collapsed</string>
     <!-- Filter chip in the tray that shows the tiles of every category. [CHAR LIMIT=12] -->
     <string name="ichthys_qs_edit_category_all">All</string>
 
@@ -89,7 +94,7 @@
     <string name="ichthys_qs_edit_place_big_right">big tile, row <xliff:g id="row" example="3">%1$d</xliff:g> right</string>
     <!-- Where the selected tile is: one of the small round tiles. [CHAR LIMIT=40] -->
     <string name="ichthys_qs_edit_place_circle">circle, row <xliff:g id="row" example="1">%1$d</xliff:g></string>
-    <!-- Where the selected tile is: in the collapsed panel part of the editor. [CHAR LIMIT=40] -->
+    <!-- Where the selected tile is, on the collapsed panel's page. [CHAR LIMIT=40] -->
     <string name="ichthys_qs_edit_place_collapsed">collapsed panel, row <xliff:g id="row" example="1">%1$d</xliff:g></string>
     <!-- Where the selected tile is: in a junction, the spot where four big tiles meet.
          [CHAR LIMIT=40] -->
@@ -101,15 +106,6 @@
     <string name="ichthys_qs_edit_make_big">Make big</string>
     <!-- Action for the selected tile: move it to the first free junction. [CHAR LIMIT=14] -->
     <string name="ichthys_qs_edit_to_junction">To junction</string>
-    <!-- Action for the selected tile: show it in the collapsed panel too. It stays where it is in
-         the expanded panel. [CHAR LIMIT=30] -->
-    <string name="ichthys_qs_edit_collapsed_add">Show in collapsed panel</string>
-    <!-- Action for the selected tile: stop showing it in the collapsed panel. It stays in the
-         expanded panel. [CHAR LIMIT=30] -->
-    <string name="ichthys_qs_edit_collapsed_remove">Remove from collapsed panel</string>
-    <!-- Shown in place of "Show in collapsed panel", disabled, when the collapsed panel has no
-         free place left. [CHAR LIMIT=30] -->
-    <string name="ichthys_qs_edit_collapsed_full">Collapsed panel is full</string>
     <!-- Content description of the button that clears the selection. [CHAR LIMIT=NONE] -->
     <string name="ichthys_qs_edit_deselect">Deselect</string>
 
