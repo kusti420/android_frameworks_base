@@ -272,6 +272,7 @@ class BrightnessSliderViewModelTest : SysuiTestCase() {
             supportsMirror,
             brightnessWarningToast,
             imageLoader,
+            { mock() },
         )
     }
 }

@@ -77,6 +77,7 @@ import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.android.settingslib.display.BrightnessUtils
+import com.android.systemui.qs.tiles.dialog.colordisplay.IchthysNightLightController
 import kotlin.math.roundToInt
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.android.app.tracing.coroutines.launchTraced as launch
@@ -466,38 +467,21 @@ private fun rememberBrightnessFloorState(context: Context): BrightnessFloorState
 }
 
 /**
- * IchthysOS: whether Night Light is on (Settings.Secure night_display_activated of the current
- * user), for the "Night" pill next to the brightness toggles. Null when the display has no night
- * mode (config_nightDisplayAvailable), which hides the pill.
+ * IchthysOS: the Night Light state for the pill next to the brightness toggles, from the same
+ * controller the Night Light tile uses, so both show and cycle the same Off / On / Scheduled
+ * modes. Null when the display has no night mode (config_nightDisplayAvailable), or before the
+ * first read, which hides the pill.
  */
 @Composable
-private fun rememberNightLightState(context: Context): Boolean? {
+private fun rememberNightLightState(
+    context: Context,
+    controller: IchthysNightLightController,
+): IchthysNightLightController.State? {
     val available = remember(context) { ColorDisplayManager.isNightDisplayAvailable(context) }
     if (!available) return null
-    val cr = context.contentResolver
-    fun read(): Boolean =
-        Settings.Secure.getIntForUser(
-            cr,
-            Settings.Secure.NIGHT_DISPLAY_ACTIVATED,
-            0,
-            UserHandle.USER_CURRENT,
-        ) != 0
     val state by
-        produceState(initialValue = read(), cr) {
-            val observer =
-                object : ContentObserver(Handler(Looper.getMainLooper())) {
-                    override fun onChange(selfChange: Boolean) {
-                        value = read()
-                    }
-                }
-            cr.registerContentObserver(
-                Settings.Secure.getUriFor(Settings.Secure.NIGHT_DISPLAY_ACTIVATED),
-                false,
-                observer,
-                UserHandle.USER_ALL,
-            )
-            value = read()
-            awaitDispose { cr.unregisterContentObserver(observer) }
+        produceState<IchthysNightLightController.State?>(initialValue = null, controller) {
+            controller.state().collect { value = it }
         }
     return state
 }
@@ -635,7 +619,8 @@ fun BrightnessSliderContainer(
             )
         }
 
-    val nightLight = rememberNightLightState(context)
+    val nightController = viewModel.nightLight
+    val nightState = rememberNightLightState(context, nightController)
 
     ShoalBrightnessSlider(
         gamma = gamma,
@@ -677,13 +662,19 @@ fun BrightnessSliderContainer(
                 UserHandle.USER_CURRENT,
             )
         },
-        nightLight = nightLight,
+        nightMode = nightState?.mode,
+        nightTinted = nightState?.activated == true,
         onToggleNightLight = {
-            // Through ColorDisplayManager, like the Night Light tile, so the schedule logic
-            // ("until sunrise", custom times) sees a manual change the same way.
-            context
-                .getSystemService(ColorDisplayManager::class.java)
-                ?.setNightDisplayActivated(nightLight != true)
+            // The tile's own cycle: Off -> On -> Scheduled -> Off.
+            nightController.requestMode(
+                when (nightState?.mode) {
+                    IchthysNightLightController.Mode.ON ->
+                        IchthysNightLightController.Mode.SCHEDULED
+                    IchthysNightLightController.Mode.SCHEDULED ->
+                        IchthysNightLightController.Mode.OFF
+                    else -> IchthysNightLightController.Mode.ON
+                }
+            )
         },
         // The setting is written once, when the floor drag ends, and never per drag frame: doing it
         // live would spam the settings provider and every observer of the floor value.

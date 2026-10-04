@@ -78,6 +78,7 @@ import androidx.compose.ui.unit.sp
 import com.android.systemui.brightness.QsSliderShape
 import com.android.systemui.compose.modifiers.sysuiResTag
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalQsFonts
+import com.android.systemui.qs.tiles.dialog.colordisplay.IchthysNightLightController
 import com.android.systemui.res.R
 import kotlin.math.PI
 import kotlin.math.abs
@@ -130,8 +131,10 @@ internal fun ShoalBrightnessSlider(
     onToggleAuto: () -> Unit,
     onToggleFloor: () -> Unit,
     onFloorFinished: (Int) -> Unit,
-    // Night Light: null when the device has no night display, which hides the pill.
-    nightLight: Boolean?,
+    // Night Light: the tile's Off / On / Scheduled mode (null hides the pill: no night display, or
+    // not read yet) and whether the screen is tinted right now.
+    nightMode: IchthysNightLightController.Mode?,
+    nightTinted: Boolean,
     onToggleNightLight: () -> Unit,
     onDrag: (Int) -> Unit,
     onStop: (Int) -> Unit,
@@ -221,17 +224,28 @@ internal fun ShoalBrightnessSlider(
             )
             Spacer(Modifier.weight(1f))
             if (showToggles) {
-                if (nightLight != null) {
+                if (nightMode != null) {
+                    val scheduled = nightMode == IchthysNightLightController.Mode.SCHEDULED
                     val nightLabel = stringResource(R.string.quick_settings_night_display_label)
                     val nightState =
                         stringResource(
-                            if (nightLight) R.string.switch_bar_on else R.string.switch_bar_off
+                            when (nightMode) {
+                                IchthysNightLightController.Mode.OFF ->
+                                    R.string.ichthys_night_light_mode_off
+                                IchthysNightLightController.Mode.ON ->
+                                    R.string.ichthys_night_light_mode_on
+                                IchthysNightLightController.Mode.SCHEDULED ->
+                                    R.string.ichthys_night_light_mode_scheduled
+                            }
                         )
                     ShoalPill(
                         icon = ShoalPillIcon.Night,
-                        text = null,
+                        // Like the tile: lit whenever Night Light is not off (a schedule is armed
+                        // even while the screen is not tinted); the glyph shows the tint itself.
+                        text = if (scheduled) "auto" else null,
                         filled = false,
-                        active = nightLight,
+                        active = nightMode != IchthysNightLightController.Mode.OFF,
+                        iconLit = nightTinted,
                         enabled = true,
                         colors = colors,
                         textStyle = TextStyle(fontSize = 12.sp, fontFamily = fonts.mono),
@@ -601,6 +615,7 @@ private fun ShoalPill(
     filled: Boolean,
     active: Boolean,
     enabled: Boolean,
+    iconLit: Boolean = active,
     colors: ShoalBrightnessColors,
     textStyle: TextStyle,
     contentDescription: String,
@@ -638,7 +653,7 @@ private fun ShoalPill(
             Image(
                 painter =
                     painterResource(
-                        if (active) R.drawable.ic_qs_ichthys_nightlight
+                        if (iconLit) R.drawable.ic_qs_ichthys_nightlight
                         else R.drawable.ic_qs_ichthys_nightlight_off
                     ),
                 contentDescription = null,

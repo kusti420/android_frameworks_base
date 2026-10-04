@@ -32,6 +32,7 @@ import com.android.systemui.common.shared.model.asIcon
 import com.android.systemui.graphics.ImageLoader
 import com.android.systemui.haptics.slider.compose.ui.SliderHapticsViewModel
 import com.android.systemui.lifecycle.HydratedActivatable
+import com.android.systemui.qs.tiles.dialog.colordisplay.IchthysNightLightController
 import com.android.systemui.res.R
 import com.android.systemui.settings.brightness.ui.BrightnessWarningToast
 import com.android.systemui.util.policy.PolicyRestriction
@@ -62,7 +63,12 @@ constructor(
     @Assisted val supportsMirroring: Boolean,
     private val brightnessWarningToast: BrightnessWarningToast,
     private val imageLoader: ImageLoader,
+    private val nightLightControllerLazy: Lazy<IchthysNightLightController>,
 ) : HydratedActivatable() {
+
+    /** IchthysOS: the Night Light tile's Off / On / Scheduled logic, for the brightness row's pill. */
+    val nightLight: IchthysNightLightController
+        get() = nightLightControllerLazy.get()
 
     init {
         if (supportsMirroring) {

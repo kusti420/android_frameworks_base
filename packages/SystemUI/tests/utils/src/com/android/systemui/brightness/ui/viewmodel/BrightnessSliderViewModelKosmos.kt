@@ -24,6 +24,7 @@ import com.android.systemui.graphics.imageLoader
 import com.android.systemui.haptics.slider.sliderHapticsViewModelFactory
 import com.android.systemui.kosmos.Kosmos
 import com.android.systemui.settings.brightness.ui.brightnessWarningToast
+import org.mockito.kotlin.mock
 
 val Kosmos.brightnessSliderViewModelFactory: BrightnessSliderViewModel.Factory by
     Kosmos.Fixture {
@@ -38,6 +39,7 @@ val Kosmos.brightnessSliderViewModelFactory: BrightnessSliderViewModel.Factory b
                     falsingInteractor = falsingInteractor,
                     brightnessWarningToast = brightnessWarningToast,
                     imageLoader = imageLoader,
+                    nightLightControllerLazy = { mock() },
                 )
             }
         }
