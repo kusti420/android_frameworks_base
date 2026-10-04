@@ -106,12 +106,9 @@ public class NotificationBackgroundView extends View implements Dumpable,
             mPitchBlackBorderPaint.setStrokeWidth(4f);
             mPitchBlackBorderPaint.setColor(PitchBlackTheme.accentColor(getContext()));
         } else {
-            // IchthysOS "Shoal" hairline: 1 dp, a faint light line on dark and dark line on light.
-            final boolean night = (getResources().getConfiguration().uiMode
-                    & android.content.res.Configuration.UI_MODE_NIGHT_MASK)
-                    == android.content.res.Configuration.UI_MODE_NIGHT_YES;
+            // IchthysOS "Shoal" hairline: 1 dp in the theme's hairline colour (dark or light).
             mPitchBlackBorderPaint.setStrokeWidth(getResources().getDisplayMetrics().density);
-            mPitchBlackBorderPaint.setColor(night ? ShoalShade.HAIRLINE : 0x1F000000);
+            mPitchBlackBorderPaint.setColor(ShoalShade.hairlineColor(getContext()));
         }
         float sw = mPitchBlackBorderPaint.getStrokeWidth() / 2f;
         mPitchBlackBorderRect.set(b.left + sw, b.top + sw, b.right - sw, b.bottom - sw);

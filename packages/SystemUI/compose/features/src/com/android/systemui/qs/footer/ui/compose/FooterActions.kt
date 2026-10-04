@@ -445,11 +445,11 @@ private fun IconButton(
         // own (avatar) colours.
         val iconTint =
             if (model is FooterActionsButtonViewModel.UserSwitcherViewModel) colors.icon
-            else Color(ShoalShade.TEXT)
+            else Color(ShoalShade.textColor(context))
         CircleExpandable(
-            color = Color(ShoalShade.CARD),
-            contentColor = Color(ShoalShade.TEXT),
-            borderStroke = BorderStroke(1.dp, Color(ShoalShade.HAIRLINE)),
+            color = Color(ShoalShade.cardColor(context)),
+            contentColor = Color(ShoalShade.textColor(context)),
+            borderStroke = BorderStroke(1.dp, Color(ShoalShade.hairlineColor(context))),
             onClick = model.onClick,
             modifier = modifier,
             useModifierBasedImplementation = useModifierBasedExpandable,

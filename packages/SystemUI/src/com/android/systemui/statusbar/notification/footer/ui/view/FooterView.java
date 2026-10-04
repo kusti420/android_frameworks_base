@@ -506,10 +506,10 @@ public class FooterView extends StackScrollerDecorView {
         mClearAllButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f);
         mClearAllButton.setTypeface(ShoalShade.text(context, 600));
 
-        final int cardFill = ink ? ShoalShade.CARD : mContext.getColor(
+        final int cardFill = ink ? ShoalShade.cardColor(context) : mContext.getColor(
                 com.android.internal.R.color.materialColorSurfaceContainerHigh);
-        final int hairline = ink ? ShoalShade.HAIRLINE : 0x1F000000;
-        final int text = ink ? ShoalShade.TEXT : onSurface;
+        final int hairline = ink ? ShoalShade.hairlineColor(context) : 0x1F000000;
+        final int text = ink ? ShoalShade.textColor(context) : onSurface;
         mSettingsButton.setBackground(ShoalShade.pill(context, cardFill, hairline, 40));
         mSettingsButton.setTextColor(text);
         mSettingsButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f);

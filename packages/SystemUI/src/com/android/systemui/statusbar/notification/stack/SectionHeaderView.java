@@ -182,7 +182,7 @@ public class SectionHeaderView extends StackScrollerDecorView {
             mLabelView.setLetterSpacing(0.09f);
             mLabelView.setTypeface(com.android.systemui.shade.ui.ShoalShade.text(context, 600));
             if (com.android.systemui.shade.ui.ShoalShade.isInk(context)) {
-                mLabelView.setTextColor(com.android.systemui.shade.ui.ShoalShade.MUTED);
+                mLabelView.setTextColor(com.android.systemui.shade.ui.ShoalShade.mutedColor(context));
             }
             // The stack already insets this view by its 12 dp side padding.
             setPaddingRelative(com.android.systemui.shade.ui.ShoalShade.dp(context, 8),

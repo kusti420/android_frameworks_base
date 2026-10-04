@@ -112,19 +112,19 @@ final class ShoalNotificationStyle {
 
         for (int id : TITLE_IDS) {
             styleText(root.findViewById(id), ShoalShade.text(context, 600), 15f,
-                    ShoalShade.TEXT);
+                    ShoalShade.textColor(context));
         }
         for (int id : META_IDS) {
             styleText(root.findViewById(id), ShoalShade.text(context, 400), 12f,
-                    ShoalShade.MUTED);
+                    ShoalShade.mutedColor(context));
         }
         for (int id : MONO_META_IDS) {
             styleText(root.findViewById(id), ShoalShade.mono(context, 500), 12f,
-                    ShoalShade.MUTED);
+                    ShoalShade.mutedColor(context));
         }
         for (int id : BODY_IDS) {
             styleText(root.findViewById(id), ShoalShade.text(context, 400), 14f,
-                    ShoalShade.BODY);
+                    ShoalShade.bodyColor(context));
         }
 
         styleIcon(root.findViewById(com.android.internal.R.id.icon), context);
@@ -222,7 +222,7 @@ final class ShoalNotificationStyle {
         }
         // A 32 dp pill (radius 16) inside the stock touch target.
         b.setBackgroundTintList(null);
-        b.setBackground(ShoalShade.pill(context, ShoalShade.DIVIDER, 0, 32));
-        b.setTextColor(ShoalShade.TEXT);
+        b.setBackground(ShoalShade.pill(context, ShoalShade.dividerColor(context), 0, 32));
+        b.setTextColor(ShoalShade.textColor(context));
     }
 }

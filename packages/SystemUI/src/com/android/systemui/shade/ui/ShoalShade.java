@@ -42,8 +42,8 @@ import com.android.internal.graphics.ColorUtils;
  * Shoal is on when Settings.Secure {@code ichthys_theme_surface} is {@code hairline}. When that is
  * unset (the ichthys.nix default is hairline but the key is not always written), Shoal is taken to
  * be on when the rest of the Shoal theme is (Shoal quick settings, or two surface levels). An
- * explicit {@code tonal} always turns it off. The ink colours are dark-theme only: use
- * {@link #isInk(Context)} for anything that paints the fixed palette.
+ * explicit {@code tonal} always turns it off. The colours are the framework ichthys_* tokens and
+ * follow the dark / light theme.
  */
 public final class ShoalShade {
 
@@ -60,20 +60,44 @@ public final class ShoalShade {
     private static final String DEFAULT_TEXT = "instrument-sans";
     private static final String DEFAULT_MONO = "jetbrains-mono";
 
+    // The palette is the framework's ichthys_* tokens, which the theme engine fills for the dark
+    // and for the light theme. These used to be fixed dark hexes, which left the shade ink-black
+    // with dark text on it in light theme.
+
     /** Shade ground. */
-    public static final int INK = 0xFF07090B;
+    public static int inkColor(Context context) {
+        return context.getColor(com.android.internal.R.color.ichthys_ink);
+    }
+
     /** Notification card / raised surface. */
-    public static final int CARD = 0xFF0C1013;
+    public static int cardColor(Context context) {
+        return context.getColor(com.android.internal.R.color.ichthys_card);
+    }
+
     /** 1 dp hairline around cards and outlined buttons. */
-    public static final int HAIRLINE = 0xFF20282D;
+    public static int hairlineColor(Context context) {
+        return context.getColor(com.android.internal.R.color.ichthys_hairline);
+    }
+
     /** Dividers inside a card, action button fill. */
-    public static final int DIVIDER = 0xFF161C20;
+    public static int dividerColor(Context context) {
+        return context.getColor(com.android.internal.R.color.ichthys_raised);
+    }
+
     /** Primary text (titles). */
-    public static final int TEXT = 0xFFF2F4F1;
+    public static int textColor(Context context) {
+        return context.getColor(com.android.internal.R.color.ichthys_text);
+    }
+
     /** Body text. */
-    public static final int BODY = 0xFFC9CECA;
+    public static int bodyColor(Context context) {
+        return context.getColor(com.android.internal.R.color.ichthys_body);
+    }
+
     /** Meta text, section headers, dates. */
-    public static final int MUTED = 0xFF8B938F;
+    public static int mutedColor(Context context) {
+        return context.getColor(com.android.internal.R.color.ichthys_muted);
+    }
 
     /** Whether the Shoal surface style is on (see class doc). */
     public static boolean isActive(Context context) {
@@ -98,9 +122,12 @@ public final class ShoalShade {
                 & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
     }
 
-    /** Shoal on and the dark theme active: paint the fixed ink palette. */
+    /**
+     * Shoal on: paint the Shoal palette. The name is from when the palette was dark only; the
+     * colours now follow the theme, so this is true in light theme as well.
+     */
     public static boolean isInk(Context context) {
-        return isNight(context) && isActive(context);
+        return isActive(context);
     }
 
     /**
@@ -132,7 +159,7 @@ public final class ShoalShade {
 
     /** A dark, accent-tinted fill (icon discs): about 10% accent over the ink. */
     public static int accentTint(Context context) {
-        return ColorUtils.blendARGB(INK, accent(context), 0.10f);
+        return ColorUtils.blendARGB(inkColor(context), accent(context), 0.10f);
     }
 
     public static String displayFamily(Context context) {

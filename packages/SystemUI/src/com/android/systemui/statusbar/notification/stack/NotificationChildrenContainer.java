@@ -665,7 +665,7 @@ public class NotificationChildrenContainer extends ViewGroup
             final int inset = com.android.systemui.shade.ui.ShoalShade.dp(mContext, 14);
             divider.setBackground(new android.graphics.drawable.InsetDrawable(
                     new android.graphics.drawable.ColorDrawable(
-                            com.android.systemui.shade.ui.ShoalShade.DIVIDER),
+                            com.android.systemui.shade.ui.ShoalShade.dividerColor(mContext)),
                     inset, 0, inset, 0));
         }
         divider.setAlpha(0f);

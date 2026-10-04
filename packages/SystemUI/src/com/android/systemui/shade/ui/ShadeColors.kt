@@ -65,7 +65,7 @@ object ShadeColors {
      */
     @JvmStatic
     fun shadePanel(context: Context, blurSupported: Boolean, withScrim: Boolean): Int {
-        if (ShoalShade.isInk(context)) return ShoalShade.INK
+        if (ShoalShade.isInk(context)) return ShoalShade.inkColor(context)
         if (isPitchBlack(context)) return pitchBlackPanel(context)
         return if (blurSupported) {
             if (withScrim) {
@@ -83,7 +83,7 @@ object ShadeColors {
 
     @JvmStatic
     fun notificationScrim(context: Context, blurSupported: Boolean): Int {
-        if (ShoalShade.isInk(context)) return ShoalShade.INK
+        if (ShoalShade.isInk(context)) return ShoalShade.inkColor(context)
         if (isPitchBlack(context)) return pitchBlackPanel(context)
         return if (blurSupported) {
             notificationScrimStandard(context)
@@ -94,7 +94,7 @@ object ShadeColors {
 
     @JvmStatic
     fun shadePanelScrimBehind(context: Context): Int {
-        if (ShoalShade.isInk(context)) return ShoalShade.INK
+        if (ShoalShade.isInk(context)) return ShoalShade.inkColor(context)
         if (isPitchBlack(context)) return pitchBlackBackground(context)
         return context.resources.getColor(
             com.android.internal.R.color.shade_panel_scrim,
@@ -112,7 +112,7 @@ object ShadeColors {
         composited: Boolean,
     ): Int {
         // IchthysOS "Shoal": one flat ink ground; the cards carry the hairlines.
-        if (ShoalShade.isInk(context)) return ShoalShade.INK
+        if (ShoalShade.isInk(context)) return ShoalShade.inkColor(context)
         if (isPitchBlack(context)) return pitchBlackContainer(context)
         val surfaceEffect0Color =
             context.resources.getColor(

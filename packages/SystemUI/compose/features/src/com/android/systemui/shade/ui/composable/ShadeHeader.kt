@@ -420,10 +420,10 @@ private fun ContentScope.ShoalShadeHeader(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val ink = ShoalShade.isNight(context)
-    val textColor = if (ink) Color(ShoalShade.TEXT) else ShadeHeader.Colors.textColor
-    val mutedColor =
-        if (ink) Color(ShoalShade.MUTED) else ShadeHeader.Colors.textColor.copy(alpha = 0.7f)
+    // The theme's text colours, read under the configuration so they follow dark / light.
+    val configuration = LocalConfiguration.current
+    val textColor = remember(configuration) { Color(ShoalShade.textColor(context)) }
+    val mutedColor = remember(configuration) { Color(ShoalShade.mutedColor(context)) }
     val textFamily =
         remember(context) {
             FontFamily(Font(DeviceFontFamilyName(ShoalShade.textFamily(context))))
