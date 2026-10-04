@@ -66,7 +66,14 @@ public class ReduceBrightColorsControllerImpl implements
                 synchronized (mListeners) {
                     if (setting != null && mListeners.size() != 0) {
                         if (setting.equals(Settings.Secure.REDUCE_BRIGHT_COLORS_ACTIVATED)) {
-                            dispatchOnActivated(mManager.isReduceBrightColorsActivated());
+                            // IchthysOS: the setting itself, not the display service's answer.
+                            // The service applies the change from its own observer of this
+                            // setting, and when ours ran first it still answered with the old
+                            // state, which left the tile showing the opposite of the screen
+                            // until the next tap.
+                            dispatchOnActivated(mSecureSettings.getIntForUser(
+                                    Settings.Secure.REDUCE_BRIGHT_COLORS_ACTIVATED, 0,
+                                    mUserTracker.getUserId()) == 1);
                         }
                     }
                 }
