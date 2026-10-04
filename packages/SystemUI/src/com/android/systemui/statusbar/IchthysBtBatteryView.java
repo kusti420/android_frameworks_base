@@ -32,7 +32,9 @@ import android.provider.Settings;
 import android.util.PathParser;
 import android.view.View;
 
+import com.android.settingslib.bluetooth.BatteryLevelsInfo;
 import com.android.settingslib.bluetooth.CachedBluetoothDevice;
+import com.android.settingslib.utils.ThreadUtils;
 import com.android.systemui.Dependency;
 import com.android.systemui.plugins.DarkIconDispatcher.DarkReceiver;
 import com.android.systemui.statusbar.policy.BluetoothController;
@@ -71,6 +73,7 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
     private BluetoothController mBluetoothController;
     private boolean mZigzag;
     private int mLevel = -1;
+    private int mLevelRequest;
     private String mText = "";
 
     private final ContentObserver mSettingsObserver =
@@ -136,15 +139,43 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
     }
 
     private void updateLevel() {
+        final BluetoothController controller = mBluetoothController;
+        if (controller == null) {
+            return;
+        }
+        // Reading the levels is a handful of binder calls, so not on the main thread. Requests
+        // can overtake each other on the background pool; only the newest one is applied.
+        final int request = ++mLevelRequest;
+        ThreadUtils.postOnBackgroundThread(() -> {
+            final int level = lowestLevel(controller);
+            getContext().getMainExecutor().execute(() -> {
+                if (request == mLevelRequest) {
+                    applyLevel(level);
+                }
+            });
+        });
+    }
+
+    /**
+     * The lowest level among the connected devices, or -1. Earbuds that report each bud (Fast
+     * Pair, and AirPods through IchthysPodBatteryController) count with their lower bud, or with
+     * the case if no bud is known; everything else with the level its profile reports.
+     */
+    private static int lowestLevel(BluetoothController controller) {
         int level = -1;
-        if (mBluetoothController != null && mBluetoothController.isBluetoothConnected()) {
-            for (CachedBluetoothDevice device : mBluetoothController.getConnectedDevices()) {
-                final int deviceLevel = device.getMinBatteryLevelWithMemberDevices();
+        if (controller.isBluetoothConnected()) {
+            for (CachedBluetoothDevice device : controller.getConnectedDevices()) {
+                final BatteryLevelsInfo info = device.getBatteryLevelsInfo();
+                final int deviceLevel = info == null ? -1 : info.getOverallBatteryLevel();
                 if (deviceLevel >= 0 && (level < 0 || deviceLevel < level)) {
                     level = deviceLevel;
                 }
             }
         }
+        return level;
+    }
+
+    private void applyLevel(int level) {
         final boolean show = mZigzag && level >= 0;
         if (level != mLevel) {
             mLevel = level;

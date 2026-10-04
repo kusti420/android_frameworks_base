@@ -36,6 +36,7 @@ import com.android.systemui.dreams.homecontrols.system.HomeControlsDreamStartabl
 import com.android.systemui.edgelight.EdgeLightController
 import com.android.systemui.globalactions.GlobalActionsComponent
 import com.android.systemui.haptics.msdl.MSDLCoreStartable
+import com.android.systemui.ichthys.podbattery.IchthysPodBatteryController
 import com.android.systemui.keyboard.KeyboardUI
 import com.android.systemui.keyboard.PhysicalKeyboardCoreStartable
 import com.android.systemui.keyevent.SysUIKeyGestureEventInitializer
@@ -109,6 +110,14 @@ abstract class SystemUICoreStartableModule {
     @IntoMap
     @ClassKey(SmartPixelsController::class)
     abstract fun bindSmartPixelsController(sysui: SmartPixelsController): CoreStartable
+
+    /** IchthysOS: AirPods / Beats battery levels from their LE advertisements. */
+    @Binds
+    @IntoMap
+    @ClassKey(IchthysPodBatteryController::class)
+    abstract fun bindIchthysPodBatteryController(
+        sysui: IchthysPodBatteryController
+    ): CoreStartable
 
     /** Inject into GlobalActionsComponent. */
     @Binds
