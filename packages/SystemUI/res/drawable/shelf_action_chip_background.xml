@@ -17,11 +17,16 @@
 <ripple
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:androidprv="http://schemas.android.com/apk/prv/res/android"
-    android:color="@color/overlay_button_ripple">
+    android:color="?android:attr/colorControlHighlight">
     <item android:id="@android:id/background">
+        <!-- Shoal: a card with a hairline, not a solid accent pill (the theme maps secondary to
+             the accent). The content is the text colour, see shelf_action_chip.xml. -->
         <shape android:shape="rectangle">
-            <solid android:color="@color/materialColorSecondary"/>
+            <solid android:color="@*android:color/ichthys_card"/>
             <corners android:radius="10000dp"/>  <!-- fully-rounded radius -->
+            <stroke
+                android:width="@*android:dimen/ichthys_hairline_width"
+                android:color="@*android:color/ichthys_hairline"/>
         </shape>
     </item>
 </ripple>

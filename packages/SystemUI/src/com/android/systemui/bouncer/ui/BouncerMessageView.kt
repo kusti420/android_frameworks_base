@@ -17,7 +17,6 @@
 package com.android.systemui.bouncer.ui
 
 import android.content.Context
-import android.graphics.Typeface
 import android.util.AttributeSet
 import android.widget.LinearLayout
 import com.android.keyguard.BouncerKeyguardMessageArea
@@ -48,10 +47,10 @@ class BouncerMessageView : LinearLayout {
 
         if (Flags.bouncerUiRevamp2()) {
             primaryMessageView?.apply {
-                typeface = Typeface.create(FontStyles.GSF_TITLE_LARGE_EMPHASIZED, Typeface.NORMAL)
+                typeface = FontStyles.typeface(context, FontStyles.GSF_TITLE_LARGE_EMPHASIZED)
             }
             secondaryMessageView?.apply {
-                typeface = Typeface.create(FontStyles.GSF_TITLE_MEDIUM_EMPHASIZED, Typeface.NORMAL)
+                typeface = FontStyles.typeface(context, FontStyles.GSF_TITLE_MEDIUM_EMPHASIZED)
             }
         }
     }

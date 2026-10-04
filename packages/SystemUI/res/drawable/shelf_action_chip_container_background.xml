@@ -23,5 +23,9 @@
         android:shape="rectangle">
         <solid android:color="@color/materialColorSurfaceBright"/>
         <corners android:radius="10000dp"/>  <!-- fully-rounded radius -->
+        <!-- Shoal: a hairline edge around the tray. -->
+        <stroke
+            android:width="@*android:dimen/ichthys_hairline_width"
+            android:color="@*android:color/ichthys_hairline"/>
     </shape>
 </inset>

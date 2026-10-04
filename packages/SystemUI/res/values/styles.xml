@@ -19,7 +19,7 @@
 
     <style name="TextAppearance.StatusBar.Default" parent="@*android:style/TextAppearance.StatusBar.Icon">
         <item name="android:textSize">@dimen/status_bar_clock_size</item>
-        <item name="android:fontFamily">"variable-label-large-emphasized"</item>
+        <item name="android:fontFamily">@*android:string/config_bodyFontFamilyMedium</item>
         <item name="android:textColor">@color/status_bar_clock_color</item>
     </style>
 
@@ -162,14 +162,14 @@
     </style>
 
     <style name="TextAppearance.QS.Status">
-        <item name="android:fontFamily">variable-body-medium-emphasized</item>
+        <item name="android:fontFamily">@*android:string/config_bodyFontFamilyMedium</item>
         <item name="android:textColor">@color/shade_header_text_color</item>
         <item name="android:textSize">@dimen/status_bar_shade_header_text_size_sp</item>
         <item name="android:letterSpacing">0.01</item>
     </style>
 
     <style name="TextAppearance.QS.Status.Clock">
-        <item name="android:fontFamily">variable-display-small-emphasized</item>
+        <item name="android:fontFamily">@*android:string/config_headlineFontFamilyMedium</item>
     </style>
 
     <style name="TextAppearance.DeviceManagementDialog.Title" parent="@android:style/TextAppearance.DeviceDefault.DialogWindowTitle"/>
@@ -243,7 +243,7 @@
     </style>
 
     <style name="TextAppearance.AuthNonBioCredential.Title">
-        <item name="android:fontFamily">variable-title-large-emphasized</item>
+        <item name="android:fontFamily">@*android:string/config_headlineFontFamilyMedium</item>
         <item name="android:layout_marginTop">24dp</item>
         <item name="android:textSize">36sp</item>
         <item name="android:focusable">true</item>
@@ -698,11 +698,11 @@
     <style name="Theme.SystemUI.QuickSettings.Header">
         <item name="lightIconTheme">@style/DualToneLightTheme</item>
         <item name="darkIconTheme">@style/QSHeaderDarkTheme</item>
-        <item name="android:fontFamily">variable-body-medium-emphasized</item>
+        <item name="android:fontFamily">@*android:string/config_bodyFontFamilyMedium</item>
     </style>
 
     <style name="Theme.SystemUI.DesktopStatusBar">
-        <item name="android:fontFamily">variable-label-large-emphasized</item>
+        <item name="android:fontFamily">@*android:string/config_bodyFontFamilyMedium</item>
     </style>
 
     <style name="QSIconTheme">
@@ -741,7 +741,7 @@
         <item name="android:paddingEnd">12dp</item>
         <item name="android:insetTop">8dp</item>
         <item name="android:insetBottom">8dp</item>
-        <item name="android:fontFamily">variable-label-large</item>
+        <item name="android:fontFamily">@*android:string/config_bodyFontFamily</item>
         <item name="android:textColor">@color/media_dialog_on_surface_variant</item>
         <item name="iconSize">18dp</item>
         <item name="iconTint">@color/media_dialog_primary</item>
@@ -783,7 +783,7 @@
     </style>
 
     <style name="TextAppearance.NotificationInfo.Button">
-        <item name="android:fontFamily">variable-title-small-emphasized</item>
+        <item name="android:fontFamily">@*android:string/config_bodyFontFamilyMedium</item>
 
         <item name="android:textColor">@color/materialColorPrimary</item>
 
@@ -795,7 +795,7 @@
     <style name="TextAppearance.NotificationImportanceChannel">
         <item name="android:textSize">14sp</item>
 
-        <item name="android:fontFamily">variable-title-small-emphasized</item>
+        <item name="android:fontFamily">@*android:string/config_bodyFontFamilyMedium</item>
 
         <item name="android:textColor">@color/materialColorOnSurface</item>
     </style>
@@ -803,7 +803,7 @@
     <style name="TextAppearance.NotificationImportanceChannelGroup">
         <item name="android:textSize">14sp</item>
 
-        <item name="android:fontFamily">variable-body-medium</item>
+        <item name="android:fontFamily">@*android:string/config_bodyFontFamily</item>
 
         <item name="android:textColor">@color/materialColorOnSurface</item>
     </style>
@@ -811,7 +811,7 @@
     <style name="TextAppearance.NotificationImportanceApp">
         <item name="android:textSize">14sp</item>
 
-        <item name="android:fontFamily">variable-body-medium</item>
+        <item name="android:fontFamily">@*android:string/config_bodyFontFamily</item>
 
         <item name="android:textColor">@color/materialColorOnSurface</item>
     </style>
@@ -819,7 +819,7 @@
     <style name="TextAppearance.NotificationImportanceHeader">
         <item name="android:textSize">14sp</item>
 
-        <item name="android:fontFamily">variable-body-medium</item>
+        <item name="android:fontFamily">@*android:string/config_bodyFontFamily</item>
 
         <item name="android:textColor">@color/materialColorOnSurface</item>
     </style>
@@ -827,7 +827,7 @@
     <style name="TextAppearance.NotificationImportanceDetail">
         <item name="android:textSize">14sp</item>
 
-        <item name="android:fontFamily">variable-body-medium</item>
+        <item name="android:fontFamily">@*android:string/config_bodyFontFamily</item>
 
         <item name="android:textColor">@color/materialColorOnSurface</item>
 
@@ -837,7 +837,7 @@
     <style name="TextAppearance.NotificationImportanceButton">
         <item name="android:textSize">14sp</item>
 
-        <item name="android:fontFamily">variable-title-small-emphasized</item>
+        <item name="android:fontFamily">@*android:string/config_bodyFontFamilyMedium</item>
 
         <item name="android:textColor">@color/materialColorOnSurface</item>
 
@@ -849,7 +849,7 @@
         parent="@android:style/Widget.DeviceDefault.Button.Borderless">
         <item name="android:textColor">@color/materialColorOnSurface</item>
         <item name="android:textAllCaps">false</item>
-        <item name="android:fontFamily">variable-title-small-emphasized</item>
+        <item name="android:fontFamily">@*android:string/config_bodyFontFamilyMedium</item>
         <item name="android:textSize">14sp</item>
         <item name="android:minWidth">0dp</item>
     </style>
@@ -867,7 +867,7 @@
     <style
         name="TextAppearance.NotificationFooterButton"
         parent="@android:style/Widget.DeviceDefault.Button.Borderless">
-        <item name="android:fontFamily">variable-title-medium-emphasized</item>
+        <item name="android:fontFamily">@*android:string/config_bodyFontFamilyMedium</item>
         <item name="android:textColor">@color/materialColorOnSurface</item>
         <item name="android:drawableTint">@color/materialColorOnSurface</item>
         <item name="android:textAllCaps">false</item>
@@ -878,7 +878,7 @@
     <style name="TextAppearance.NotificationShadeText"
         parent="@android:style/TextAppearance.DeviceDefault.Widget.Button">
         <item name="android:textColor">@color/materialColorOnSurface</item>
-        <item name="android:fontFamily">variable-title-medium-emphasized</item>
+        <item name="android:fontFamily">@*android:string/config_bodyFontFamilyMedium</item>
         <item name="android:textSize">16sp</item>
     </style>
 
@@ -892,7 +892,7 @@
     <style name="TextAppearance.NotificationSmartReply">
         <item name="android:textSize">12sp</item>
         <item name="android:textColor">@color/materialColorOnSurface</item>
-        <item name="android:fontFamily">variable-label-medium</item>
+        <item name="android:fontFamily">@*android:string/config_bodyFontFamily</item>
     </style>
 
     <!-- Media controls always have dark background -->

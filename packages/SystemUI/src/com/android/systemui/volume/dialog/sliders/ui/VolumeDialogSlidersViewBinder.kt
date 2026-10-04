@@ -40,6 +40,7 @@ import com.android.app.tracing.coroutines.launchInTraced
 import com.android.app.tracing.coroutines.launchTraced
 import com.android.internal.graphics.drawable.BackgroundBlurDrawable
 import com.android.systemui.res.R
+import com.android.systemui.shade.ui.ShoalShade
 import com.android.systemui.util.children
 import com.android.systemui.volume.dialog.dagger.scope.VolumeDialogScope
 import com.android.systemui.volume.dialog.sliders.dagger.VolumeDialogSliderComponent
@@ -197,10 +198,13 @@ constructor(
     /**
      * IchthysOS: the collapsed One UI pill host: cross-window blur clipped to the pill, the black
      * α30 foreground on top (or the opaque no-blur tint when blur is unavailable), 12 dp elevation.
+     * With the Shoal surface style on it is an opaque card instead, with no blur behind it: the
+     * track of the Shoal brightness slider (the Compose content draws its hairline).
      */
     private fun View.applyOneUiPill(blurSupported: Boolean) {
         val density = resources.displayMetrics.density
         val radius = OneUiVolumeSpecs.trackWidth.value * density / 2f
+        val shoal = ShoalShade.isActive(context)
         val night =
             (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
                 Configuration.UI_MODE_NIGHT_YES
@@ -209,6 +213,7 @@ constructor(
                 cornerRadius = radius
                 setColor(
                     when {
+                        shoal -> context.getColor(com.android.internal.R.color.ichthys_card)
                         blurSupported -> ONEUI_BLUR_FOREGROUND
                         night -> ONEUI_TRACK_NO_BLUR_DARK
                         else -> ONEUI_TRACK_NO_BLUR_LIGHT
@@ -216,9 +221,15 @@ constructor(
                 )
             }
         val blur =
-            viewRootImpl?.createBackgroundBlurDrawable()?.apply {
-                setCornerRadius(radius)
-                setBlurRadius(if (blurSupported) (ONEUI_BLUR_RADIUS_DP * density).toInt() else 0)
+            if (shoal) {
+                null
+            } else {
+                viewRootImpl?.createBackgroundBlurDrawable()?.apply {
+                    setCornerRadius(radius)
+                    setBlurRadius(
+                        if (blurSupported) (ONEUI_BLUR_RADIUS_DP * density).toInt() else 0
+                    )
+                }
             }
         background = if (blur != null) LayerDrawable(arrayOf<Drawable>(blur, tint)) else tint
         elevation = OneUiVolumeSpecs.elevation.value * density

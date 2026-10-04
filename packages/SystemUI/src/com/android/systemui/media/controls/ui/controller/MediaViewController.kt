@@ -28,15 +28,11 @@ import androidx.annotation.VisibleForTesting
 import androidx.constraintlayout.widget.ConstraintSet
 import androidx.constraintlayout.widget.ConstraintSet.MATCH_CONSTRAINT
 import com.android.app.tracing.traceSection
+import com.android.systemui.FontStyles
 import com.android.systemui.media.controls.ui.controller.MediaCarouselController.Companion.calculateAlpha
 import com.android.systemui.media.controls.ui.view.GutsViewHolder
 import com.android.systemui.media.controls.ui.view.MediaHostState
 import com.android.systemui.media.controls.ui.view.MediaViewHolder
-import com.android.systemui.media.controls.ui.view.MediaViewHolder.Companion.bodyMediumTF
-import com.android.systemui.media.controls.ui.view.MediaViewHolder.Companion.headlineSmallTF
-import com.android.systemui.media.controls.ui.view.MediaViewHolder.Companion.labelMediumTF
-import com.android.systemui.media.controls.ui.view.MediaViewHolder.Companion.titleMediumEmphasizedTF
-import com.android.systemui.media.controls.ui.view.MediaViewHolder.Companion.titleMediumTF
 import com.android.systemui.media.controls.ui.viewmodel.SeekBarViewModel
 import com.android.systemui.media.remedia.shared.flag.MediaControlsInComposeFlag
 import com.android.systemui.res.R
@@ -724,11 +720,20 @@ constructor(
     }
 
     private fun updateFontPerLocation(viewHolder: MediaViewHolder?, location: Int) {
+        val labelMedium = FontStyles.typeface(context, FontStyles.GSF_LABEL_MEDIUM)
         when (location) {
             MediaHierarchyManager.LOCATION_COMMUNAL_HUB ->
-                viewHolder?.updateFontFamily(headlineSmallTF, titleMediumTF, labelMediumTF)
+                viewHolder?.updateFontFamily(
+                    FontStyles.typeface(context, FontStyles.GSF_HEADLINE_SMALL),
+                    FontStyles.typeface(context, FontStyles.GSF_TITLE_MEDIUM),
+                    labelMedium,
+                )
             else ->
-                viewHolder?.updateFontFamily(titleMediumEmphasizedTF, bodyMediumTF, labelMediumTF)
+                viewHolder?.updateFontFamily(
+                    FontStyles.typeface(context, FontStyles.GSF_TITLE_MEDIUM_EMPHASIZED),
+                    FontStyles.typeface(context, FontStyles.GSF_BODY_MEDIUM),
+                    labelMedium,
+                )
         }
     }
 

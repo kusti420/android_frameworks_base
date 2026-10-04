@@ -76,6 +76,7 @@ import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.UiEventLogger;
 import com.android.internal.logging.nano.MetricsProto.MetricsEvent;
 import com.android.systemui.Dependency;
+import com.android.systemui.FontStyles;
 import com.android.systemui.notifications.content.icon.AppIconProvider;
 import com.android.systemui.res.R;
 import com.android.systemui.statusbar.notification.collection.EntryAdapter;
@@ -341,7 +342,8 @@ public class NotificationInfo extends LinearLayout implements NotificationGuts.G
                 summarized.setVisibility(VISIBLE);
                 summarized.setText(
                         mContext.getString(R.string.notification_summarization_header, mAppName));
-                summarized.setTypeface(Typeface.create("variable-body-medium", Typeface.ITALIC));
+                summarized.setTypeface(FontStyles.typeface(mContext,
+                        FontStyles.GSF_BODY_MEDIUM, Typeface.ITALIC));
             } else {
                 summarized.setVisibility(GONE);
             }

@@ -20,4 +20,8 @@
     android:shape="rectangle">
     <solid android:color="@color/materialColorSurfaceBright"/>
     <corners android:radius="16dp"/>
+    <!-- Shoal: a hairline edge around the preview's frame. -->
+    <stroke
+        android:width="@*android:dimen/ichthys_hairline_width"
+        android:color="@*android:color/ichthys_hairline"/>
 </shape>

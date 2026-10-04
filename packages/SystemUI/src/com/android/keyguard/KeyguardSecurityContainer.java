@@ -52,7 +52,6 @@ import android.graphics.BlendMode;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Rect;
-import android.graphics.Typeface;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.Icon;
@@ -1419,7 +1418,7 @@ public class KeyguardSecurityContainer extends ConstraintLayout {
             mUserSwitcher = mView.findViewById(R.id.user_switcher_header);
             if (Flags.bouncerUiRevamp2()) {
                 mUserSwitcher.setTypeface(
-                        Typeface.create(FontStyles.GSF_LABEL_MEDIUM, Typeface.NORMAL));
+                        FontStyles.typeface(mView.getContext(), FontStyles.GSF_LABEL_MEDIUM));
             }
         }
 

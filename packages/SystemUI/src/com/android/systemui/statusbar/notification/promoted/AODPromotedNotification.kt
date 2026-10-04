@@ -340,9 +340,9 @@ private class AODPromotedNotificationViewUpdater(root: View) {
     private val defaultLargeIconSizePx: Int =
         root.context.resources.getDimensionPixelSize(R.dimen.notification_right_icon_size)
 
-    private val defaultTypeface = Typeface.create(FontStyles.GSF_BODY_MEDIUM, Typeface.NORMAL)
+    private val defaultTypeface = FontStyles.typeface(root.context, FontStyles.GSF_BODY_MEDIUM)
     private val metricValueTypeface =
-        Typeface.create(FontStyles.GSF_DISPLAY_SMALL_EMPHASIZED_LIGHT, Typeface.NORMAL)
+        FontStyles.typeface(root.context, FontStyles.GSF_DISPLAY_SMALL_EMPHASIZED_LIGHT)
 
     private val marginPx: Int =
         root.context.resources.getDimensionPixelSize(R.dimen.notification_2025_margin)

@@ -17,7 +17,6 @@
 package com.android.keyguard;
 
 import android.content.Context;
-import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.text.TextUtils;
 import android.util.AttributeSet;
@@ -83,7 +82,7 @@ public class EmergencyButton extends Button {
             });
         }
         if (Flags.bouncerUiRevamp2()) {
-            setTypeface(Typeface.create(FontStyles.GSF_TITLE_MEDIUM, Typeface.NORMAL));
+            setTypeface(FontStyles.typeface(mContext, FontStyles.GSF_TITLE_MEDIUM));
             Drawable background = getBackground();
             int bgColor = mContext.getColor(KeyguardBouncerConstants.Color.actionButtonBg);
             if (background != null) {

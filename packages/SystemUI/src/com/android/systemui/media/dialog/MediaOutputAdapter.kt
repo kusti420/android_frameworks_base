@@ -17,7 +17,6 @@ package com.android.systemui.media.dialog
 
 import android.content.Context
 import android.content.res.ColorStateList
-import android.graphics.Typeface
 import android.graphics.drawable.AnimatedVectorDrawable
 import android.graphics.drawable.Drawable
 import android.text.BidiFormatter
@@ -37,6 +36,7 @@ import androidx.annotation.VisibleForTesting
 import androidx.appcompat.content.res.AppCompatResources
 import androidx.recyclerview.widget.RecyclerView
 import com.android.settingslib.media.MediaDevice
+import com.android.systemui.FontStyles
 import com.android.systemui.FontStyles.GSF_TITLE_MEDIUM_EMPHASIZED
 import com.android.systemui.FontStyles.GSF_TITLE_SMALL
 import com.android.systemui.media.dialog.MediaItem.DeviceGroupMediaItem
@@ -277,7 +277,7 @@ class MediaOutputAdapter(controller: MediaSwitchingController) :
                 val fontFamilyName: String =
                     if (connectionState == CONNECTED) GSF_TITLE_MEDIUM_EMPHASIZED
                     else GSF_TITLE_SMALL
-                mTitleText.typeface = Typeface.create(fontFamilyName, Typeface.NORMAL)
+                mTitleText.typeface = FontStyles.typeface(mContext, fontFamilyName)
             }
             mTitleText.setTextColor(colorTheme.titleColor)
             mTitleText.alpha = colorTheme.contentAlpha

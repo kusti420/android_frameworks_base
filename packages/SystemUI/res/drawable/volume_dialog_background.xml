@@ -19,4 +19,8 @@
     android:shape="rectangle">
     <corners android:radius="@dimen/volume_dialog_background_corner_radius"/>
     <solid android:color="@color/materialColorSurface" />
+    <!-- Shoal: a hairline edge, the panel floats over the app. -->
+    <stroke
+        android:width="@*android:dimen/ichthys_hairline_width"
+        android:color="@*android:color/ichthys_hairline" />
 </shape>

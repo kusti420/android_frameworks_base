@@ -22,7 +22,6 @@ import static com.android.systemui.Flags.bouncerUiRevamp2;
 import android.content.Context;
 import android.content.res.Configuration;
 import android.content.res.TypedArray;
-import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.os.PowerManager;
@@ -149,7 +148,7 @@ public class NumPadKey extends ViewGroup implements NumPadAnimationListener, Num
 
         if (bouncerUiRevamp2()) {
             mDigitText.setTypeface(
-                    Typeface.create(FontStyles.GSF_LABEL_SMALL_EMPHASIZED, Typeface.NORMAL));
+                    FontStyles.typeface(context, FontStyles.GSF_LABEL_SMALL_EMPHASIZED));
         }
     }
 

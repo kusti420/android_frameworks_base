@@ -19,7 +19,10 @@
        android:shape="rectangle" >
     <solid android:color="@color/materialColorSecondaryContainer" />
 
-    <stroke android:width="1dp" android:color="@color/materialColorOutline"  />
+    <!-- Shoal: the selected button is outlined in the accent, at the hairline width. -->
+    <stroke
+        android:width="@*android:dimen/ichthys_hairline_width"
+        android:color="@*android:color/ichthys_accent" />
 
     <corners android:radius="28dp" />
 </shape>

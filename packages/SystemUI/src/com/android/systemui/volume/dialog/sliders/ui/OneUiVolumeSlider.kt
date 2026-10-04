@@ -59,14 +59,21 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.colorResource
+import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.text.font.DeviceFontFamilyName
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -75,6 +82,7 @@ import com.android.internal.R as internalR
 import com.android.settingslib.R as SettingsR
 import com.android.systemui.common.ui.compose.Icon
 import com.android.systemui.res.R
+import com.android.systemui.shade.ui.ShoalShade
 import com.android.systemui.volume.dialog.sliders.ui.viewmodel.VolumeDialogSliderStateModel
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -97,6 +105,11 @@ import kotlinx.coroutines.delay
  *   of 30 dp dismisses (toward the edge) or expands (toward the centre),
  * - "squish": the pill scales to 1.07 while touched and pulses to 0.95 on key-driven changes;
  *   programmatic level changes spring (stiffness 450, damping 1).
+ *
+ * IchthysOS: with the Shoal surface style on ([ShoalShade.isActive]) the pill keeps this geometry
+ * and behaviour but takes the look of the Shoal brightness slider from the framework tokens
+ * (com.android.internal.R.color.ichthys_*): a card track with a hairline, the accent fill tint,
+ * glyphs in the text colour and the step number in the mono face. See [rememberShoalVolumePalette].
  */
 @Composable
 fun OneUiVolumeSlider(
@@ -132,7 +145,16 @@ fun OneUiVolumeSlider(
     val dark =
         (LocalConfiguration.current.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
-    val colors = if (dark) OneUiVolumeSpecs.Dark else OneUiVolumeSpecs.Light
+    val context = LocalContext.current
+    val shoal = remember(context) { ShoalShade.isActive(context) }
+    val colors =
+        when {
+            shoal -> rememberShoalVolumePalette()
+            dark -> OneUiVolumeSpecs.Dark
+            else -> OneUiVolumeSpecs.Light
+        }
+    val hairlineWidth = dimensionResource(internalR.dimen.ichthys_hairline_width)
+    val numberFont = if (shoal) rememberShoalMonoFamily() else null
 
     var dragging by remember { mutableStateOf(false) }
     // One UI sets the progress directly while dragging and springs it (stiffness 450, damping 1)
@@ -300,8 +322,11 @@ fun OneUiVolumeSlider(
                     .background(if (expanded) colors.expandedTrack else Color.Transparent)
                     .border(
                         width =
-                            if (expanded) OneUiVolumeSpecs.expandedStroke
-                            else OneUiVolumeSpecs.trackStroke,
+                            when {
+                                shoal -> hairlineWidth
+                                expanded -> OneUiVolumeSpecs.expandedStroke
+                                else -> OneUiVolumeSpecs.trackStroke
+                            },
                         color = if (expanded) colors.expandedStrokeColor else colors.trackStrokeColor,
                         shape = pillShape,
                     )
@@ -336,7 +361,8 @@ fun OneUiVolumeSlider(
             // One UI 6 shows none).
             OneUiStepNumber(
                 step = state.value.roundToInt(),
-                color = colors.glyph,
+                color = colors.number,
+                fontFamily = numberFont,
                 topInset =
                     if (expanded) OneUiVolumeSpecs.glyphInset
                     else OneUiVolumeSpecs.glyphInset + OneUiVolumeSpecs.glyphSize,
@@ -372,12 +398,18 @@ private fun BoxScope.OneUiMoreGlyph(color: Color) {
 
 /** IchthysOS: the numeric volume step, centred near the top of the pill. */
 @Composable
-private fun BoxScope.OneUiStepNumber(step: Int, color: Color, topInset: Dp) {
+private fun BoxScope.OneUiStepNumber(
+    step: Int,
+    color: Color,
+    fontFamily: FontFamily?,
+    topInset: Dp,
+) {
     Text(
         text = step.toString(),
         color = color,
         fontSize = 13.sp,
         fontWeight = FontWeight.SemiBold,
+        fontFamily = fontFamily,
         modifier = Modifier.align(Alignment.TopCenter).padding(top = topInset),
     )
 }
@@ -458,9 +490,46 @@ private fun oneUiStreamIconRes(resId: Int?): Int? =
     }
 
 /**
+ * The Shoal colours of the pill, all of them framework tokens, so they follow the theme in light
+ * and dark: the track is the card with a hairline (the collapsed pill's card is painted by the host
+ * View, see VolumeDialogSlidersViewBinder.applyOneUiPill), the fill the accent fill tint (which is
+ * mixed over the card, so the glyphs stay readable on both), glyphs the text colour and the step
+ * number the muted one, as the value of the brightness slider.
+ */
+@Composable
+private fun rememberShoalVolumePalette(): OneUiVolumeSpecs.Palette {
+    val card = colorResource(internalR.color.ichthys_card)
+    val hairline = colorResource(internalR.color.ichthys_hairline)
+    val fill = colorResource(internalR.color.ichthys_accent_fill)
+    val text = colorResource(internalR.color.ichthys_text)
+    val muted = colorResource(internalR.color.ichthys_muted)
+    return remember(card, hairline, fill, text, muted) {
+        OneUiVolumeSpecs.Palette(
+            fill = fill,
+            glyph = text,
+            trackStrokeColor = hairline,
+            expandedTrack = card,
+            expandedStrokeColor = hairline,
+            number = muted,
+        )
+    }
+}
+
+/** The Shoal mono face (theme.font.mono), for the step number. */
+@Composable
+private fun rememberShoalMonoFamily(): FontFamily {
+    val name = stringResource(internalR.string.ichthys_font_mono)
+    return remember(name) {
+        if (name.isEmpty()) FontFamily.Monospace
+        else FontFamily(Font(DeviceFontFamilyName(name), weight = FontWeight.SemiBold))
+    }
+}
+
+/**
  * One UI 6 volume pill values (SPEC_VOLUME_ONEUI.md §2/§3, A52s firmware). Colours are fixed, never
- * Monet. The track background itself (blur + black α30 foreground, or the no-blur tint) is painted
- * by the host View; see VolumeDialogSlidersViewBinder.applyOneUiPill.
+ * Monet; the Shoal look replaces them with [rememberShoalVolumePalette]. The track background
+ * itself (blur + black α30 foreground, or the no-blur tint) is painted by the host View; see
+ * VolumeDialogSlidersViewBinder.applyOneUiPill.
  */
 object OneUiVolumeSpecs {
     class Palette(
@@ -469,6 +538,8 @@ object OneUiVolumeSpecs {
         val trackStrokeColor: Color,
         val expandedTrack: Color,
         val expandedStrokeColor: Color,
+        /** The step number; the One UI palettes draw it as the glyphs. */
+        val number: Color = glyph,
     )
 
     val Light =

@@ -22,6 +22,7 @@ import android.util.AttributeSet
 import android.view.RemotableViewMethod
 import android.widget.RemoteViews
 import com.android.internal.widget.ImageFloatingTextView
+import com.android.systemui.FontStyles
 
 /** Precomputed version of [ImageFloatingTextView] */
 @RemoteViews.RemoteView
@@ -40,7 +41,9 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
             if (showAsSummarization) {
                 setSingleLine(false)
                 maxLines = 3
-                setTypeface(Typeface.create("variable-body-medium", Typeface.ITALIC))
+                setTypeface(
+                    FontStyles.typeface(context, FontStyles.GSF_BODY_MEDIUM, Typeface.ITALIC)
+                )
             }
         }
     }

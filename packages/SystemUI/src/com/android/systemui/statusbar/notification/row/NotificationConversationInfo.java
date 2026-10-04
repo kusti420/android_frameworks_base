@@ -70,6 +70,7 @@ import android.widget.TextView;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.settingslib.notification.ConversationIconFactory;
+import com.android.systemui.FontStyles;
 import com.android.systemui.dagger.qualifiers.Background;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.people.widget.PeopleSpaceWidgetManager;
@@ -310,7 +311,8 @@ public class NotificationConversationInfo extends LinearLayout implements
                 summarized.setVisibility(VISIBLE);
                 summarized.setText(
                         mContext.getString(R.string.notification_summarization_header, mAppName));
-                summarized.setTypeface(Typeface.create("variable-body-medium", Typeface.ITALIC));
+                summarized.setTypeface(FontStyles.typeface(mContext,
+                        FontStyles.GSF_BODY_MEDIUM, Typeface.ITALIC));
             } else {
                 summarized.setVisibility(GONE);
             }

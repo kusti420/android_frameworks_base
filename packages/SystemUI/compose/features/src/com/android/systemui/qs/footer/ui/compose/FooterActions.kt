@@ -67,6 +67,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -501,6 +502,7 @@ private fun NumberButton(
     val colors = numberButtonColors()
     CircleExpandable(
         color = colors.background,
+        borderStroke = colors.border,
         onClick = onClick,
         interactionSource = interactionSource,
         modifier = modifier,
@@ -786,11 +788,26 @@ private object FooterActionsDefaults {
     @Composable
     @ReadOnlyComposable
     fun blurTextButtonColors(): TextButtonColors =
-        TextButtonColors(
-            content = MaterialTheme.colorScheme.onSurface,
-            background = LocalAndroidColorScheme.current.surfaceEffect1,
-            border = null,
-        )
+        if (ShoalShade.isActive(LocalContext.current)) {
+            // IchthysOS "Shoal": the text pill and the number get the treatment of the icon
+            // buttons, a card with a hairline and the text colour. Framework tokens, so they
+            // follow the theme in light and dark.
+            TextButtonColors(
+                content = colorResource(com.android.internal.R.color.ichthys_text),
+                background = colorResource(com.android.internal.R.color.ichthys_card),
+                border =
+                    BorderStroke(
+                        dimensionResource(com.android.internal.R.dimen.ichthys_hairline_width),
+                        colorResource(com.android.internal.R.color.ichthys_hairline),
+                    ),
+            )
+        } else {
+            TextButtonColors(
+                content = MaterialTheme.colorScheme.onSurface,
+                background = LocalAndroidColorScheme.current.surfaceEffect1,
+                border = null,
+            )
+        }
 
     @Composable
     @ReadOnlyComposable

@@ -19,5 +19,9 @@
        android:shape="rectangle">
     <solid android:color="?android:attr/colorSurface" />
     <corners android:radius="28dp" />
+    <!-- IchthysOS Shoal: a hairline edge. -->
+    <stroke
+        android:width="@dimen/ichthys_hairline_width"
+        android:color="@color/ichthys_hairline" />
 </shape>
 

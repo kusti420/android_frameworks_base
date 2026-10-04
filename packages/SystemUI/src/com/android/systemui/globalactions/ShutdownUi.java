@@ -113,8 +113,7 @@ public class ShutdownUi {
         reasonView.setTextColor(color);
         messageView.setTextColor(color);
 
-        Typeface typeface = Typeface.create(FontStyles.GSF_LABEL_LARGE_EMPHASIZED,
-                Typeface.NORMAL);
+        Typeface typeface = FontStyles.typeface(mContext, FontStyles.GSF_LABEL_LARGE_EMPHASIZED);
         reasonView.setTypeface(typeface);
         messageView.setTypeface(typeface);
 

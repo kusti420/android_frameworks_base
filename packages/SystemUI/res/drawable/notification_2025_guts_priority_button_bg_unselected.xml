@@ -19,7 +19,10 @@
        android:shape="rectangle" >
     <solid android:color="@color/transparent" />
 
-    <stroke android:width="1dp" android:color="@color/materialColorOutlineVariant"  />
+    <!-- Shoal: the hairline. -->
+    <stroke
+        android:width="@*android:dimen/ichthys_hairline_width"
+        android:color="@*android:color/ichthys_hairline" />
 
     <corners android:radius="16dp" />
 </shape>

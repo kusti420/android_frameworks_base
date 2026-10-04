@@ -43,8 +43,11 @@ import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -54,16 +57,21 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.changedToDown
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.colorResource
+import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.disabled
@@ -72,6 +80,10 @@ import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.DeviceFontFamilyName
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -90,6 +102,7 @@ import com.android.systemui.common.ui.compose.Icon
 import com.android.systemui.compose.modifiers.sysuiResTag
 import com.android.systemui.kairos.internal.util.fastForEach
 import com.android.systemui.res.R
+import com.android.systemui.shade.ui.ShoalShade
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.DurationUnit
 import kotlinx.coroutines.Job
@@ -124,6 +137,8 @@ fun PinPad(viewModel: PinBouncerViewModel, verticalSpacing: Dp, modifier: Modifi
     val view = LocalView.current
     val context = LocalContext.current
     val accessibilityManager = remember(context) { AccessibilityManager.getInstance(context) }
+    // IchthysOS Shoal: the keys are cards with a hairline ring, enter is the accent-filled key.
+    val shoal = rememberShoalPinPadStyle()
 
     VerticalGrid(
         columns = columns,
@@ -156,7 +171,7 @@ fun PinPad(viewModel: PinBouncerViewModel, verticalSpacing: Dp, modifier: Modifi
                 scaling = buttonScaleAnimatables[index]::value,
                 isAnimationEnabled = isDigitButtonAnimationEnabled,
                 onPointerDown = viewModel::onDigitButtonDown,
-                backgroundColor = Color(context.pinDigitBg()),
+                backgroundColor = shoal?.key ?: Color(context.pinDigitBg()),
             )
         }
 
@@ -195,7 +210,7 @@ fun PinPad(viewModel: PinBouncerViewModel, verticalSpacing: Dp, modifier: Modifi
             appearance = viewModel.backspaceButtonAppearance,
             scaling = buttonScaleAnimatables[9]::value,
             elementId = "delete_button",
-            backgroundColor = Color(context.pinActionBg()),
+            backgroundColor = shoal?.key ?: Color(context.pinActionBg()),
         )
 
         DigitButton(
@@ -213,7 +228,7 @@ fun PinPad(viewModel: PinBouncerViewModel, verticalSpacing: Dp, modifier: Modifi
             scaling = buttonScaleAnimatables[10]::value,
             isAnimationEnabled = isDigitButtonAnimationEnabled,
             onPointerDown = viewModel::onDigitButtonDown,
-            backgroundColor = Color(context.pinDigitBg()),
+            backgroundColor = shoal?.key ?: Color(context.pinDigitBg()),
         )
 
         ActionButton(
@@ -229,7 +244,8 @@ fun PinPad(viewModel: PinBouncerViewModel, verticalSpacing: Dp, modifier: Modifi
             appearance = confirmButtonAppearance,
             scaling = buttonScaleAnimatables[11]::value,
             elementId = "key_enter",
-            backgroundColor = Color(context.pinActionBg()),
+            backgroundColor = shoal?.accent ?: Color(context.pinActionBg()),
+            accentFilled = true,
         )
     }
 }
@@ -256,12 +272,15 @@ fun DigitButton(
                     PinBouncerConstants.Animation.normalTextScaleX
                 }
         )
+    val shoal = rememberShoalPinPadStyle()
     PinPadButton(
         interactionSource = interactionSource,
         onClicked = { onClicked(digit) },
         isEnabled = isInputEnabled,
         backgroundColor = backgroundColor,
-        foregroundColor = colorResource(PinBouncerConstants.Color.digit),
+        foregroundColor = shoal?.content ?: colorResource(PinBouncerConstants.Color.digit),
+        ringColor = shoal?.ring ?: Color.Transparent,
+        shoal = shoal,
         isAnimationEnabled = isAnimationEnabled,
         onPointerDown = onPointerDown,
         modifier =
@@ -273,7 +292,16 @@ fun DigitButton(
     ) { contentColor ->
         BasicText(
             text = digit.toString(),
-            style = MaterialTheme.typography.labelSmallEmphasized.merge(fontSize = 32.sp),
+            style =
+                if (shoal != null) {
+                    MaterialTheme.typography.labelSmallEmphasized.merge(
+                        fontSize = 32.sp,
+                        fontFamily = shoal.mono,
+                        fontWeight = ShoalDigitWeight,
+                    )
+                } else {
+                    MaterialTheme.typography.labelSmallEmphasized.merge(fontSize = 32.sp)
+                },
             color = { contentColor() },
             modifier = Modifier.graphicsLayer { scaleX = textScaleX },
         )
@@ -292,11 +320,21 @@ fun ActionButton(
     appearance: ActionButtonAppearance,
     scaling: () -> Float,
     backgroundColor: Color,
+    accentFilled: Boolean = false,
 ) {
     val isHidden = appearance == ActionButtonAppearance.Hidden
     val hiddenAlpha by animateFloatAsState(if (isHidden) 0f else 1f, label = "Action button alpha")
 
-    val foregroundColor = colorResource(PinBouncerConstants.Color.action)
+    // IchthysOS Shoal: a shown key is a card with a hairline ring, or (enter) the accent fill with
+    // the on-accent glyph; a subtle one has neither fill nor ring and keeps the text colour.
+    val shoal = rememberShoalPinPadStyle()
+    val isShown = appearance == ActionButtonAppearance.Shown
+    val foregroundColor =
+        when {
+            shoal == null -> colorResource(PinBouncerConstants.Color.action)
+            accentFilled && isShown -> shoal.onAccent
+            else -> shoal.content
+        }
 
     val backgroundColorOrTransparentWhenHidden =
         when (appearance) {
@@ -310,6 +348,9 @@ fun ActionButton(
         isEnabled = isInputEnabled && !isHidden,
         backgroundColor = backgroundColorOrTransparentWhenHidden,
         foregroundColor = foregroundColor,
+        ringColor =
+            if (shoal != null && isShown && !accentFilled) shoal.ring else Color.Transparent,
+        shoal = shoal,
         isAnimationEnabled = true,
         elementId = elementId,
         onPointerDown = onPointerDown,
@@ -332,6 +373,8 @@ private fun PinPadButton(
     isEnabled: Boolean,
     backgroundColor: Color,
     foregroundColor: Color,
+    ringColor: Color,
+    shoal: ShoalPinPadStyle?,
     isAnimationEnabled: Boolean,
     modifier: Modifier = Modifier,
     interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
@@ -367,7 +410,7 @@ private fun PinPadButton(
         animateColorAsState(
             when {
                 isAnimationEnabled && isPressed ->
-                    colorResource(PinBouncerConstants.Color.bgPressed)
+                    shoal?.pressed ?: colorResource(PinBouncerConstants.Color.bgPressed)
                 lockscreenTimeoutDeactivatePinPad() && !isEnabled ->
                     backgroundColor.copy(alpha = 0.18f)
                 else -> backgroundColor
@@ -379,7 +422,7 @@ private fun PinPadButton(
         animateColorAsState(
             when {
                 isAnimationEnabled && isPressed ->
-                    colorResource(PinBouncerConstants.Color.digitPressed)
+                    shoal?.content ?: colorResource(PinBouncerConstants.Color.digitPressed)
                 lockscreenTimeoutDeactivatePinPad() && !isEnabled ->
                     foregroundColor.copy(alpha = 0.38f)
                 else -> foregroundColor
@@ -388,20 +431,46 @@ private fun PinPadButton(
             animationSpec = colorAnimationSpec,
         )
 
+    // IchthysOS Shoal: the ring around the key. The hairline, or a thicker ring in the text colour
+    // (readable on the ground and on the accent key, in light and dark) while the key has the
+    // keyboard focus. Only followed in keyboard mode: the pad requests focus when it is shown.
+    var isFocused by remember { mutableStateOf(false) }
+    val isKeyboardMode = LocalInputModeManager.current.inputMode == InputMode.Keyboard
+    val showFocusRing = shoal != null && isFocused && isKeyboardMode
+    val ring =
+        when {
+            showFocusRing -> shoal!!.content
+            lockscreenTimeoutDeactivatePinPad() && !isEnabled ->
+                ringColor.copy(alpha = ringColor.alpha * 0.38f)
+            else -> ringColor
+        }
+    val ringWidth =
+        if (showFocusRing) ShoalFocusRingWidth
+        else dimensionResource(com.android.internal.R.dimen.ichthys_hairline_width)
+
     Box(
         contentAlignment = Alignment.Center,
         modifier =
             modifier
+                .thenIf(shoal != null) { Modifier.onFocusChanged { isFocused = it.isFocused } }
                 .thenIf(!lockscreenTimeoutDeactivatePinPad() || isEnabled) {
                     Modifier.focusRequester(FocusRequester.Default).focusable()
                 }
                 .sizeIn(maxWidth = pinButtonMaxSize, maxHeight = pinButtonMaxSize)
                 .aspectRatio(1f)
                 .drawBehind {
-                    drawRoundRect(
-                        color = containerColor,
-                        cornerRadius = CornerRadius(cornerRadiusFraction * size.height),
-                    )
+                    val radius = cornerRadiusFraction * size.height
+                    drawRoundRect(color = containerColor, cornerRadius = CornerRadius(radius))
+                    if (ring.alpha > 0f) {
+                        val stroke = ringWidth.toPx()
+                        drawRoundRect(
+                            color = ring,
+                            topLeft = Offset(stroke / 2f, stroke / 2f),
+                            size = Size(size.width - stroke, size.height - stroke),
+                            cornerRadius = CornerRadius(radius - stroke / 2f),
+                            style = Stroke(width = stroke),
+                        )
+                    }
                 }
                 .clip(CircleShape)
                 .pinPadButtonInput(
@@ -577,6 +646,59 @@ private fun Modifier.pinPadButtonInput(
 }
 
 /**
+ * IchthysOS "Shoal" look of the PIN pad, read from the framework tokens
+ * (com.android.internal.R.*.ichthys_*), so it follows the theme in light and dark: keys are cards
+ * with a hairline ring, digits are in the mono face, a pressed key takes the accent fill tint (the
+ * accent mixed over the card, so the text colour stays readable on it) and enter is the one
+ * accent-filled key.
+ */
+@Immutable
+private class ShoalPinPadStyle(
+    /** Fill of a key. */
+    val key: Color,
+    /** Hairline ring around a key. */
+    val ring: Color,
+    /** Digits and glyphs, also on a pressed key; the focus ring. */
+    val content: Color,
+    /** Fill of a pressed key. */
+    val pressed: Color,
+    /** Fill of the enter key. */
+    val accent: Color,
+    /** Glyph on the enter key. */
+    val onAccent: Color,
+    /** The mono face (theme.font.mono), for the digits. */
+    val mono: FontFamily,
+)
+
+/** The Shoal style of the pad, or null while the Shoal surface style is off (the stock look). */
+@Composable
+private fun rememberShoalPinPadStyle(): ShoalPinPadStyle? {
+    val context = LocalContext.current
+    val active = remember(context) { ShoalShade.isActive(context) }
+    if (!active) return null
+    val key = colorResource(com.android.internal.R.color.ichthys_card)
+    val ring = colorResource(com.android.internal.R.color.ichthys_hairline)
+    val content = colorResource(com.android.internal.R.color.ichthys_text)
+    val pressed = colorResource(com.android.internal.R.color.ichthys_accent_fill)
+    val accent = colorResource(com.android.internal.R.color.ichthys_accent)
+    val onAccent = colorResource(com.android.internal.R.color.ichthys_on_accent)
+    val monoName = stringResource(com.android.internal.R.string.ichthys_font_mono)
+    return remember(key, ring, content, pressed, accent, onAccent, monoName) {
+        ShoalPinPadStyle(
+            key = key,
+            ring = ring,
+            content = content,
+            pressed = pressed,
+            accent = accent,
+            onAccent = onAccent,
+            mono =
+                if (monoName.isEmpty()) FontFamily.Monospace
+                else FontFamily(Font(DeviceFontFamilyName(monoName), weight = ShoalDigitWeight)),
+        )
+    }
+}
+
+/**
  * (Re)requests focus as needed. Done as a separate `@Composable` function to make sure that the
  * caller doesn't need to recompose every time the state in the view-model is changed.
  */
@@ -685,6 +807,11 @@ private const val pinButtonErrorShrinkMs = 50
 private const val pinButtonErrorStaggerDelayMs = 33
 /** Animation duration of the "revert" phase of the error animation, on each PIN pad button. */
 private const val pinButtonErrorRevertMs = 617
+
+/** Weight of the Shoal mono digits. */
+private val ShoalDigitWeight = FontWeight.Medium
+/** Width of the ring around the key that has the keyboard focus, in the Shoal look. */
+private val ShoalFocusRingWidth = 2.dp
 
 // Pin button motion spec: http://shortn/_9TTIG6SoEa
 private val pinButtonPressedDuration = 100.milliseconds

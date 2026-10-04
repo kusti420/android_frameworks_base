@@ -54,7 +54,6 @@ import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.database.ContentObserver;
 import android.graphics.Color;
-import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.media.AudioManager;
 import android.os.Build;
@@ -2117,7 +2116,7 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
             TextView messageView = view.findViewById(R.id.message);
             messageView.setSelected(true); // necessary for marquee to work
             messageView.setTypeface(
-                    Typeface.create(FontStyles.GSF_LABEL_LARGE_EMPHASIZED, Typeface.NORMAL));
+                    FontStyles.typeface(mContext, FontStyles.GSF_LABEL_LARGE_EMPHASIZED));
 
             icon.setImageDrawable(action.getIcon(mContext));
             icon.setScaleType(ScaleType.CENTER_CROP);
@@ -2179,8 +2178,8 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
         }
 
         /**
-         * IchthysOS: render the submenu entries as power-menu tiles (round icon chip on
-         * materialColorSurfaceContainerHighest, materialColorOnSurface label) rather than the
+         * IchthysOS: render the submenu entries as power-menu tiles (round hairline icon chip,
+         * materialColorOnSurface label) rather than the
          * flat control_primary_text rows the power options submenu uses, so the submenu matches
          * the rest of the power menu. The layout is a copy of global_actions_grid_item_lite; see
          * global_actions_restart_item.xml for why it is not that file verbatim.
@@ -2227,7 +2226,7 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
                 textView.setText(action.getMessage());
             }
             textView.setTypeface(
-                    Typeface.create(FontStyles.GSF_LABEL_LARGE_EMPHASIZED, Typeface.NORMAL));
+                    FontStyles.typeface(mContext, FontStyles.GSF_LABEL_LARGE_EMPHASIZED));
 
             return textView;
         }
@@ -2414,7 +2413,7 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
             mIconView = v.findViewById(R.id.icon);
             TextView messageView = v.findViewById(R.id.message);
             messageView.setTypeface(
-                    Typeface.create(FontStyles.GSF_LABEL_LARGE_EMPHASIZED, Typeface.NORMAL));
+                    FontStyles.typeface(context, FontStyles.GSF_LABEL_LARGE_EMPHASIZED));
             messageView.setSelected(true); // necessary for marquee to work
             mIconView.setImageDrawable(getIcon(context));
             mIconView.setScaleType(ScaleType.CENTER_CROP);
@@ -2561,7 +2560,7 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
 
             if (messageView != null) {
                 messageView.setTypeface(
-                        Typeface.create(FontStyles.GSF_LABEL_LARGE_EMPHASIZED, Typeface.NORMAL));
+                        FontStyles.typeface(context, FontStyles.GSF_LABEL_LARGE_EMPHASIZED));
                 messageView.setText(getMessageResId());
                 messageView.setEnabled(enabled);
                 messageView.setSelected(true); // necessary for marquee to work

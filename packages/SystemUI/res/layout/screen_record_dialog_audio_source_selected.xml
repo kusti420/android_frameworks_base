@@ -31,6 +31,6 @@
         android:layout_height="wrap_content"
         android:textColor="@color/materialColorOnSurfaceVariant"
         android:textAppearance="?android:attr/textAppearanceSmall"
-        android:fontFamily="variable-body-medium"
+        android:fontFamily="@*android:string/config_bodyFontFamily"
         android:textSize="14sp" />
 </LinearLayout>

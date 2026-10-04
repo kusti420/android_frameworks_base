@@ -20,6 +20,8 @@ import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.content.Context;
 import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.os.Handler;
@@ -36,6 +38,8 @@ import androidx.annotation.Nullable;
 import com.android.app.animation.Interpolators;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.systemui.res.R;
+import com.android.systemui.shade.ui.ShoalShade;
+import com.android.systemui.statusbar.notification.Roundable;
 import com.android.systemui.statusbar.notification.stack.StackStateAnimator;
 
 /**
@@ -46,6 +50,11 @@ public class NotificationGuts extends FrameLayout {
     private static final long CLOSE_GUTS_DELAY = 8000;
 
     private Drawable mBackground;
+    // IchthysOS Shoal: the hairline around the guts. They cover the row's own outline, and the row
+    // clips them to its rounded corners, so the line is drawn here along the row's radii.
+    private Paint mHairlinePaint;
+    private final Path mHairlinePath = new Path();
+    private final float[] mHairlineRadii = new float[8];
     private int mClipTopAmount;
     private int mTopOverlap;
     private int mBottomOverlap;
@@ -195,6 +204,34 @@ public class NotificationGuts extends FrameLayout {
     @Override
     protected void onDraw(Canvas canvas) {
         draw(canvas, mBackground);
+        drawHairline(canvas);
+    }
+
+    private void drawHairline(Canvas canvas) {
+        if (mHairlinePaint == null) {
+            return;
+        }
+        int top = Math.max(mClipTopAmount, mTopOverlap);
+        int bottom = mActualHeight - Math.max(mClipBottomAmount, mBottomOverlap);
+        if (top >= bottom) {
+            return;
+        }
+        float topRadius = 0f;
+        float bottomRadius = 0f;
+        if (getParent() instanceof Roundable) {
+            Roundable row = (Roundable) getParent();
+            topRadius = row.getTopCornerRadius();
+            bottomRadius = row.getBottomCornerRadius();
+        }
+        float half = mHairlinePaint.getStrokeWidth() / 2f;
+        for (int i = 0; i < 4; i++) {
+            mHairlineRadii[i] = Math.max(0f, topRadius - half);
+            mHairlineRadii[i + 4] = Math.max(0f, bottomRadius - half);
+        }
+        mHairlinePath.reset();
+        mHairlinePath.addRoundRect(half, top + half, getWidth() - half, bottom - half,
+                mHairlineRadii, Path.Direction.CW);
+        canvas.drawPath(mHairlinePath, mHairlinePaint);
     }
 
     private void draw(Canvas canvas, Drawable drawable) {
@@ -213,6 +250,14 @@ public class NotificationGuts extends FrameLayout {
         mBackground = mContext.getDrawable(R.drawable.notification_guts_bg);
         if (mBackground != null) {
             mBackground.setCallback(this);
+        }
+        if (ShoalShade.isActive(mContext)) {
+            mHairlinePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            mHairlinePaint.setStyle(Paint.Style.STROKE);
+            mHairlinePaint.setStrokeWidth(getResources().getDimension(
+                    com.android.internal.R.dimen.ichthys_hairline_width));
+            mHairlinePaint.setColor(
+                    mContext.getColor(com.android.internal.R.color.ichthys_hairline));
         }
     }
 

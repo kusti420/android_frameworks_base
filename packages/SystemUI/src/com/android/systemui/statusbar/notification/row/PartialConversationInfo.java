@@ -38,6 +38,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.systemui.FontStyles;
 import com.android.systemui.res.R;
 import com.android.systemui.statusbar.notification.collection.EntryAdapter;
 
@@ -206,7 +207,8 @@ public class PartialConversationInfo extends LinearLayout implements
                 summarized.setVisibility(VISIBLE);
                 summarized.setText(
                         mContext.getString(R.string.notification_summarization_header, mAppName));
-                summarized.setTypeface(Typeface.create("variable-body-medium", Typeface.ITALIC));
+                summarized.setTypeface(FontStyles.typeface(mContext,
+                        FontStyles.GSF_BODY_MEDIUM, Typeface.ITALIC));
             } else {
                 summarized.setVisibility(GONE);
             }

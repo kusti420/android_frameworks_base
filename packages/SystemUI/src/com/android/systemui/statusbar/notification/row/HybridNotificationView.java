@@ -30,6 +30,7 @@ import android.widget.TextView;
 import androidx.annotation.ColorInt;
 
 import com.android.keyguard.AlphaOptimizedLinearLayout;
+import com.android.systemui.FontStyles;
 import com.android.systemui.res.R;
 import com.android.systemui.statusbar.CrossFadeHelper;
 import com.android.systemui.statusbar.TransformableView;
@@ -134,7 +135,8 @@ public class HybridNotificationView extends AlphaOptimizedLinearLayout
             mTextView.setText(summarization);
             mTextView.setSingleLine(false);
             mTextView.setMaxLines(MAX_SUMMARIZATION_LINES);
-            mTextView.setTypeface(Typeface.create("variable-body-medium", Typeface.ITALIC));
+            mTextView.setTypeface(FontStyles.typeface(mContext,
+                    FontStyles.GSF_BODY_MEDIUM, Typeface.ITALIC));
         }
         requestLayout();
     }
