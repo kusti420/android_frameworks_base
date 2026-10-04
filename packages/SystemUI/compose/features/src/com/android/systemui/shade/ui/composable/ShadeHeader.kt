@@ -410,7 +410,8 @@ private val QsSceneHeaderPadding = 16.dp
  * ([ShadeHeader.Elements.CollapsedContentEnd]) are shared elements of the two scenes.
  *
  * "20:14" in the mono face at 30 sp with ":37" small in the accent, the date below in the text
- * face at 13 sp, muted; the status icon lattice and the Shoal battery on the right.
+ * face at 13 sp, muted; the weather ([ShoalHeaderWeather]), the status icon lattice and the Shoal
+ * battery on the right.
  */
 @Composable
 private fun ContentScope.ShoalShadeHeader(
@@ -469,6 +470,14 @@ private fun ContentScope.ShoalShadeHeader(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             modifier = Modifier.element(ShadeHeader.Elements.CollapsedContentEnd),
         ) {
+            // Inside the shared element, so it stays put between the Shade and Quick Settings
+            // scenes like the icons beside it.
+            ShoalHeaderWeather(
+                textColor = textColor,
+                mutedColor = mutedColor,
+                onClick = { viewModel.onWeatherClicked(context) },
+                modifier = Modifier.padding(end = 6.dp),
+            )
             if (viewModel.isPrivacyChipVisible) {
                 // The chip view asks for MATCH_PARENT height (AbstractOngoingPrivacyChip), which
                 // the stock headers satisfy with a fixed-height parent. This row has none: its

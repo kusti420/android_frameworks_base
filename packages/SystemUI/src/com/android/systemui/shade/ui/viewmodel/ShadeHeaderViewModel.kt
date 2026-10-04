@@ -17,12 +17,14 @@
 package com.android.systemui.shade.ui.viewmodel
 
 import android.app.ActivityManager
+import android.content.Context
 import android.content.Intent
 import android.provider.Settings
 import android.view.ViewGroup
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.unit.IntRect
+import com.android.internal.util.crdroid.OmniJawsClient
 import com.android.systemui.battery.BatteryMeterViewController
 import com.android.systemui.clock.domain.interactor.ClockInteractor
 import com.android.systemui.desktop.domain.interactor.DesktopInteractor
@@ -242,6 +244,12 @@ constructor(
                 transitionKey = SlightlyFasterShadeTransition,
             )
         }
+    }
+
+    /** IchthysOS: the header's weather was tapped; opens the weather page. */
+    fun onWeatherClicked(context: Context) {
+        val intent = OmniJawsClient.get().getWeatherActivityIntent(context) ?: return
+        activityStarter.postStartActivityDismissingKeyguard(intent, 0)
     }
 
     /** Notifies that the shadeCarrierGroup was clicked. */

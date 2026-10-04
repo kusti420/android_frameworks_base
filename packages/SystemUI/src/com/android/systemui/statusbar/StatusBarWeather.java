@@ -239,7 +239,7 @@ public class StatusBarWeather extends TextView implements TunerService.Tunable,
         }
     }
 
-    private static final float COMPACT_GLYPH_DP = 11f;
+    private static final float COMPACT_GLYPH_DP = 13.5f;
     private static final float COMPACT_TEXT_SP = 9.5f;
     private float mStockTextSizePx = -1f;
 
