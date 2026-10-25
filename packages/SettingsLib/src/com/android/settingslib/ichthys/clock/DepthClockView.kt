@@ -64,7 +64,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
     override val preferredWidthDp: Float = 360f
     override val preferredHeightDp: Float = 520f
 
-    private var fill = FILL_HEAT
+    private var fill = FILL_SOLID
 
     private val digitPaint =
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -120,6 +120,8 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         super.onAttachedToWindow()
         context.contentResolver.registerContentObserver(
             Settings.Secure.getUriFor(KEY_FILL), false, fillObserver, UserHandle.USER_ALL)
+        context.contentResolver.registerContentObserver(
+            Settings.Secure.getUriFor(KEY_DETAILS), false, fillObserver, UserHandle.USER_ALL)
         readFill()
         TouchHeat.addListener(heatListener)
         updateTicking()
@@ -154,9 +156,12 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
     }
 
     private fun readFill() {
+        details =
+            Settings.Secure.getIntForUser(
+                context.contentResolver, KEY_DETAILS, 0, UserHandle.USER_CURRENT) != 0
         fill =
             Settings.Secure.getIntForUser(
-                context.contentResolver, KEY_FILL, FILL_HEAT, UserHandle.USER_CURRENT)
+                context.contentResolver, KEY_FILL, FILL_SOLID, UserHandle.USER_CURRENT)
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -226,7 +231,9 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
 
     override fun onDraw(canvas: Canvas) {
         if (width == 0 || digitSize == 0f) return
-        if (showDate) drawStatus(canvas)
+        if (showDate) {
+            if (details) drawStatus(canvas) else drawDate(canvas)
+        }
         val path = digitsPath()
         paint.shader = null
         if (dozingNow) {
@@ -236,7 +243,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
             paint.color = withAlpha(primary, 0.6f)
             canvas.drawPath(path, paint)
             // The concept's night line under the digits.
-            if (fill == FILL_HEAT && context.packageName == "com.android.systemui") {
+            if (details && fill == FILL_HEAT && context.packageName == "com.android.systemui") {
                 monoPaint.textSize = sp(11f)
                 monoPaint.letterSpacing = 0.1f
                 monoPaint.color = withAlpha(primary, 0.6f)
@@ -251,8 +258,17 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         paint.style = Paint.Style.FILL
         when (fill) {
             FILL_SOLID -> {
-                paint.color = primary
+                // Cream letters lying in the water: a soft shadow under them, a faint fall-off
+                // towards the bottom, nothing technical.
+                paint.color = POND_CREAM
+                paint.setShadowLayer(dp(14f), 0f, dp(6f), Color.argb(90, 0, 20, 24))
+                paint.shader =
+                    LinearGradient(0f, statusH, 0f, line2Base,
+                        withAlpha(POND_CREAM, 0.96f), withAlpha(POND_CREAM, 0.84f),
+                        Shader.TileMode.CLAMP)
                 canvas.drawPath(path, paint)
+                paint.shader = null
+                paint.clearShadowLayer()
             }
             FILL_GRADIENT -> {
                 paint.shader =
@@ -339,6 +355,29 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
             (Color.blue(a) + (Color.blue(b) - Color.blue(a)) * u).toInt(),
         )
     }
+
+    /** The calm date line: "Sunday 25 October", centred, in a clean face. */
+    private fun drawDate(canvas: Canvas) {
+        datePaint.textSize = sp(15f)
+        datePaint.color = withAlpha(POND_CREAM, if (dozingNow) 0.7f else 0.92f)
+        datePaint.setShadowLayer(dp(6f), 0f, dp(1f), Color.argb(80, 0, 20, 24))
+        val text =
+            DateFormat.format(
+                DateFormat.getBestDateTimePattern(Locale.getDefault(), "EEEEdMMMM"), calendar)
+                .toString()
+        canvas.drawText(text, width / 2f, statusH - dp(10f), datePaint)
+    }
+
+    private val datePaint =
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = variable("/system/fonts/Syne-VF.ttf", "'wght' 600")
+                ?: Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            textAlign = Paint.Align.CENTER
+            letterSpacing = 0.04f
+        }
+
+    /** Settings.Secure [KEY_DETAILS]: the raw status line instead of the date. */
+    private var details = false
 
     private fun drawStatus(canvas: Canvas) {
         val pad = dp(4f)
@@ -431,6 +470,9 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         const val FILL_SOLID = 0
         const val FILL_GRADIENT = 1
         const val FILL_HEAT = 2
+
+        /** Settings.Secure: 1 shows the raw status line (seconds, touches, CPU) over the date. */
+        const val KEY_DETAILS = "ichthys_clock_details"
 
         private const val STATUS_DP = 30f
         /** See [heatBitmap]. */
