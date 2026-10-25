@@ -904,6 +904,9 @@ public class UdfpsController implements DozeReceiver, Dumpable {
     }
 
     private void hideUdfpsOverlay() {
+        com.android.systemui.keyguard.data.repository.IchthysDepthRepository.fingerOnSensor
+                .setValue(false);
+        setIchthysUdfpsScanning(false);
         mExecution.assertIsMainThread();
 
         if (mOverlay != null) {
@@ -1110,6 +1113,13 @@ public class UdfpsController implements DozeReceiver, Dumpable {
             long time,
             long gestureStart,
             boolean isAod) {
+        // IchthysOS depth lock screen: its own wallpaper copy and cut-out step aside while a
+        // finger is on the sensor, leaving only the real wallpaper and the sensor's light.
+        com.android.systemui.keyguard.data.repository.IchthysDepthRepository.fingerOnSensor
+                .setValue(true);
+        // IchthysOS: Night Light / Extra dim lift while the sensor scans (ColorDisplayService):
+        // tinted light over the finger makes every optical capture fail.
+        setIchthysUdfpsScanning(true);
         mExecution.assertIsMainThread();
 
         if (mOverlay == null) {
@@ -1164,6 +1174,18 @@ public class UdfpsController implements DozeReceiver, Dumpable {
         }
     }
 
+    /** See ColorDisplayService#ICHTHYS_UDFPS_SCANNING. Only writes on a change. */
+    private boolean mIchthysUdfpsScanning;
+
+    private void setIchthysUdfpsScanning(boolean scanning) {
+        if (scanning == mIchthysUdfpsScanning) {
+            return;
+        }
+        mIchthysUdfpsScanning = scanning;
+        android.provider.Settings.Global.putInt(mContext.getContentResolver(),
+                "ichthys_udfps_scanning", scanning ? 1 : 0);
+    }
+
     private void onFingerUp(long requestId, @NonNull View view) {
         onFingerUp(
                 requestId,
@@ -1191,6 +1213,9 @@ public class UdfpsController implements DozeReceiver, Dumpable {
             long time,
             long gestureStart,
             boolean isAod) {
+        com.android.systemui.keyguard.data.repository.IchthysDepthRepository.fingerOnSensor
+                .setValue(false);
+        setIchthysUdfpsScanning(false);
         mExecution.assertIsMainThread();
         mActivePointerId = MotionEvent.INVALID_POINTER_ID;
         mAcquiredReceived = false;

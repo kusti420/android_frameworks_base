@@ -388,6 +388,12 @@ constructor(
     }
 
     companion object {
+        /**
+         * A finger is on the under-display sensor (UdfpsController): the depth pictures step
+         * aside, so nothing of ours is on screen while the sensor takes its picture.
+         */
+        @JvmField val fingerOnSensor = MutableStateFlow(false)
+
         private const val TAG = "IchthysDepth"
         private const val AUTHORITY = "org.ichthys.depth"
 

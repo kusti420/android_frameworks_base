@@ -238,10 +238,56 @@ public final class ColorDisplayService extends SystemService {
         publishLocalService(DisplayTransformManager.class, new DisplayTransformManager());
     }
 
+    /**
+     * IchthysOS: Settings.Global, 1 while a finger is on the optical under-display fingerprint
+     * sensor (set by SystemUI's UdfpsController). The sensor lights the finger with the screen;
+     * a Night Light or Extra dim tint over that light makes every capture "bad quality" and no
+     * fingerprint matches. While it is 1, those tints are lifted at once (no fade); they come back
+     * at once when it is 0.
+     */
+    private static final String ICHTHYS_UDFPS_SCANNING = "ichthys_udfps_scanning";
+    private ContentObserver mUdfpsScanningObserver;
+    private boolean mUdfpsScanning;
+
+    private void onUdfpsScanningChanged() {
+        final boolean scanning = android.provider.Settings.Global.getInt(
+                getContext().getContentResolver(), ICHTHYS_UDFPS_SCANNING, 0) == 1;
+        if (scanning == mUdfpsScanning) {
+            return;
+        }
+        mUdfpsScanning = scanning;
+        final DisplayTransformManager dtm = getLocalService(DisplayTransformManager.class);
+        mNightDisplayTintController.cancelAnimator();
+        mReduceBrightColorsTintController.cancelAnimator();
+        if (scanning) {
+            dtm.setColorMatrix(mNightDisplayTintController.getLevel(), null);
+            dtm.setColorMatrix(mReduceBrightColorsTintController.getLevel(), null);
+        } else {
+            dtm.setColorMatrix(mNightDisplayTintController.getLevel(),
+                    mNightDisplayTintController.getMatrix());
+            dtm.setColorMatrix(mReduceBrightColorsTintController.getLevel(),
+                    mReduceBrightColorsTintController.getMatrix());
+        }
+        Slog.d(TAG, "UDFPS scanning " + scanning + ": colour tints "
+                + (scanning ? "lifted" : "restored"));
+    }
+
     @Override
     public void onBootPhase(int phase) {
         if (phase >= PHASE_BOOT_COMPLETED) {
             mBootCompleted = true;
+
+            if (mUdfpsScanningObserver == null) {
+                mUdfpsScanningObserver = new ContentObserver(mHandler) {
+                    @Override
+                    public void onChange(boolean selfChange) {
+                        onUdfpsScanningChanged();
+                    }
+                };
+                getContext().getContentResolver().registerContentObserver(
+                        android.provider.Settings.Global.getUriFor(ICHTHYS_UDFPS_SCANNING),
+                        false, mUdfpsScanningObserver, UserHandle.USER_ALL);
+            }
 
             // Register listeners now that boot is complete.
             if (mCurrentUser != UserHandle.USER_NULL && mUserSetupObserver == null) {

@@ -67,7 +67,9 @@ fun IchthysDepthBackdrop(
     modifier: Modifier = Modifier,
 ) {
     val layers by repository.layers.collectAsStateWithLifecycle()
+    val finger by IchthysDepthRepository.fingerOnSensor.collectAsStateWithLifecycle()
     val current = layers ?: return
+    if (finger) return
     Box(modifier.fillMaxSize()) {
         if (dozeAmount < 1f) {
             WindowImage(current.backdrop, alpha = 1f - dozeAmount, Modifier.matchParentSize())
@@ -92,8 +94,10 @@ fun IchthysDepthCutout(
 ) {
     val layers by repository.layers.collectAsStateWithLifecycle()
     val lens by repository.lens.collectAsStateWithLifecycle()
+    val finger by IchthysDepthRepository.fingerOnSensor.collectAsStateWithLifecycle()
     val current = layers ?: return
     val bitmap = current.cutout ?: return
+    if (finger) return
     // Awake: the subject in colour. On AOD: the subject in black, so the clock's outlines stop
     // behind it (its glowing edge is drawn with the backdrop). They cross-fade with the doze.
     Box(modifier) {
