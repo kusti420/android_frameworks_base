@@ -212,10 +212,27 @@ public class NotificationShelf extends ActivatableNotificationView {
     /**
      * Update the state of the shelf.
      */
+    private boolean mIchthysGlass;
+
+    /**
+     * IchthysOS depth lock screen (tracker#58): on the lock screen the shelf is clear glass over
+     * the wallpaper (a faint white, like the shortcuts), not a dark card.
+     */
+    private void applyIchthysDepthGlass(boolean onKeyguard) {
+        final boolean glass = onKeyguard && android.provider.Settings.Secure.getIntForUser(
+                mContext.getContentResolver(), "ichthys_lockscreen_depth", 0,
+                android.os.UserHandle.USER_CURRENT) != 0;
+        if (glass == mIchthysGlass || super.mBackgroundNormal == null) return;
+        mIchthysGlass = glass;
+        super.mBackgroundNormal.setTint(glass ? android.graphics.Color.WHITE : calculateBgColor());
+        super.mBackgroundNormal.setRowTransparencyAlpha(glass ? 36 : 255);
+    }
+
     public void updateState(StackScrollAlgorithm.StackScrollAlgorithmState algorithmState,
                             AmbientState ambientState) {
         ExpandableView lastView = ambientState.getLastVisibleBackgroundChild();
         ShelfState viewState = (ShelfState) getViewState();
+        applyIchthysDepthGlass(ambientState.isOnKeyguard());
         if (mShowNotificationShelf && lastView != null) {
             ExpandableViewState lastViewState = lastView.getViewState();
             viewState.copyFrom(lastViewState);
