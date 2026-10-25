@@ -19,6 +19,9 @@ package com.android.systemui.keyguard.ui.composable.elements
 import android.content.Context
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.HorizontalAlignmentLine
@@ -31,6 +34,8 @@ import com.android.compose.animation.scene.ContentScope
 import com.android.compose.animation.scene.ElementContentScope
 import com.android.compose.modifiers.thenIf
 import com.android.systemui.dagger.SysUISingleton
+import com.android.systemui.keyguard.data.repository.IchthysDepthRepository
+import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor
 import com.android.systemui.keyguard.ui.composable.LockscreenTouchHandling
 import com.android.systemui.keyguard.ui.composable.modifier.burnInAware
 import com.android.systemui.keyguard.ui.composable.trackBurnInParameters
@@ -38,6 +43,7 @@ import com.android.systemui.keyguard.ui.viewmodel.AodBurnInViewModel
 import com.android.systemui.keyguard.ui.viewmodel.KeyguardClockViewModel
 import com.android.systemui.keyguard.ui.viewmodel.LockscreenRootViewModel
 import com.android.systemui.lifecycle.rememberViewModel
+import com.android.systemui.scene.shared.model.Scenes
 import com.android.systemui.plugins.keyguard.ui.composable.elements.BaseLockscreenElement.ElementSource
 import com.android.systemui.plugins.keyguard.ui.composable.elements.LockscreenElement
 import com.android.systemui.plugins.keyguard.ui.composable.elements.LockscreenElementKeys
@@ -67,6 +73,8 @@ constructor(
     private val viewModelFactory: LockscreenRootViewModel.Factory,
     private val aodBurnInViewModel: AodBurnInViewModel,
     private val keyguardClockViewModel: KeyguardClockViewModel,
+    private val depthRepository: IchthysDepthRepository,
+    private val keyguardInteractor: KeyguardInteractor,
 ) : LockscreenElementProvider {
     override val elements: List<LockscreenElement> by lazy { listOf(RootElement()) }
 
@@ -109,8 +117,28 @@ constructor(
                         },
                     )
 
+                val dozeAmount by keyguardInteractor.dozeAmount.collectAsStateWithLifecycle(0f)
+                // IchthysOS depth (tracker#58): the layers come apart while unlocking.
+                val layoutState = contentScope.layoutState
+                depthRepository.unlockProgress = {
+                    layoutState.currentTransition
+                        ?.takeIf { it.fromContent == Scenes.Lockscreen && it.toContent == Scenes.Gone }
+                        ?.progress
+                        ?.coerceIn(0f, 1f) ?: 0f
+                }
                 with(scopeFactory.create(contentScope, innerContext)) {
-                    LockscreenSceneLayout(viewModel.isUdfpsSupported)
+                    LockscreenSceneLayout(
+                        viewModel.isUdfpsSupported,
+                        depth = {
+                            IchthysDepthBackdrop(
+                                depthRepository,
+                                dozeAmount,
+                                Modifier.ichthysDepthPlane(depthRepository, IchthysDepthPlane.BACK),
+                            )
+                        },
+                        depthCutout = { IchthysDepthLensOverlay(depthRepository) },
+                        depthTouch = Modifier.ichthysDepthLens(depthRepository),
+                    )
                 }
             }
         }
@@ -188,16 +216,23 @@ object LockIconAlignmentLines {
  * - [LockIcon] is drawn according to the [LockIconAlignmentLines] that it must supply. The layout
  *   logic uses those alignment lines to make sure other elements don't overlap with the lock icon
  *   as it may be drawn on top of the UDFPS (under display fingerprint sensor).
+ * - IchthysOS depth (tracker#58): [depth] fills the screen under everything, [depthCutout] fills it
+ *   over the upper region (the clock) and under the lock icon and the lower region.
  */
 @Composable
 private fun LockscreenScope<ContentScope>.LockscreenSceneLayout(
     isUdfpsSupported: Boolean,
     modifier: Modifier = Modifier,
+    depth: @Composable () -> Unit = {},
+    depthCutout: @Composable () -> Unit = {},
+    depthTouch: Modifier = Modifier,
 ) {
     Layout(
         content = {
+            Box { depth() }
             LockscreenElement(StatusBar)
             LockscreenElement(Region.Upper)
+            Box { depthCutout() }
             LockscreenElement(LockIcon)
             LockscreenElement(AmbientIndicationArea)
             LockscreenElement(Region.Lower)
@@ -205,17 +240,24 @@ private fun LockscreenScope<ContentScope>.LockscreenSceneLayout(
         },
         // Hide the lock screen elements when an overlay is shown above.
         modifier =
-            modifier.thenIf(contentScope.isIdleWithOverlay()) {
-                Modifier.graphicsLayer { alpha = 0f }
-            },
+            modifier
+                .then(depthTouch)
+                .thenIf(contentScope.isIdleWithOverlay()) {
+                    Modifier.graphicsLayer { alpha = 0f }
+                },
     ) { measurables, constraints ->
-        check(measurables.size == 6)
-        val statusBarMeasurable = measurables[0]
-        val upperRegionMeasurable = measurables[1]
-        val lockIconMeasurable = measurables[2]
-        val ambientIndicationMeasurable = measurables[3]
-        val lowerRegionMeasurable = measurables[4]
-        val settingsMenuMeasurable = measurables[5]
+        check(measurables.size == 8)
+        val depthMeasurable = measurables[0]
+        val statusBarMeasurable = measurables[1]
+        val upperRegionMeasurable = measurables[2]
+        val depthCutoutMeasurable = measurables[3]
+        val lockIconMeasurable = measurables[4]
+        val ambientIndicationMeasurable = measurables[5]
+        val lowerRegionMeasurable = measurables[6]
+        val settingsMenuMeasurable = measurables[7]
+        val fullScreen = Constraints.fixed(constraints.maxWidth, constraints.maxHeight)
+        val depthPlaceable = depthMeasurable.measure(fullScreen)
+        val depthCutoutPlaceable = depthCutoutMeasurable.measure(fullScreen)
 
         val statusBarPlaceable =
             statusBarMeasurable.measure(constraints = Constraints.fixedWidth(constraints.maxWidth))
@@ -270,8 +312,11 @@ private fun LockscreenScope<ContentScope>.LockscreenSceneLayout(
         val settingsMenuPlaceable = settingsMenuMeasurable.measure(constraints)
 
         layout(constraints.maxWidth, constraints.maxHeight) {
+            // Placement order is drawing order.
+            depthPlaceable.place(0, 0)
             statusBarPlaceable.place(0, 0)
             upperRegionPlaceable.placeRelative(0, statusBarPlaceable.measuredHeight)
+            depthCutoutPlaceable.place(0, 0)
             lockIconPlaceable.place(lockIconBounds.left, lockIconBounds.top)
 
             if (isUdfpsSupported) {

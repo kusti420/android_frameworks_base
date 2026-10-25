@@ -10,3 +10,11 @@
 # R.string.config_recentsComponent, so keep it and its activity from being stripped by R8.
 -keep class com.android.systemui.recents.LegacyRecentsImpl { *; }
 -keep class com.android.systemui.recents.LegacyRecents* { *; }
+
+# IchthysOS: the drawn lock screen clock faces are inflated out of com.android.settings' layouts
+# (KeyguardCustomClockView), which R8 doesn't see: keep every face and its inflation constructors.
+-keep class com.android.settingslib.ichthys.clock.** {
+    public <init>(android.content.Context);
+    public <init>(android.content.Context, android.util.AttributeSet);
+    *;
+}

@@ -20,6 +20,8 @@ import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
+import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -54,6 +56,8 @@ import com.android.compose.animation.scene.PropertyTransformationBuilder
 import com.android.compose.animation.scene.TransitionBuilder
 import com.android.compose.windowsizeclass.LocalWindowSizeClass
 import com.android.systemui.dagger.SysUISingleton
+import com.android.systemui.keyguard.data.repository.IchthysDepthRepository
+import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor
 import com.android.systemui.keyguard.shared.model.ClockSize
 import com.android.systemui.keyguard.ui.view.KeyguardCustomClockView
 import com.android.systemui.keyguard.ui.viewmodel.LockscreenUpperRegionViewModel
@@ -89,6 +93,8 @@ constructor(
     @ShadeDisplayAware private val context: Context,
     @KeyguardBlueprintLog private val blueprintLog: LogBuffer,
     private val viewModelFactory: LockscreenUpperRegionViewModel.Factory,
+    private val depthRepository: IchthysDepthRepository,
+    private val keyguardInteractor: KeyguardInteractor,
 ) : LockscreenElementProvider {
     private val logger = Logger(blueprintLog, "LockscreenUpperRegionElementProvider")
     override val elements: List<LockscreenElement> by lazy { listOf(UpperRegionElement()) }
@@ -204,6 +210,27 @@ constructor(
         }
     }
 
+    /**
+     * The Ichthys custom clock, with the depth lock screen's subject cut-out over it
+     * (tracker#58; nothing is drawn over it while depth is off).
+     */
+    @Composable
+    private fun DepthClock() {
+        val dozeAmount by keyguardInteractor.dozeAmount.collectAsStateWithLifecycle(0f)
+        Box(Modifier.fillMaxWidth()) {
+            AndroidView(
+                factory = { KeyguardCustomClockView(it) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            IchthysDepthCutout(
+                depthRepository,
+                dozeAmount,
+                Modifier.matchParentSize()
+                    .ichthysDepthPlane(depthRepository, IchthysDepthPlane.FRONT),
+            )
+        }
+    }
+
     /** The Narrow Layouts are intended for phones */
     inner class NarrowLayout(viewModel: LockscreenUpperRegionViewModel) : RegionLayout(viewModel) {
         @Composable
@@ -249,10 +276,7 @@ constructor(
             ) {
                 scene(NarrowScenes.LargeClock) {
                     if (isCustomLockClockActive(LocalContext.current)) {
-                        AndroidView(
-                            factory = { KeyguardCustomClockView(it) },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
+                        DepthClock()
                     } else {
                         LockscreenElement(Region.Clock.Large)
                     }
@@ -263,10 +287,7 @@ constructor(
                         // reserves its own height in this Column -- the notifications then flow below
                         // it, adaptive to ANY clock style. Falls back to the stock clock for default.
                         if (isCustomLockClockActive(LocalContext.current)) {
-                            AndroidView(
-                                factory = { KeyguardCustomClockView(it) },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
+                            DepthClock()
                         } else {
                             LockscreenElement(Region.Clock.Small)
                         }

@@ -37,6 +37,7 @@ import com.android.systemui.edgelight.EdgeLightController
 import com.android.systemui.globalactions.GlobalActionsComponent
 import com.android.systemui.haptics.msdl.MSDLCoreStartable
 import com.android.systemui.ichthys.podbattery.IchthysPodBatteryController
+import com.android.systemui.keyguard.data.repository.IchthysTouchHeatCollector
 import com.android.systemui.keyboard.KeyboardUI
 import com.android.systemui.keyboard.PhysicalKeyboardCoreStartable
 import com.android.systemui.keyevent.SysUIKeyGestureEventInitializer
@@ -111,6 +112,12 @@ abstract class SystemUICoreStartableModule {
     @IntoMap
     @ClassKey(SmartPixelsController::class)
     abstract fun bindSmartPixelsController(sysui: SmartPixelsController): CoreStartable
+
+    /** IchthysOS depth lock screen: today's touches for the Depth face's heat fill. */
+    @Binds
+    @IntoMap
+    @ClassKey(IchthysTouchHeatCollector::class)
+    abstract fun bindIchthysTouchHeatCollector(sysui: IchthysTouchHeatCollector): CoreStartable
 
     /** IchthysOS: AirPods / Beats battery levels from their LE advertisements. */
     @Binds

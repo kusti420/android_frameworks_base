@@ -1241,6 +1241,7 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
                 "keyguard_clock_ichthys_split", // 77 Vertical Split
                 "keyguard_clock_ichthys_typo", // 78 Typographic
                 "keyguard_clock_ichthys_oneui", // 79 One UI Stacked
+                "keyguard_clock_ichthys_depth", // 80 Depth
             )
 
         /** Picker index -> `@raw` Lottie animation the face's LottieAnimationView plays. */
