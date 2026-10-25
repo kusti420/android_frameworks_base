@@ -37,14 +37,14 @@ enum class IchthysDepthPlane {
 }
 
 /** Share of the unlock spent pulling the layers apart; the rest folds them into the home screen. */
-private const val SPLIT = 0.5f
+private const val SPLIT = 0.6f
 
 private const val TILT = 38f
 private const val CREAM = 0xFFF6F1EA
 
 /**
  * IchthysOS depth lock screen, layer unlock (kusti420/ichthysos-tracker#58). As the lock screen
- * goes (the Lockscreen to Gone transition, 700 ms):
+ * goes (the Lockscreen to Gone transition, 1.2 s with depth on):
  * 1. the real layers come apart like an exploded drawing: all tilt back into one perspective, the
  *    wallpaper sinks to the bottom of the stack, the subject rises off the clock, the sheets get
  *    hairline edges;

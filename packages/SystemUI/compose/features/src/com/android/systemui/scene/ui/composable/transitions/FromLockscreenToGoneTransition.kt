@@ -15,18 +15,53 @@
  */
 package com.android.systemui.scene.ui.composable.transitions
 
+import androidx.compose.animation.core.AnimationVector
+import androidx.compose.animation.core.FiniteAnimationSpec
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.TwoWayConverter
+import androidx.compose.animation.core.VectorizedFiniteAnimationSpec
 import androidx.compose.animation.core.tween
+import com.android.systemui.keyguard.ICHTHYS_DEPTH_UNLOCK_MS
 import androidx.compose.ui.unit.dp
 import com.android.compose.animation.Easings
 import com.android.compose.animation.scene.TransitionBuilder
 import com.android.systemui.plugins.keyguard.ui.composable.elements.LockscreenElementKeys
 
-fun TransitionBuilder.lockscreenToGoneWithAnimationOverLockscreenTransition() {
-    // IchthysOS depth lock screen (tracker#58): long enough for the layers to come apart (first
-    // half, IchthysDepthUnlock.kt) before everything fades into the home screen (second half).
-    spec = tween(durationMillis = 700)
+/**
+ * IchthysOS depth lock screen (tracker#58): with depth on, the unlock is slow enough for the layers
+ * to come apart (first half, IchthysDepthUnlock.kt) before everything fades into the home screen
+ * (second half), and linear, so the layers' own easing shapes it. Without depth, the stock timing.
+ * Decided when the transition starts, so turning depth on or off needs no restart.
+ */
+private object IchthysUnlockSpec : FiniteAnimationSpec<Float> {
+    override fun <V : AnimationVector> vectorize(
+        converter: TwoWayConverter<Float, V>
+    ): VectorizedFiniteAnimationSpec<V> = current().vectorize(converter)
 
-    fractionRange(start = 0.5f, end = 0.95f, easing = Easings.PredictiveBack) {
+    private fun current(): FiniteAnimationSpec<Float> {
+        val depth =
+            try {
+                android.provider.Settings.Secure.getIntForUser(
+                    android.app.AppGlobals.getInitialApplication().contentResolver,
+                    "ichthys_lockscreen_depth",
+                    0,
+                    android.os.UserHandle.USER_CURRENT,
+                ) != 0
+            } catch (e: RuntimeException) {
+                false
+            }
+        return if (depth) {
+            tween(durationMillis = ICHTHYS_DEPTH_UNLOCK_MS.toInt(), easing = LinearEasing)
+        } else {
+            tween(durationMillis = 500)
+        }
+    }
+}
+
+fun TransitionBuilder.lockscreenToGoneWithAnimationOverLockscreenTransition() {
+    spec = IchthysUnlockSpec
+
+    fractionRange(start = 0.6f, end = 0.97f, easing = Easings.PredictiveBack) {
         // Fade out all lock screen elements, except the status bar.
         fade(LockscreenElementKeys.Region.Upper)
         fade(LockscreenElementKeys.LockIcon)
@@ -41,7 +76,7 @@ fun TransitionBuilder.lockscreenToGoneWithAnimationOverLockscreenTransition() {
 fun TransitionBuilder.lockscreenToGoneTransition() {
     lockscreenToGoneWithAnimationOverLockscreenTransition()
 
-    fractionRange(start = 0.5f, end = 0.95f, easing = Easings.PredictiveBack) {
+    fractionRange(start = 0.6f, end = 0.97f, easing = Easings.PredictiveBack) {
         translate(LockscreenElementKeys.Notifications.Stack, y = (-72).dp)
     }
 }

@@ -103,7 +103,7 @@ const val DISMISS_AMOUNT_EXIT_KEYGUARD_THRESHOLD = 0.3f
 const val UNLOCK_ANIMATION_DURATION_MS = 300L
 
 /** IchthysOS: the depth lock screen's unlock, as long as its Lockscreen to Gone transition. */
-const val ICHTHYS_DEPTH_UNLOCK_MS = 700L
+const val ICHTHYS_DEPTH_UNLOCK_MS = 1200L
 
 /**
  * If there are two different wallpapers on home and lock screen, duration and delay of the lock

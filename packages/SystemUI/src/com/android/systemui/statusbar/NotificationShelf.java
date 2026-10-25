@@ -224,8 +224,9 @@ public class NotificationShelf extends ActivatableNotificationView {
                 android.os.UserHandle.USER_CURRENT) != 0;
         if (glass == mIchthysGlass || super.mBackgroundNormal == null) return;
         mIchthysGlass = glass;
-        super.mBackgroundNormal.setTint(glass ? android.graphics.Color.WHITE : calculateBgColor());
-        super.mBackgroundNormal.setRowTransparencyAlpha(glass ? 36 : 255);
+        // The background takes the tint as its colour, so a translucent white is the glass.
+        super.mBackgroundNormal.setTint(
+                glass ? android.graphics.Color.argb(36, 255, 255, 255) : calculateBgColor());
     }
 
     public void updateState(StackScrollAlgorithm.StackScrollAlgorithmState algorithmState,
