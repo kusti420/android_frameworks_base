@@ -313,13 +313,15 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         // light up like a full day, and stays dimmer than a finger on the screen right now.
         val peak = max(cells.max(), MIN_PEAK)
         val px = IntArray(cells.size)
-        val warm = Color.rgb(255, 236, 214)
+        // The depth look's own palette, whatever the theme's accent: pond light, cool and calm.
+        val cool = POND_CYAN
+        val warm = POND_CREAM
         for (i in cells.indices) {
             // Awake, only a finger on the screen glows; dozing, the day's touches show.
             val counted = if (dozingNow) kotlin.math.sqrt(cells[i] / peak) * COUNTED_MAX else 0f
             val v = if (liveCells != null) max(counted, liveCells[i]) else counted
             if (v < 0.04f) continue
-            val c = if (v < 0.7f) accent else blend(accent, warm, (v - 0.7f) / 0.3f)
+            val c = if (v < 0.6f) cool else blend(cool, warm, (v - 0.6f) / 0.4f)
             px[i] = withAlpha(c or 0xFF000000.toInt(), min(1f, v * 1.15f))
         }
         val b = Bitmap.createBitmap(px, TouchHeat.COLS, TouchHeat.ROWS, Bitmap.Config.ARGB_8888)
@@ -342,7 +344,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         val pad = dp(4f)
         monoPaint.textSize = sp(10.5f)
         monoPaint.letterSpacing = 0.06f
-        monoPaint.color = withAlpha(blend(primary, accent, 0.12f), 0.9f)
+        monoPaint.color = withAlpha(blend(primary, POND_CYAN, 0.25f), 0.9f)
         val base = statusH - dp(10f)
         // Seconds only while they tick: dozing, the face updates once a minute.
         val pattern =
@@ -371,7 +373,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
             paint.style = Paint.Style.FILL
             for ((i, load) in loads.withIndex()) {
                 val h = max(dp(2f), maxH * load)
-                paint.color = if (i == busiest) accent else withAlpha(primary, 0.85f)
+                paint.color = if (i == busiest) POND_CYAN else withAlpha(primary, 0.85f)
                 canvas.drawRect(x, base - h, x + barW, base, paint)
                 x += barW + gap
             }
@@ -440,7 +442,10 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         private const val MAX_SCREEN_SHARE = 0.27f
         /** One line of digits takes about this many text sizes, for measuring. */
         private const val LINE_STEP = 0.76f
-        private val INK = Color.argb(158, 4, 9, 11)
+        private val INK = Color.argb(150, 3, 14, 17)
+        /** The depth look's palette (the koi concept's pond light). */
+        val POND_CYAN = Color.rgb(159, 231, 221)
+        val POND_CREAM = Color.rgb(246, 241, 234)
 
         /** Big Shoulders Display Black (IchthysDepth ships it), else Roboto Flex at its narrowest. */
         private fun digitTypeface(): Typeface =

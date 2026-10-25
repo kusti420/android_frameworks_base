@@ -123,13 +123,43 @@ fun IchthysDepthCutout(
 fun IchthysDepthLensOverlay(repository: IchthysDepthRepository, modifier: Modifier = Modifier) {
     val lens by repository.lens.collectAsStateWithLifecycle()
     val trail by repository.trail.collectAsStateWithLifecycle()
-    val current = lens ?: return
-    val accent = Color(LocalContext.current.getColor(android.R.color.system_accent1_300))
+    val ripples by repository.ripples.collectAsStateWithLifecycle()
+    val accent = Color(0xFF9FE7DD)
     var origin by remember { mutableStateOf(Offset.Zero) }
+    // Frames while ripples spread.
+    var now by remember { mutableStateOf(android.os.SystemClock.uptimeMillis()) }
+    androidx.compose.runtime.LaunchedEffect(ripples) {
+        while (ripples.any { now - it.start < IchthysDepthRepository.RIPPLE_MS }) {
+            androidx.compose.runtime.withFrameMillis {
+                now = android.os.SystemClock.uptimeMillis()
+            }
+        }
+    }
+    val current = lens
+    if (current == null && ripples.none { now - it.start < IchthysDepthRepository.RIPPLE_MS }) {
+        return
+    }
     Canvas(
         modifier.fillMaxSize().onGloballyPositioned { origin = it.positionInWindow() }
     ) {
         translate(-origin.x, -origin.y) {
+            // Water ripples: two rings spreading from each touch and fading out.
+            for (r in ripples) {
+                val t = ((now - r.start).toFloat() / IchthysDepthRepository.RIPPLE_MS)
+                if (t !in 0f..1f) continue
+                val ease = 1f - (1f - t) * (1f - t)
+                for (k in 0..1) {
+                    val tk = (ease - k * 0.18f).coerceAtLeast(0f)
+                    if (tk <= 0f) continue
+                    drawCircle(
+                        Color(0xFFDDFBF6).copy(alpha = 0.5f * (1f - t) * (1f - k * 0.4f)),
+                        radius = (10f + 110f * tk) * density,
+                        center = r.position,
+                        style = androidx.compose.ui.graphics.drawscope.Stroke((1.6f - k * 0.5f) * density),
+                    )
+                }
+            }
+            if (current == null) return@translate
             // The lens's trail: rings growing and fading behind it (newest last).
             trail.dropLast(1).forEachIndexed { i, p ->
                 val age = trail.size - 1 - i

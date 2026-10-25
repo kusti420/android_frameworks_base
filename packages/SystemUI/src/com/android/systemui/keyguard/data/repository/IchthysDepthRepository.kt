@@ -107,6 +107,25 @@ constructor(
     private val _lens = MutableStateFlow<Lens?>(null)
     val lens: StateFlow<Lens?> = _lens.asStateFlow()
 
+    /** A ripple on the pond: where a finger touched the lock screen, and when (uptime ms). */
+    data class Ripple(val position: androidx.compose.ui.geometry.Offset, val start: Long)
+
+    private val _ripples = MutableStateFlow<List<Ripple>>(emptyList())
+    val ripples: StateFlow<List<Ripple>> = _ripples.asStateFlow()
+
+    /** A finger at [at]: a new ripple where it lands, and every so far as it moves. */
+    fun ripple(at: androidx.compose.ui.geometry.Offset) {
+        val now = android.os.SystemClock.uptimeMillis()
+        val live = _ripples.value.filter { now - it.start < RIPPLE_MS }
+        val last = live.lastOrNull()
+        val step = 36f * context.resources.displayMetrics.density
+        if (last != null && (at - last.position).getDistance() < step && now - last.start < 160) {
+            _ripples.value = live
+            return
+        }
+        _ripples.value = (live + Ripple(at, now)).takeLast(MAX_RIPPLES)
+    }
+
     /** Where the lens has just been: the concept's fading rings behind a dragged lens. */
     private val _trail = MutableStateFlow<List<androidx.compose.ui.geometry.Offset>>(emptyList())
     val trail: StateFlow<List<androidx.compose.ui.geometry.Offset>> = _trail.asStateFlow()
@@ -130,9 +149,9 @@ constructor(
      */
     @Volatile var unlockProgress: () -> Float = { 0f }
 
-    /** The theme's accent, for the depth lock screen's own strokes. */
+    /** The depth look's own accent (pond light), for its strokes, whatever the theme's is. */
     val accent: Int
-        get() = context.getColor(android.R.color.system_accent1_300)
+        get() = 0xFF9FE7DD.toInt()
 
     /**
      * Where the clock is on screen (window coordinates): pressing and holding inside it draws in the
@@ -371,6 +390,10 @@ constructor(
     companion object {
         private const val TAG = "IchthysDepth"
         private const val AUTHORITY = "org.ichthys.depth"
+
+        /** How long a ripple spreads and fades. */
+        const val RIPPLE_MS = 1100L
+        private const val MAX_RIPPLES = 12
 
         /** Rings in the lens's trail. */
         private const val TRAIL = 5

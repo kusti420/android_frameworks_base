@@ -66,6 +66,7 @@ fun Modifier.ichthysDepthLens(repository: IchthysDepthRepository): Modifier = co
                 // Every finger on the lock screen glows in the Depth face's touch heat (live only,
                 // never counted); one on the subject also gets the X-ray lens.
                 pulse(at)
+                repository.ripple(at)
                 val lens = repository.hitsSubject(at.x, at.y)
                 if (lens) repository.setLens(IchthysDepthRepository.Lens(at, down.pressure))
                 // Press and hold on the clock, then draw: from then on the touch is the clock's,
@@ -85,7 +86,7 @@ fun Modifier.ichthysDepthLens(repository: IchthysDepthRepository): Modifier = co
                                 // A swipe: leave it to the scene.
                                 return@awaitEachGesture finish(lens, repository)
                             } else if (change.uptimeMillis - down.uptimeMillis >= HOLD_MS) {
-                                // Held: the X-ray lens opens under the finger, wherever it is.
+                                // Held: from now on the finger paints light into the digits.
                                 drawing = true
                                 haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             }
@@ -94,7 +95,8 @@ fun Modifier.ichthysDepthLens(repository: IchthysDepthRepository): Modifier = co
                         if (drawing && onClock) change.consume()
                         val p = change.position + origin
                         pulse(p)
-                        if (lens || drawing) {
+                        repository.ripple(p)
+                        if (lens) {
                             repository.setLens(IchthysDepthRepository.Lens(p, change.pressure))
                         }
                     }
@@ -146,59 +148,18 @@ fun DrawScope.drawDepthLens(
     accent: Color,
     screen: Size,
 ) {
-    val cw = screen.width / COLUMNS
-    val ch = screen.height / ROWS
-    val sigma = 1.35f * cw
-    val peak = PEAK * (0.75f + 0.25f * lens.pressure.coerceIn(0f, 1f))
-    drawCircle(Color(0x40040A0C), radius, lens.position)
-    val text =
-        Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            typeface = monoFace
-            textAlign = Paint.Align.CENTER
-            textSize = cw * 0.3f
-        }
-    var max = 0
-    for (cx in 0 until COLUMNS) {
-        for (cy in 0 until ROWS) {
-            val nx = (cx + 0.5f) * cw
-            val ny = (cy + 0.5f) * ch
-            val dx = nx - lens.position.x
-            val dy = ny - lens.position.y
-            val dd = dx * dx + dy * dy
-            if (dd > radius * radius) continue
-            // A little noise, as a real frame has; steady per node so it doesn't flicker.
-            val noise = (sin(cx * 12.9898f + cy * 78.233f) * 43758.547f).let { it - it.toInt() }
-            val v = (peak * exp(-dd / (2 * sigma * sigma)) - noise * 30f).roundToInt()
-            if (v < 26) continue
-            max = max(max, v)
-            drawRoundRect(
-                accent.copy(alpha = (v / PEAK).coerceAtMost(0.85f)),
-                topLeft = Offset(nx - cw * 0.46f, ny - ch * 0.46f),
-                size = Size(cw * 0.92f, ch * 0.92f),
-                cornerRadius = CornerRadius(cw * 0.08f),
-            )
-            text.color = (if (v > 500) Color(0xFF07090B) else Color(0xFFF6F1EA)).toArgb()
-            drawContext.canvas.nativeCanvas.drawText(v.toString(), nx, ny + text.textSize * 0.36f, text)
-        }
-    }
-    drawCircle(Color(0xFFF6F1EA), radius, lens.position, style = Stroke(width = 1.5f * density))
+    // A clean window through the subject: the hole is cut by the cut-out layer; here only its
+    // rim, a fine cream ring and a dotted pond-light ring just outside it.
+    drawCircle(Color(0xFFF6F1EA).copy(alpha = 0.9f), radius, lens.position,
+        style = Stroke(width = 1.2f * density))
     drawCircle(
-        accent.copy(alpha = 0.6f),
-        radius + 12f * density,
+        accent.copy(alpha = 0.55f),
+        radius + 10f * density,
         lens.position,
         style =
             Stroke(
                 width = 1f * density,
-                pathEffect = PathEffect.dashPathEffect(floatArrayOf(2f * density, 5f * density)),
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(1.5f * density, 5f * density)),
             ),
-    )
-    text.textAlign = Paint.Align.LEFT
-    text.textSize = 9f * density * 1.2f
-    text.color = Color(0xFFF6F1EA).toArgb()
-    drawContext.canvas.nativeCanvas.drawText(
-        "X-RAY · Δ PEAK $max",
-        lens.position.x - radius,
-        lens.position.y - radius - 14f * density,
-        text,
     )
 }

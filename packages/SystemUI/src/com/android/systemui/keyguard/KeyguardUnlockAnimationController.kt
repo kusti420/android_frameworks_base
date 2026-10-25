@@ -102,6 +102,9 @@ const val DISMISS_AMOUNT_EXIT_KEYGUARD_THRESHOLD = 0.3f
  */
 const val UNLOCK_ANIMATION_DURATION_MS = 300L
 
+/** IchthysOS: the depth lock screen's unlock, as long as its Lockscreen to Gone transition. */
+const val ICHTHYS_DEPTH_UNLOCK_MS = 700L
+
 /**
  * If there are two different wallpapers on home and lock screen, duration and delay of the lock
  * wallpaper fade out.
@@ -690,6 +693,7 @@ constructor(
     private fun playCannedUnlockAnimation() {
         Log.d(TAG, "playCannedUnlockAnimation")
         playingCannedUnlockAnimation = true
+        applyIchthysDepthDurations()
 
         when {
             // If we're set up for in-window launcher animations, ask Launcher to play its in-window
@@ -1143,8 +1147,36 @@ constructor(
         surfaceBehindAlphaAnimator.start()
     }
 
+    /**
+     * IchthysOS depth lock screen (tracker#58): its layer unlock runs over the whole Lockscreen to
+     * Gone transition (700 ms, FromLockscreenToGoneTransition). The lock screen window must stay
+     * until it ends, so with depth on the canned unlock (which hides the window when done) and the
+     * wallpaper and app reveals take as long; otherwise they keep their stock timing.
+     */
+    private fun applyIchthysDepthDurations() {
+        val depth =
+            try {
+                android.provider.Settings.Secure.getIntForUser(
+                    android.app.AppGlobals.getInitialApplication().contentResolver,
+                    "ichthys_lockscreen_depth",
+                    0,
+                    android.os.UserHandle.USER_CURRENT,
+                ) != 0
+            } catch (e: RuntimeException) {
+                false
+            }
+        val duration = if (depth) ICHTHYS_DEPTH_UNLOCK_MS else UNLOCK_ANIMATION_DURATION_MS
+        val k = duration.toFloat() / UNLOCK_ANIMATION_DURATION_MS
+        wallpaperCannedUnlockAnimator.duration = duration
+        surfaceBehindEntryAnimator.duration = duration
+        wallpaperFadeOutUnlockAnimator.duration = (LOCK_WALLPAPER_FADE_OUT_DURATION_MS * k).toLong()
+        wallpaperFadeOutUnlockAnimator.startDelay =
+            (LOCK_WALLPAPER_FADE_OUT_START_DELAY_MS * k).toLong()
+    }
+
     private fun fadeInWallpaper() {
         Log.d(TAG, "fadeInWallpaper")
+        applyIchthysDepthDurations()
         wallpaperCannedUnlockAnimator.cancel()
         wallpaperCannedUnlockAnimator.start()
     }

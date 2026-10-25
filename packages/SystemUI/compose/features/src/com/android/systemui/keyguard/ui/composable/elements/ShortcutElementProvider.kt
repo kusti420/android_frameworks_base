@@ -292,6 +292,9 @@ constructor(
         viewModel: KeyguardQuickAffordanceViewModel,
         alpha: Float,
     ): Modifier {
+        // IchthysOS depth lock screen: clear glass (shortcutBackground), nothing blurred under it.
+        val depth by depthRepository.enabled.collectAsStateWithLifecycle()
+        if (depth) return this
         if (enableLockscreenBlur()) {
             val viewRootImpl = LocalView.current.viewRootImpl
             val drawable = remember {
