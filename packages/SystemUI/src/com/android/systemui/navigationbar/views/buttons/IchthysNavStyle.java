@@ -19,6 +19,7 @@ package com.android.systemui.navigationbar.views.buttons;
 import android.animation.ArgbEvaluator;
 import android.content.Context;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.UserHandle;
 import android.provider.Settings;
@@ -48,6 +49,13 @@ public final class IchthysNavStyle {
     public static final String KEY_STYLE = "ichthys_navbar_style";
     public static final String KEY_THEME_OVERLAYS = "theme_customization_overlay_packages";
     public static final String KEY_FONT_MONO = "ichthys_theme_font_mono";
+    /**
+     * Icon pack for the stock style (crDroid's navbar packs: android, asus, dora, moto, nexus,
+     * old, oneplus, oneui, sammy, tecno); unset: the system's own glyphs.
+     */
+    public static final String KEY_ICONS = "ichthys_navbar_icons";
+    /** The resource-only app that carries the packs (packages/apps/IchthysNavIcons). */
+    public static final String ICONS_PACKAGE = "org.ichthys.navicons";
 
     public static final int STOCK = 0;
     public static final int SHOAL = 1;
@@ -170,7 +178,25 @@ public final class IchthysNavStyle {
                 Settings.Secure.getUriFor(KEY_STYLE),
                 Settings.Secure.getUriFor(KEY_THEME_OVERLAYS),
                 Settings.Secure.getUriFor(KEY_FONT_MONO),
+                Settings.Secure.getUriFor(KEY_ICONS),
         };
+    }
+
+    /**
+     * The stock style's glyph for {@code key} ("back", "home" or "recent") from the chosen icon
+     * pack, or null for the system's own glyph (no pack chosen, or the pack is missing).
+     */
+    public static Drawable stockIcon(Context context, String key) {
+        final String pack = secure(context, KEY_ICONS);
+        if (TextUtils.isEmpty(pack)) return null;
+        try {
+            final Context icons = context.createPackageContext(ICONS_PACKAGE, 0);
+            final int id = icons.getResources().getIdentifier(
+                    pack + "_" + key, "drawable", ICONS_PACKAGE);
+            return id == 0 ? null : icons.getDrawable(id);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /** The user's mono family (Shoal font token by default), else the system monospace. */
