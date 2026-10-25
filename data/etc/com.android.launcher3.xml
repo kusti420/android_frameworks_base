@@ -25,6 +25,8 @@
         <permission name="android.permission.START_TASKS_FROM_RECENTS"/>
         <permission name="android.permission.STATUS_BAR"/>
         <permission name="android.permission.STOP_APP_SWITCHES"/>
+        <!-- IchthysOS: Slim Recents (hosted in the launcher) kills an app from its card menu. -->
+        <permission name="android.permission.FORCE_STOP_PACKAGES"/>
         <permission name="android.permission.ACCESS_SHORTCUTS"/>
         <permission name="android.permission.ACCESS_HIDDEN_PROFILES_FULL"/>
         <permission name="android.permission.READ_REMOTE_TASKS"/>
