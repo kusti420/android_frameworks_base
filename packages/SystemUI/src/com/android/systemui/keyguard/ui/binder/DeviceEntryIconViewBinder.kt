@@ -132,16 +132,10 @@ object DeviceEntryIconViewBinder {
                 repeatOnLifecycle(Lifecycle.State.CREATED) {
                     launch("$TAG#viewModel.useBackgroundProtection") {
                         viewModel.useBackgroundProtection.collect { useBackgroundProtection ->
-                            // IchthysOS depth lock screen (tracker#58): just the hairline icon on
-                            // the wallpaper, no disc behind it.
-                            val depth =
-                                android.provider.Settings.Secure.getIntForUser(
-                                    view.context.contentResolver,
-                                    "ichthys_lockscreen_depth",
-                                    0,
-                                    android.os.UserHandle.USER_CURRENT,
-                                ) != 0
-                            if (useBackgroundProtection && !depth) {
+                            // IchthysOS: the dark disc stays, also on the depth lock screen. The
+                            // sensor is optical: without the disc, a bright wallpaper around it
+                            // leaks light into every capture and fingerprints stop matching.
+                            if (useBackgroundProtection) {
                                 bgView.visibility = View.VISIBLE
                             } else {
                                 bgView.visibility = View.GONE
