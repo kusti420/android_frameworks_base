@@ -97,6 +97,8 @@ public final class IchthysBackstageService {
     /** A launched app gets this long to show up on the display before it's dropped. */
     private static final long LAUNCH_GRACE_MS = 15_000;
     private static final long HOUR_MS = 60 * 60 * 1000L;
+    /** Task events for this long after sending an app are the move itself, not the user. */
+    private static final long SEND_SETTLE_MS = 2_000;
 
     private static final String CHANNEL_ID = "ichthys_backstage";
     private static final String ACTION_BRING_BACK =
@@ -204,6 +206,20 @@ public final class IchthysBackstageService {
                 public void onTaskDisplayChanged(int taskId, int newDisplayId) {
                     mHandler.post(() -> scanDisplay());
                 }
+
+                // Opening a Backstage app (its icon, recents, a notification) must bring it
+                // back: otherwise it comes to the front on the hidden display, and the screen
+                // shows nothing, or the launcher starts a second copy on the main screen.
+                @Override
+                public void onActivityRestartAttempt(ActivityManager.RunningTaskInfo task,
+                        boolean homeTaskVisible, boolean clearedTask, boolean wasVisible) {
+                    mHandler.post(() -> onOpened(task, homeTaskVisible));
+                }
+
+                @Override
+                public void onTaskMovedToFront(ActivityManager.RunningTaskInfo task) {
+                    mHandler.post(() -> onOpened(task, false));
+                }
             });
         } catch (RemoteException e) {
             Slog.w(TAG, "registerTaskStackListener failed", e);
@@ -262,6 +278,65 @@ public final class IchthysBackstageService {
             }
         }
         writePackages();
+    }
+
+    /**
+     * A task came to the front, or a launch was redirected into an existing task. If it is a
+     * Backstage app and the user opened it, give it back to the main screen.
+     */
+    private void onOpened(ActivityManager.RunningTaskInfo task, boolean homeTaskVisible) {
+        if (mDisplay == null || task == null || task.userId != mUserId) {
+            return;
+        }
+        final ComponentName base = task.baseActivity != null ? task.baseActivity
+                : task.topActivity;
+        final Entry entry = base != null ? mEntries.get(base.getPackageName()) : null;
+        if (entry == null
+                || SystemClock.elapsedRealtime() - entry.startedAt < SEND_SETTLE_MS) {
+            return; // not ours, or the events of sending it there
+        }
+        final int backstage = mDisplay.getDisplay().getDisplayId();
+        if (task.displayId == Display.DEFAULT_DISPLAY) {
+            // The launcher started a fresh copy on the main screen: show the Backstage one
+            // instead, and drop the copy if it is only the plain launcher start.
+            Slog.i(TAG, entry.pkg + " opened on the main screen, bringing it back");
+            bringBack(entry.pkg);
+            if (task.taskId != entry.taskId && isPlainLaunch(task)) {
+                try {
+                    mAtm.removeTask(task.taskId);
+                } catch (RemoteException | RuntimeException e) {
+                    Slog.w(TAG, "removing the duplicate of " + entry.pkg + " failed: " + e);
+                }
+            }
+        } else if (task.displayId == backstage && (homeTaskVisible || userIsOnHome())) {
+            // Brought to the front from the launcher or recents, on the hidden display.
+            Slog.i(TAG, entry.pkg + " opened from the launcher, bringing it back");
+            bringBack(entry.pkg);
+        }
+    }
+
+    /** Whether the main screen shows the launcher (home or recents) right now. */
+    private boolean userIsOnHome() {
+        try {
+            final List<ActivityManager.RunningTaskInfo> top =
+                    mAtm.getTasks(1, false, false, Display.DEFAULT_DISPLAY);
+            if (top.isEmpty()) {
+                return false;
+            }
+            final int type = top.get(0).getActivityType();
+            return type == android.app.WindowConfiguration.ACTIVITY_TYPE_HOME
+                    || type == android.app.WindowConfiguration.ACTIVITY_TYPE_RECENTS;
+        } catch (RemoteException e) {
+            return false;
+        }
+    }
+
+    /** A task started by the launcher icon: MAIN + LAUNCHER and nothing else to lose. */
+    private static boolean isPlainLaunch(ActivityManager.RunningTaskInfo task) {
+        final Intent intent = task.baseIntent;
+        return intent != null && Intent.ACTION_MAIN.equals(intent.getAction())
+                && intent.hasCategory(Intent.CATEGORY_LAUNCHER) && intent.getData() == null
+                && task.numActivities <= 1;
     }
 
     // ---- Moving apps ----
@@ -541,6 +616,8 @@ public final class IchthysBackstageService {
                 .setOnlyAlertOnce(true)
                 .setVisibility(Notification.VISIBILITY_SECRET)
                 .setCategory(Notification.CATEGORY_STATUS)
+                // Tapping the notification itself brings the app back too.
+                .setContentIntent(actionIntent(ACTION_BRING_BACK, entry.pkg))
                 .addAction(bringBack)
                 .addAction(stop)
                 .build();
