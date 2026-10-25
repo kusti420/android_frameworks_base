@@ -31,6 +31,8 @@ import androidx.compose.animation.graphics.res.animatedVectorResource
 import androidx.compose.animation.graphics.res.rememberAnimatedVectorPainter
 import androidx.compose.animation.graphics.vector.AnimatedImageVector
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
@@ -108,6 +110,7 @@ constructor(
     private val hapticsViewModelFactory: KeyguardQuickAffordanceHapticViewModel.Factory,
     private val windowRootViewBlurInteractor: WindowRootViewBlurInteractor,
     private val logger: KeyguardQuickAffordancesLogger,
+    private val depthRepository: com.android.systemui.keyguard.data.repository.IchthysDepthRepository,
 ) : LockscreenElementProvider {
 
     override val elements: List<LockscreenElement> by lazy {
@@ -327,6 +330,13 @@ constructor(
 
     @Composable
     private fun Modifier.shortcutBackground(viewModel: KeyguardQuickAffordanceViewModel): Modifier {
+        // IchthysOS depth lock screen (tracker#58): clear glass over the wallpaper, a faint
+        // white fill inside a light hairline, as in the concept.
+        val depth by depthRepository.enabled.collectAsStateWithLifecycle()
+        if (depth && !viewModel.isSelected && !viewModel.isActivated) {
+            return this.background(Color.White.copy(alpha = 0.12f), CircleShape)
+                .border(1.dp, Color.White.copy(alpha = 0.45f), CircleShape)
+        }
         if (!viewModel.isSelected) {
             val isBlurSupported by
                 windowRootViewBlurInteractor.isBlurCurrentlySupported.collectAsStateWithLifecycle()

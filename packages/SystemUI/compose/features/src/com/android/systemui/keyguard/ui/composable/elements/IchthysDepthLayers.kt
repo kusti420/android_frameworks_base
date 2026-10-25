@@ -122,6 +122,7 @@ fun IchthysDepthCutout(
 @Composable
 fun IchthysDepthLensOverlay(repository: IchthysDepthRepository, modifier: Modifier = Modifier) {
     val lens by repository.lens.collectAsStateWithLifecycle()
+    val trail by repository.trail.collectAsStateWithLifecycle()
     val current = lens ?: return
     val accent = Color(LocalContext.current.getColor(android.R.color.system_accent1_300))
     var origin by remember { mutableStateOf(Offset.Zero) }
@@ -129,6 +130,16 @@ fun IchthysDepthLensOverlay(repository: IchthysDepthRepository, modifier: Modifi
         modifier.fillMaxSize().onGloballyPositioned { origin = it.positionInWindow() }
     ) {
         translate(-origin.x, -origin.y) {
+            // The lens's trail: rings growing and fading behind it (newest last).
+            trail.dropLast(1).forEachIndexed { i, p ->
+                val age = trail.size - 1 - i
+                drawCircle(
+                    Color(0xFFF6F1EA).copy(alpha = (0.42f - age * 0.08f).coerceAtLeast(0.06f)),
+                    radius = (12f + age * 9f) * density,
+                    center = p,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(1.2f * density),
+                )
+            }
             drawDepthLens(current, LENS_RADIUS_DP * density, accent, size)
         }
     }
@@ -153,7 +164,9 @@ private fun WindowImage(
             .onGloballyPositioned { origin = it.positionInWindow() }
             .graphicsLayer { this.alpha = alpha }
     ) {
-        clipRect {
+        // Nothing above this box (the status bar's icons stay in front); below and beside it the
+        // picture may spill, where it is the backdrop's own pixels anyway.
+        clipRect(left = -origin.x, top = 0f, right = -origin.x + 100_000f, bottom = 100_000f) {
             val path = hole(origin)
             if (path != null) {
                 clipPath(path, ClipOp.Difference) { drawAtWindowOrigin(image, origin, colorFilter) }

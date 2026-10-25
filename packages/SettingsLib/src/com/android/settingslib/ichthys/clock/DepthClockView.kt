@@ -50,9 +50,10 @@ import kotlin.math.min
  * Settings.Secure [KEY_FILL] picks what fills the digits:
  * - [FILL_SOLID]: the clock colour.
  * - [FILL_GRADIENT]: the accent fading into the clock colour, top to bottom.
- * - [FILL_HEAT]: dark ink with a hairline edge, and through it today's touches as glowing heat
- *   ([TouchHeat], counted by SystemUI): each digit is a window onto where on the screen the phone
- *   was touched, brighter where it was touched more. Touches on the lock screen are never counted.
+ * - [FILL_HEAT]: dark ink with a hairline edge that glows wherever a finger is on the lock screen
+ *   (live, never counted). On AOD the digits' outlines hold today's touches as faint heat
+ *   ([TouchHeat], counted by SystemUI while unlocked): each digit is a window onto where on the
+ *   screen the phone was touched, brighter where it was touched more.
  *
  * Dozing, only the digits' outlines are drawn (with the heat faint inside them) and nothing ticks.
  */
@@ -69,6 +70,8 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = digitTypeface()
             textAlign = Paint.Align.CENTER
+            // Set tight, the digits nearly touching, like one block.
+            letterSpacing = -0.03f
         }
     /** For sizing only, so measuring never changes [digitPaint]'s size. */
     private val measurePaint = Paint(digitPaint)
@@ -168,7 +171,8 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         measurePaint.textSize = size
         measurePaint.getTextBounds("00", 0, 2, bounds)
         val cap = bounds.height().toFloat()
-        val h = (statusHeight() + size * 0.04f + cap * 2.04f + size * 0.03f).toInt()
+        // Plus a line under the digits for the night's touch count.
+        val h = (statusHeight() + size * 0.04f + cap * 2.04f + size * 0.03f + dp(18f)).toInt()
         setMeasuredDimension(w, resolveSize(h, heightMeasureSpec))
     }
 
@@ -226,11 +230,22 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         val path = digitsPath()
         paint.shader = null
         if (dozingNow) {
-            if (fill == FILL_HEAT) drawHeat(canvas, path, 0.35f)
+            if (fill == FILL_HEAT) drawHeat(canvas, path, 0.45f)
             paint.style = Paint.Style.STROKE
             paint.strokeWidth = dp(1.5f)
             paint.color = withAlpha(primary, 0.6f)
             canvas.drawPath(path, paint)
+            // The concept's night line under the digits.
+            if (fill == FILL_HEAT && context.packageName == "com.android.systemui") {
+                monoPaint.textSize = sp(11f)
+                monoPaint.letterSpacing = 0.1f
+                monoPaint.color = withAlpha(primary, 0.6f)
+                monoPaint.textAlign = Paint.Align.CENTER
+                canvas.drawText(
+                    String.format(Locale.US, "TODAY · %,d TOUCHES", TouchHeat.touches),
+                    width / 2f, height - dp(4f), monoPaint)
+                monoPaint.textAlign = Paint.Align.LEFT
+            }
             return
         }
         paint.style = Paint.Style.FILL
@@ -286,14 +301,23 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
      */
     private fun heatBitmap(): Bitmap {
         val inSystemUi = context.packageName == "com.android.systemui"
+        val liveCells = if (inSystemUi) TouchHeat.liveSnapshot() else null
         val version = if (inSystemUi) TouchHeat.version else -2
-        heatBitmap?.let { if (version == heatVersion) return it }
+        // The doze state is part of what is drawn (see below).
+        val key = if (dozingNow) version + 1_000_000_000 else version
+        if (liveCells == null) heatBitmap?.let { if (key == heatVersion) return it }
+        // A finger on the lock screen: keep drawing frames until its glow has faded.
+        if (liveCells != null) postInvalidateOnAnimation()
         val cells = if (inSystemUi) TouchHeat.snapshot() else TouchHeat.sample()
-        val peak = max(cells.max(), 1f)
+        // Counted heat is scaled against at least a few dozen touches' worth, so a handful doesn't
+        // light up like a full day, and stays dimmer than a finger on the screen right now.
+        val peak = max(cells.max(), MIN_PEAK)
         val px = IntArray(cells.size)
         val warm = Color.rgb(255, 236, 214)
         for (i in cells.indices) {
-            val v = kotlin.math.sqrt(cells[i] / peak)
+            // Awake, only a finger on the screen glows; dozing, the day's touches show.
+            val counted = if (dozingNow) kotlin.math.sqrt(cells[i] / peak) * COUNTED_MAX else 0f
+            val v = if (liveCells != null) max(counted, liveCells[i]) else counted
             if (v < 0.04f) continue
             val c = if (v < 0.7f) accent else blend(accent, warm, (v - 0.7f) / 0.3f)
             px[i] = withAlpha(c or 0xFF000000.toInt(), min(1f, v * 1.15f))
@@ -301,7 +325,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         val b = Bitmap.createBitmap(px, TouchHeat.COLS, TouchHeat.ROWS, Bitmap.Config.ARGB_8888)
         heatBitmap?.recycle()
         heatBitmap = b
-        heatVersion = version
+        heatVersion = if (liveCells != null) -3 else key
         return b
     }
 
@@ -316,10 +340,17 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
 
     private fun drawStatus(canvas: Canvas) {
         val pad = dp(4f)
-        monoPaint.textSize = sp(11f)
-        monoPaint.color = withAlpha(primary, 0.88f)
+        monoPaint.textSize = sp(10.5f)
+        monoPaint.letterSpacing = 0.06f
+        monoPaint.color = withAlpha(blend(primary, accent, 0.12f), 0.9f)
         val base = statusH - dp(10f)
-        val pattern = if (is24h()) "HH:mm:ss" else "hh:mm:ss"
+        // Seconds only while they tick: dozing, the face updates once a minute.
+        val pattern =
+            when {
+                dozingNow -> if (is24h()) "HH:mm" else "hh:mm"
+                is24h() -> "HH:mm:ss"
+                else -> "hh:mm:ss"
+            }
         val text =
             dateText().uppercase(Locale.getDefault()) + "  " +
                 DateFormat.format(pattern, calendar) + "  " +
@@ -400,6 +431,9 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         const val FILL_HEAT = 2
 
         private const val STATUS_DP = 30f
+        /** See [heatBitmap]. */
+        private const val MIN_PEAK = 12f
+        private const val COUNTED_MAX = 0.8f
         /** Share of the face's width "00" takes. */
         private const val WIDTH_SHARE = 0.92f
         /** At most this share of the screen's height per line of digits. */
@@ -408,8 +442,11 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         private const val LINE_STEP = 0.76f
         private val INK = Color.argb(158, 4, 9, 11)
 
+        /** Big Shoulders Display Black (IchthysDepth ships it), else Roboto Flex at its narrowest. */
         private fun digitTypeface(): Typeface =
-            variable("/system/fonts/RobotoFlex-Regular.ttf", "'wdth' 25, 'wght' 1000, 'opsz' 144")
+            variable("/system/fonts/BigShouldersDisplay-VF.ttf", "'wght' 900")
+                ?: variable("/system/fonts/RobotoFlex-Regular.ttf",
+                    "'wdth' 25, 'wght' 1000, 'opsz' 144")
                 ?: Typeface.create("sans-serif-condensed", Typeface.BOLD)
 
         private fun monoTypeface(): Typeface =
@@ -486,6 +523,51 @@ object TouchHeat {
     }
 
     @Synchronized fun snapshot(): FloatArray = cells.copyOf()
+
+    /**
+     * Touches on the lock screen itself, shown live and never counted or saved: each one glows
+     * where it is and fades within about a second ([LIVE_FADE_MS]).
+     */
+    private val live = FloatArray(COLS * ROWS)
+    private var liveAt = 0L
+
+    /** A finger on the lock screen at ([fx], [fy]) (fractions of the screen). */
+    @Synchronized
+    fun pulse(fx: Float, fy: Float) {
+        fadeLive()
+        splat(live, fx, fy, 0.6f)
+        for (i in live.indices) live[i] = min(live[i], 1f)
+        changed()
+    }
+
+    /** The live layer, faded to now; null once it has gone. */
+    @Synchronized
+    fun liveSnapshot(): FloatArray? {
+        fadeLive()
+        return if (live.any { it > 0.02f }) live.copyOf() else null
+    }
+
+    private fun fadeLive() {
+        val now = android.os.SystemClock.uptimeMillis()
+        val k = kotlin.math.exp(-(now - liveAt) / LIVE_FADE_MS.toFloat())
+        liveAt = now
+        for (i in live.indices) live[i] *= k
+    }
+
+    private fun splat(into: FloatArray, fx: Float, fy: Float, w: Float) {
+        val cx = fx * COLS - 0.5f
+        val cy = fy * ROWS - 0.5f
+        val r = (SIGMA * 3).toInt() + 1
+        for (y in max(0, cy.toInt() - r)..min(ROWS - 1, cy.toInt() + r)) {
+            for (x in max(0, cx.toInt() - r)..min(COLS - 1, cx.toInt() + r)) {
+                val dx = x - cx
+                val dy = y - cy
+                into[y * COLS + x] += w * kotlin.math.exp(-(dx * dx + dy * dy) / (2 * SIGMA * SIGMA))
+            }
+        }
+    }
+
+    private const val LIVE_FADE_MS = 450L
 
     /** As saved: day, touches, then the cells. */
     @Synchronized

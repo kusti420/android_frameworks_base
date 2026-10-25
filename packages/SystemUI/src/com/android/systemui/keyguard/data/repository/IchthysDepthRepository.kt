@@ -107,8 +107,21 @@ constructor(
     private val _lens = MutableStateFlow<Lens?>(null)
     val lens: StateFlow<Lens?> = _lens.asStateFlow()
 
+    /** Where the lens has just been: the concept's fading rings behind a dragged lens. */
+    private val _trail = MutableStateFlow<List<androidx.compose.ui.geometry.Offset>>(emptyList())
+    val trail: StateFlow<List<androidx.compose.ui.geometry.Offset>> = _trail.asStateFlow()
+
     fun setLens(lens: Lens?) {
         _lens.value = lens
+        if (lens == null) {
+            _trail.value = emptyList()
+            return
+        }
+        val last = _trail.value.lastOrNull()
+        val step = 28f * context.resources.displayMetrics.density
+        if (last == null || (lens.position - last).getDistance() > step) {
+            _trail.value = (_trail.value + lens.position).takeLast(TRAIL)
+        }
     }
 
     /**
@@ -116,6 +129,16 @@ constructor(
      * draw time: the depth layers come apart as it goes. Set by the lock screen root.
      */
     @Volatile var unlockProgress: () -> Float = { 0f }
+
+    /** The theme's accent, for the depth lock screen's own strokes. */
+    val accent: Int
+        get() = context.getColor(android.R.color.system_accent1_300)
+
+    /**
+     * Where the clock is on screen (window coordinates): pressing and holding inside it draws in the
+     * Depth face's touch heat instead of swiping.
+     */
+    @Volatile var clockBounds: androidx.compose.ui.geometry.Rect = androidx.compose.ui.geometry.Rect.Zero
 
     /** Whether ([x], [y]) on the lock screen is on the wallpaper's subject. */
     fun hitsSubject(x: Float, y: Float): Boolean {
@@ -349,6 +372,9 @@ constructor(
         private const val TAG = "IchthysDepth"
         private const val AUTHORITY = "org.ichthys.depth"
 
+        /** Rings in the lens's trail. */
+        private const val TRAIL = 5
+
         /** Lock screen pixels per cell of [DepthLayers.subject]. */
         private const val SUBJECT_GRID = 8
         /** Below this share of the screen covered, a mask has no real subject. */
@@ -416,6 +442,14 @@ constructor(
                 }
             handler.postDelayed(saver, SAVE_MS)
         }
+        // Saved the moment the phone locks, so a restart never loses the touches before it.
+        keyguardStateController.addCallback(
+            object : com.android.systemui.statusbar.policy.KeyguardStateController.Callback {
+                override fun onKeyguardShowingChanged() {
+                    if (keyguardStateController.isShowing) handler.post { if (dirty) save() }
+                }
+            }
+        )
     }
 
     private fun onMotion(e: android.view.MotionEvent) {
@@ -442,6 +476,8 @@ constructor(
         com.android.settingslib.ichthys.clock.TouchHeat.add(
             fx.coerceIn(0f, 1f), fy.coerceIn(0f, 1f), today())
         dirty = true
+        val n = com.android.settingslib.ichthys.clock.TouchHeat.touches
+        if (n == 1 || n % 100 == 0) Log.i(TAG, "$n touches today")
     }
 
     private fun today(): Int {

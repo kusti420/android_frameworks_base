@@ -26,6 +26,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.geometry.CornerRadius
@@ -54,28 +56,69 @@ import kotlin.math.sin
 fun Modifier.ichthysDepthLens(repository: IchthysDepthRepository): Modifier = composed {
     // Lens positions are in window coordinates, like the depth pictures.
     var origin by remember { mutableStateOf(Offset.Zero) }
+    val haptics = LocalHapticFeedback.current
     onGloballyPositioned { origin = it.positionInWindow() }
         .pointerInput(repository) {
             awaitEachGesture {
                 val down =
                     awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                 val at = down.position + origin
-                if (!repository.hitsSubject(at.x, at.y)) return@awaitEachGesture
-                repository.setLens(IchthysDepthRepository.Lens(at, down.pressure))
+                // Every finger on the lock screen glows in the Depth face's touch heat (live only,
+                // never counted); one on the subject also gets the X-ray lens.
+                pulse(at)
+                val lens = repository.hitsSubject(at.x, at.y)
+                if (lens) repository.setLens(IchthysDepthRepository.Lens(at, down.pressure))
+                // Press and hold on the clock, then draw: from then on the touch is the clock's,
+                // so the shade and unlock swipes don't take it. A quick swipe still swipes.
+                val onClock = repository.clockBounds.contains(at)
+                var drawing = false
                 try {
                     while (true) {
-                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        // Main pass: the scene's swipe handling (an ancestor) comes after this, so
+                        // what is consumed here never becomes a swipe.
+                        val event = awaitPointerEvent(PointerEventPass.Main)
                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
                         if (!change.pressed) break
-                        repository.setLens(
-                            IchthysDepthRepository.Lens(change.position + origin, change.pressure)
-                        )
+                        val moved = (change.position - down.position).getDistance()
+                        if (!drawing && !lens) {
+                            if (moved > viewConfiguration.touchSlop) {
+                                // A swipe: leave it to the scene.
+                                return@awaitEachGesture finish(lens, repository)
+                            } else if (change.uptimeMillis - down.uptimeMillis >= HOLD_MS) {
+                                // Held: the X-ray lens opens under the finger, wherever it is.
+                                drawing = true
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            }
+                        }
+                        // On the clock the held finger is the lens's, not a swipe's.
+                        if (drawing && onClock) change.consume()
+                        val p = change.position + origin
+                        pulse(p)
+                        if (lens || drawing) {
+                            repository.setLens(IchthysDepthRepository.Lens(p, change.pressure))
+                        }
                     }
                 } finally {
                     repository.setLens(null)
                 }
             }
         }
+}
+
+private fun androidx.compose.ui.input.pointer.PointerInputScope.pulse(at: Offset) {
+    val dm = android.content.res.Resources.getSystem().displayMetrics
+    com.android.settingslib.ichthys.clock.TouchHeat.pulse(
+        (at.x / dm.widthPixels).coerceIn(0f, 1f),
+        (at.y / dm.heightPixels).coerceIn(0f, 1f),
+    )
+}
+
+/** How long a finger rests on the clock before it draws instead of swiping. */
+private const val HOLD_MS = 180L
+
+/** The lens ends with the gesture (the finally block does the same for every other way out). */
+private fun finish(lens: Boolean, repository: IchthysDepthRepository) {
+    if (lens) repository.setLens(null)
 }
 
 /** Number of panel cells across the screen (the A52s' touch panel reads 16 x 37 nodes). */

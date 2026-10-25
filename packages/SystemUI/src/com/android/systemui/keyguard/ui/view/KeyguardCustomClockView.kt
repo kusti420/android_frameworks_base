@@ -256,10 +256,16 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
         val scale = secureInt(KEY_SIZE_SCALE, 100).coerceIn(50, 150) / 100f
         val marginTopPx = secureInt(KEY_MARGIN_TOP, DEFAULT_MARGIN_TOP)
 
+        // IchthysOS lock screen editor (tracker#58): moved sideways and turned freely too.
+        val offsetX = secureInt(KEY_OFFSET_X, 0)
+        val rotation = secureInt(KEY_ROTATION, 0).toFloat()
         clock.alpha = opacity / 100f
         clock.scaleX = scale
         clock.scaleY = scale
+        clock.translationX = offsetX.toFloat()
+        clock.rotation = rotation
         clock.pivotY = 0f
+        if (rotation != 0f) clock.post { clock.pivotY = clock.height / 2f }
         // Inflated roots are usually match_parent wide, so scaling has to pivot on the edge the face
         // is actually aligned to, otherwise a start-aligned face grows off the padding at >100%.
         clock.post { clock.pivotX = scalePivotX(clock) }
@@ -1289,6 +1295,8 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
         private const val KEY_SHOW_DATE = "ichthys_clock_show_date"
         private const val KEY_DOT_SHAPE = "ichthys_clock_dot_shape"
         private const val KEY_UNLIT_DOTS = "ichthys_clock_unlit_dots"
+        private const val KEY_OFFSET_X = "ichthys_clock_offset_x"
+        private const val KEY_ROTATION = "ichthys_clock_rotation"
 
         private const val MODE_DEFAULT = "default"
         private const val MODE_ACCENT = "accent"
@@ -1306,6 +1314,8 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
                 KEY_SHOW_DATE,
                 KEY_DOT_SHAPE,
                 KEY_UNLIT_DOTS,
+                KEY_OFFSET_X,
+                KEY_ROTATION,
             )
     }
 }

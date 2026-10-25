@@ -24,6 +24,13 @@ import com.android.systemui.res.R
 object WallpaperPickerIntentUtils {
 
     fun getIntent(context: Context, launchSource: String): Intent {
+        // IchthysOS (tracker#58): the lock screen's "customize" button opens the lock screen
+        // editor (Settings), which has the wallpaper picker one tap away.
+        if (launchSource == LAUNCH_SOURCE_KEYGUARD) {
+            return Intent("org.ichthys.action.EDIT_LOCKSCREEN")
+                .setPackage("com.android.settings")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
         return Intent(Intent.ACTION_SET_WALLPAPER).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
             context

@@ -21,6 +21,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -217,7 +219,11 @@ constructor(
     @Composable
     private fun DepthClock() {
         val dozeAmount by keyguardInteractor.dozeAmount.collectAsStateWithLifecycle(0f)
-        Box(Modifier.fillMaxWidth()) {
+        Box(
+            Modifier.fillMaxWidth()
+                .onGloballyPositioned { depthRepository.clockBounds = it.boundsInWindow() }
+                .ichthysDepthPlane(depthRepository, IchthysDepthPlane.MIDDLE)
+        ) {
             AndroidView(
                 factory = { KeyguardCustomClockView(it) },
                 modifier = Modifier.fillMaxWidth(),

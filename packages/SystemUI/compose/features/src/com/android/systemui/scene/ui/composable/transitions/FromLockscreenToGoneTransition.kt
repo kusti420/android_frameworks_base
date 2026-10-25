@@ -22,9 +22,11 @@ import com.android.compose.animation.scene.TransitionBuilder
 import com.android.systemui.plugins.keyguard.ui.composable.elements.LockscreenElementKeys
 
 fun TransitionBuilder.lockscreenToGoneWithAnimationOverLockscreenTransition() {
-    spec = tween(durationMillis = 500)
+    // IchthysOS depth lock screen (tracker#58): long enough for the layers to come apart (first
+    // half, IchthysDepthUnlock.kt) before everything fades into the home screen (second half).
+    spec = tween(durationMillis = 700)
 
-    fractionRange(end = 0.3f, easing = Easings.PredictiveBack) {
+    fractionRange(start = 0.5f, end = 0.95f, easing = Easings.PredictiveBack) {
         // Fade out all lock screen elements, except the status bar.
         fade(LockscreenElementKeys.Region.Upper)
         fade(LockscreenElementKeys.LockIcon)
@@ -39,8 +41,7 @@ fun TransitionBuilder.lockscreenToGoneWithAnimationOverLockscreenTransition() {
 fun TransitionBuilder.lockscreenToGoneTransition() {
     lockscreenToGoneWithAnimationOverLockscreenTransition()
 
-    fractionRange(end = 0.3f, easing = Easings.PredictiveBack) {
-        translate(LockscreenElementKeys.Region.Upper, y = (-48).dp)
+    fractionRange(start = 0.5f, end = 0.95f, easing = Easings.PredictiveBack) {
         translate(LockscreenElementKeys.Notifications.Stack, y = (-72).dp)
     }
 }
