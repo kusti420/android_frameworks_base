@@ -155,13 +155,29 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         if (isAttachedToWindow && isShown && !dozingNow) handler.post(ticker)
     }
 
+    /** For previews (the lock screen editor): show this fill / status line instead of the settings'. */
+    var previewFill: Int? = null
+        set(v) {
+            field = v
+            readFill()
+            invalidate()
+        }
+    var previewDetails: Boolean? = null
+        set(v) {
+            field = v
+            readFill()
+            invalidate()
+        }
+
     private fun readFill() {
         details =
-            Settings.Secure.getIntForUser(
-                context.contentResolver, KEY_DETAILS, 0, UserHandle.USER_CURRENT) != 0
+            previewDetails
+                ?: (Settings.Secure.getIntForUser(
+                    context.contentResolver, KEY_DETAILS, 0, UserHandle.USER_CURRENT) != 0)
         fill =
-            Settings.Secure.getIntForUser(
-                context.contentResolver, KEY_FILL, FILL_SOLID, UserHandle.USER_CURRENT)
+            previewFill
+                ?: Settings.Secure.getIntForUser(
+                    context.contentResolver, KEY_FILL, FILL_SOLID, UserHandle.USER_CURRENT)
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -260,22 +276,27 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
             FILL_SOLID -> {
                 // Cream letters lying in the water: a soft shadow under them, a faint fall-off
                 // towards the bottom, nothing technical.
-                paint.color = POND_CREAM
+                // The clock colour the user picked (white by default).
+                paint.color = primary
                 paint.setShadowLayer(dp(14f), 0f, dp(6f), Color.argb(90, 0, 20, 24))
                 paint.shader =
                     LinearGradient(0f, statusH, 0f, line2Base,
-                        withAlpha(POND_CREAM, 0.96f), withAlpha(POND_CREAM, 0.84f),
+                        withAlpha(primary, 0.97f), withAlpha(primary, 0.86f),
                         Shader.TileMode.CLAMP)
                 canvas.drawPath(path, paint)
                 paint.shader = null
                 paint.clearShadowLayer()
             }
             FILL_GRADIENT -> {
+                // Pond light fading into the clock colour (the depth look's palette, not the theme
+                // accent, so it never turns red).
+                paint.setShadowLayer(dp(14f), 0f, dp(6f), Color.argb(90, 0, 20, 24))
                 paint.shader =
-                    LinearGradient(0f, statusH, 0f, line2Base, accent, primary,
+                    LinearGradient(0f, statusH, 0f, line2Base, POND_CYAN, primary,
                         Shader.TileMode.CLAMP)
                 canvas.drawPath(path, paint)
                 paint.shader = null
+                paint.clearShadowLayer()
             }
             else -> {
                 paint.color = INK
