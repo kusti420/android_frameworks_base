@@ -3087,7 +3087,8 @@ public class AppOpsService extends IAppOpsService.Stub {
             return AppOpsManager.opToDefaultMode(code);
         }
 
-        if (isOpRestrictedDueToSuspend(code, packageName, uid)) {
+        if (isOpRestrictedDueToSuspend(code, packageName, uid)
+                || isOpRestrictedByIchthysNoLocation(code, packageName, uid)) {
             return AppOpsManager.MODE_IGNORED;
         }
 
@@ -3151,7 +3152,8 @@ public class AppOpsService extends IAppOpsService.Stub {
             return MODE_IGNORED;
         }
 
-        if (isOpRestrictedDueToSuspend(code, packageName, uid)) {
+        if (isOpRestrictedDueToSuspend(code, packageName, uid)
+                || isOpRestrictedByIchthysNoLocation(code, packageName, uid)) {
             return MODE_IGNORED;
         }
 
@@ -3468,7 +3470,8 @@ public class AppOpsService extends IAppOpsService.Stub {
             return new SyncNotedAppOp(AppOpsManager.MODE_ERRORED, code, attributionTag,
                     packageName);
         }
-        if (isOpRestrictedDueToSuspend(code, packageName, uid)) {
+        if (isOpRestrictedDueToSuspend(code, packageName, uid)
+                || isOpRestrictedByIchthysNoLocation(code, packageName, uid)) {
             return new SyncNotedAppOp(AppOpsManager.MODE_IGNORED, code, attributionTag,
                     packageName);
         }
@@ -4132,7 +4135,8 @@ public class AppOpsService extends IAppOpsService.Stub {
             return new SyncNotedAppOp(AppOpsManager.MODE_ERRORED, code, attributionTag,
                     packageName);
         }
-        if (isOpRestrictedDueToSuspend(code, packageName, uid)) {
+        if (isOpRestrictedDueToSuspend(code, packageName, uid)
+                || isOpRestrictedByIchthysNoLocation(code, packageName, uid)) {
             return new SyncNotedAppOp(AppOpsManager.MODE_IGNORED, code, attributionTag,
                     packageName);
         }
@@ -4276,7 +4280,8 @@ public class AppOpsService extends IAppOpsService.Stub {
             return new SyncNotedAppOp(AppOpsManager.MODE_ERRORED, code, attributionTag,
                     packageName);
         }
-        if (isOpRestrictedDueToSuspend(code, packageName, uid)) {
+        if (isOpRestrictedDueToSuspend(code, packageName, uid)
+                || isOpRestrictedByIchthysNoLocation(code, packageName, uid)) {
             return new SyncNotedAppOp(AppOpsManager.MODE_IGNORED, code, attributionTag,
                     packageName);
         }
@@ -5405,6 +5410,27 @@ public class AppOpsService extends IAppOpsService.Stub {
             scheduleWriteLocked();
         }
         return op;
+    }
+
+    /**
+     * IchthysOS: apps on the "No location" list (Settings.Secure ichthys_location_nofix_pkgs,
+     * IchthysLocationNoFix) see their location app-ops as ignored. Every location-gated path asks
+     * this op: Wi-Fi SSID/BSSID and scan results, cell info, Bluetooth scans, as well as the
+     * location providers, so "never get a location" holds beyond LocationManager. Ignored, not
+     * errored: callers get empty results instead of exceptions, as with a revoked op.
+     */
+    private boolean isOpRestrictedByIchthysNoLocation(int code, String packageName, int uid) {
+        if (code != AppOpsManager.OP_COARSE_LOCATION && code != AppOpsManager.OP_FINE_LOCATION
+                && code != AppOpsManager.OP_MONITOR_LOCATION
+                && code != AppOpsManager.OP_MONITOR_HIGH_POWER_LOCATION) {
+            return false;
+        }
+        if (packageName == null || UserHandle.getAppId(uid) < Process.FIRST_APPLICATION_UID) {
+            return false;
+        }
+        // Cache only: reading Settings here could deadlock against SettingsProvider.
+        return com.android.server.location.IchthysLocationNoFix.isNoFixCached(packageName,
+                UserHandle.getUserId(uid));
     }
 
     private boolean isOpRestrictedDueToSuspend(int code, String packageName, int uid) {

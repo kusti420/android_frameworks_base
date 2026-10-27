@@ -81,6 +81,9 @@ public final class IchthysLocationNoFix {
                         synchronized (sLock) {
                             sNoFixByUser.put(userId, value);
                         }
+                        // IchthysOS: AppOpsService answers location ops from this list too;
+                        // drop the clients' cached op modes so the change applies at once.
+                        android.app.AppOpsManager.invalidateAppOpModeCache();
                     }
                 }, UserHandle.USER_ALL);
         // Pre-warm the current user, so the first delivery doesn't read Settings while holding
@@ -104,6 +107,19 @@ public final class IchthysLocationNoFix {
             return false;
         }
         return isNoFix(identity.getPackageName(), identity.getUserId());
+    }
+
+    /**
+     * IchthysOS: like {@link #isNoFix(String, int)} but never reads Settings: for callers that may
+     * hold locks SettingsProvider also takes (AppOpsService). A user not cached yet reads as
+     * false; the current user is cached at init and every user once its list changes or its
+     * first location delivery happens.
+     */
+    public static boolean isNoFixCached(String packageName, int userId) {
+        synchronized (sLock) {
+            Set<String> cached = sNoFixByUser.get(userId);
+            return cached != null && cached.contains(packageName);
+        }
     }
 
     /** True when {@code packageName} is set to "No location" for {@code userId}. */
