@@ -135,6 +135,12 @@ object LockWeather {
         val wind: String?,
         val humidity: String?,
         val iconPack: String,
+        /**
+         * IchthysOS Living Sky: today's sunrise and sunset (epoch ms) when the provider knows them
+         * (OpenMeteo), else 0.
+         */
+        val sunrise: Long = 0L,
+        val sunset: Long = 0L,
     )
 
     fun readOptions(context: Context): Options {
@@ -280,6 +286,15 @@ object LockWeather {
                 val temp = round(c.getFloat(4))
                 val humidity = c.getString(5)
                 val condition = c.getString(6) ?: ""
+                // Only some providers fill these; a bad value must not cost the weather.
+                fun millis(col: String): Long =
+                    try {
+                        c.getColumnIndex(col).let { if (it >= 0) c.getLong(it) else 0L }
+                    } catch (e: RuntimeException) {
+                        0L
+                    }
+                val sunrise = millis("sunrise")
+                val sunset = millis("sunset")
                 var high: String? = null
                 var low: String? = null
                 // The first forecast row is today.
@@ -301,6 +316,8 @@ object LockWeather {
                         else round(windSpeed) + if (metric) " km/h" else " mph",
                     humidity = humidity?.takeIf { it.isNotBlank() },
                     iconPack = pack.ifEmpty { DEFAULT_PACK },
+                    sunrise = sunrise,
+                    sunset = sunset,
                 )
             }
         } catch (e: Exception) {

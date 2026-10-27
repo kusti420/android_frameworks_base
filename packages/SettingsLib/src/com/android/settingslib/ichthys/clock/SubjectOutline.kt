@@ -38,7 +38,16 @@ object SubjectOutline {
      * the subject starts in that column (1 = nothing there). Eroded and smoothed, so single hair
      * strands make no spikes and the shape never dips into the subject.
      */
-    class Profile(val tops: FloatArray, val width: Int, val height: Int) {
+    class Profile(
+        val tops: FloatArray,
+        val width: Int,
+        val height: Int,
+        /**
+         * IchthysOS: the line between the sky and the land, not a subject (DepthSource.skyline):
+         * the clock stays above it and nothing is drawn over the clock.
+         */
+        val skyline: Boolean = false,
+    ) {
         /** Top of the subject at [fx] (fraction of the width), as a fraction of the height. */
         fun topAt(fx: Float): Float {
             if (tops.isEmpty()) return 1f
@@ -147,6 +156,7 @@ object SubjectOutline {
         screenW: Int,
         screenH: Int,
         threshold: Int = 128,
+        skyline: Boolean = false,
     ): Profile? {
         if (gridW <= 0 || gridH <= 1 || cov.size < gridW * gridH) return null
         val raw = FloatArray(gridW) { 1f }
@@ -162,7 +172,7 @@ object SubjectOutline {
                 }
             }
         }
-        return if (any) Profile(clean(raw), screenW, screenH) else null
+        return if (any) Profile(clean(raw), screenW, screenH, skyline) else null
     }
 
     /**

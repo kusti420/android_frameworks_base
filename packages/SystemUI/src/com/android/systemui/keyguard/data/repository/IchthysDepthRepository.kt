@@ -32,6 +32,7 @@ import android.graphics.Rect
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.UserHandle
 import android.provider.Settings
 import android.util.Log
@@ -43,6 +44,8 @@ import com.android.systemui.dagger.qualifiers.Background
 import com.android.systemui.settings.UserTracker
 import com.android.systemui.util.settings.SecureSettings
 import com.android.systemui.util.settings.SettingsProxyExt.observerFlow
+import com.android.settingslib.ichthys.clock.LockWeather
+import com.android.settingslib.ichthys.sky.LivingSky
 import java.io.FileNotFoundException
 import javax.inject.Inject
 import kotlin.math.roundToInt
@@ -56,6 +59,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
@@ -76,6 +81,11 @@ import kotlinx.coroutines.flow.stateIn
  *
  * Both are hardware bitmaps of the screen's size. Nothing is loaded while Settings.Secure
  * [KEY_DEPTH] is off.
+ *
+ * IchthysOS Living Sky: the backdrop is also what Living Sky ([LivingSky.KEY_ENABLED]) grades, so it
+ * loads while either is on; with Living Sky the layers also carry the picture's sky (IchthysDepth's
+ * sky mask, [DepthLayers.sky]) and what is known about it, and [livingSky] has the light and the
+ * weather of the moment. With depth off there is no cut-out (nothing stands over the clock).
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 @SysUISingleton
@@ -105,6 +115,29 @@ constructor(
          * face's "Shape" mode (published as SubjectOutline.current). Null without a cut-out.
          */
         val outline: com.android.settingslib.ichthys.clock.SubjectOutline.Profile? = null,
+        /** IchthysOS Living Sky: the sky's coverage (alpha), half the screen's size; null: none. */
+        val sky: Bitmap? = null,
+        /** The rest (alpha = not sky), the screen's size: the weather's far layers stay behind it. */
+        val land: Bitmap? = null,
+        /** What Living Sky knows of this picture; null without a sky mask. */
+        val skyInfo: LivingSky.SkyInfo? = null,
+    ) {
+        /** Living Sky can grade this picture. */
+        val livingSky: Boolean
+            get() = sky != null && land != null && skyInfo?.hasSky == true
+    }
+
+    /**
+     * IchthysOS Living Sky, this minute: the [options], the [sun] and the moon's phase, the
+     * [weather] to show (null: none, or the weather switch is off) and whether battery saver is on
+     * (then nothing moves).
+     */
+    class SkyNow(
+        val options: LivingSky.Options,
+        val sun: LivingSky.Sun,
+        val moonPhase: Float,
+        val weather: LivingSky.Weather?,
+        val powerSave: Boolean,
     )
 
     /** A finger on the subject (the X-ray lens), in lock screen pixels. */
@@ -197,7 +230,12 @@ constructor(
      * composition and starts again on the next lock; without this every lock would decode the
      * wallpaper and build the layers again.
      */
-    private class Cached(val key: String, val layers: DepthLayers?, val hadMask: Boolean)
+    private class Cached(
+        val key: String,
+        val layers: DepthLayers?,
+        val hadMask: Boolean,
+        val hadSky: Boolean = true,
+    )
 
     @Volatile private var cached: Cached? = null
 
@@ -219,11 +257,46 @@ constructor(
             .flowOn(bgDispatcher)
             .stateIn(scope, SharingStarted.WhileSubscribed(), false)
 
-    /** The pictures, while enabled; null while off or loading, or for a live wallpaper. */
+    /** IchthysOS Living Sky's switches, for the current user (re-read on a user switch). */
+    val skyOptions: StateFlow<LivingSky.Options> =
+        merge(
+                secureSettings.observerFlow(
+                    names =
+                        arrayOf(
+                            LivingSky.KEY_ENABLED,
+                            LivingSky.KEY_WEATHER,
+                            LivingSky.KEY_INTENSITY,
+                            LivingSky.KEY_DEBUG,
+                        ),
+                    userId = UserHandle.USER_ALL,
+                ),
+                userChanges(),
+            )
+            .onStart { emit(Unit) }
+            .map {
+                val debug = LivingSky.readDebug(
+                    secureSettings.getStringForUser(LivingSky.KEY_DEBUG, UserHandle.USER_CURRENT))
+                LivingSky.Options(
+                    debugMinute = debug.first,
+                    debugCode = debug.second,
+                    enabled = secureSettings.getIntForUser(
+                        LivingSky.KEY_ENABLED, 0, UserHandle.USER_CURRENT) != 0,
+                    weather = secureSettings.getIntForUser(
+                        LivingSky.KEY_WEATHER, 1, UserHandle.USER_CURRENT) != 0,
+                    intensity = secureSettings.getIntForUser(
+                        LivingSky.KEY_INTENSITY, 100, UserHandle.USER_CURRENT).coerceIn(0, 100),
+                )
+            }
+            .distinctUntilChanged()
+            .flowOn(bgDispatcher)
+            .stateIn(scope, SharingStarted.WhileSubscribed(), LivingSky.Options())
+
+    /** The pictures, while depth or Living Sky is on; null while off or loading, or live. */
     val layers: StateFlow<DepthLayers?> =
-        enabled
-            .flatMapLatest { on ->
-                if (!on) {
+        combine(enabled, skyOptions) { depth, sky -> depth to sky.enabled }
+            .distinctUntilChanged()
+            .flatMapLatest { (depth, sky) ->
+                if (!depth && !sky) {
                     cached = null
                     flowOf(null)
                 } else {
@@ -235,13 +308,77 @@ constructor(
                             userChanges().map { false },
                         )
                         .onStart { emit(false) }
-                        .map { force -> load(force) }
+                        .map { force -> load(force, depth, sky) }
                 }
             }
             .flowOn(bgDispatcher)
             // IchthysOS editor v2: the Depth face's Shape mode reads the outline from SettingsLib.
             .onEach { com.android.settingslib.ichthys.clock.SubjectOutline.set(it?.outline) }
             .stateIn(scope, SharingStarted.WhileSubscribed(), null)
+
+    /**
+     * IchthysOS Living Sky: the light and the weather of the moment, while it is on. New every
+     * minute (the time tick, a time or time zone change), on new weather, and when battery saver
+     * turns on or off. Only while the lock screen shows (WhileSubscribed).
+     */
+    val livingSky: StateFlow<SkyNow?> =
+        skyOptions
+            .flatMapLatest { o ->
+                if (!o.enabled) {
+                    flowOf(null)
+                } else {
+                    combine(
+                        clockTicks().onStart { emit(Unit) },
+                        weatherNow(),
+                        powerSave(),
+                    ) { _, now, saver ->
+                        val times = LivingSky.sunTimes(context)
+                        // KEY_DEBUG (demos, tests) pins the time of day and the weather.
+                        val sun =
+                            if (o.debugMinute >= 0) {
+                                LivingSky.sun(times, o.debugMinute.toFloat(),
+                                    java.util.Calendar.getInstance()
+                                        .get(java.util.Calendar.DAY_OF_YEAR))
+                            } else LivingSky.sunNow(times)
+                        val code = if (o.debugCode >= 0) o.debugCode else now?.code
+                        val weather =
+                            if (o.weather && code != null) LivingSky.weatherFor(code) else null
+                        SkyNow(o, sun, LivingSky.moonPhase(), weather, saver)
+                    }
+                }
+            }
+            .flowOn(bgDispatcher)
+            .stateIn(scope, SharingStarted.WhileSubscribed(), null)
+
+    private fun clockTicks(): Flow<Unit> =
+        broadcastDispatcher.broadcastFlow(
+            IntentFilter().apply {
+                addAction(Intent.ACTION_TIME_TICK)
+                addAction(Intent.ACTION_TIME_CHANGED)
+                addAction(Intent.ACTION_TIMEZONE_CHANGED)
+            }
+        )
+
+    /** The lock screen weather (LockWeather, which wants its listeners on the main thread). */
+    private fun weatherNow(): Flow<LockWeather.Now?> =
+        callbackFlow {
+                val main = Handler(Looper.getMainLooper())
+                val listener: () -> Unit = { trySend(LockWeather.current) }
+                main.post {
+                    LockWeather.addListener(context, listener)
+                    trySend(LockWeather.current)
+                }
+                awaitClose { main.post { LockWeather.removeListener(listener) } }
+            }
+            .onStart { emit(null) }
+            .distinctUntilChanged()
+
+    private fun powerSave(): Flow<Boolean> =
+        broadcastDispatcher
+            .broadcastFlow(IntentFilter(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED))
+            .onStart { emit(Unit) }
+            .map { context.getSystemService(PowerManager::class.java)?.isPowerSaveMode == true }
+            .distinctUntilChanged()
 
     private fun readMode(): Int =
         secureSettings.getIntForUser(KEY_DEPTH, 0, UserHandle.USER_CURRENT)
@@ -308,6 +445,13 @@ constructor(
                     observer,
                     UserHandle.USER_ALL,
                 )
+                // IchthysOS Living Sky: and when a sky mask is ready.
+                context.contentResolver.registerContentObserver(
+                    Uri.parse(LivingSky.SKY_URI),
+                    true,
+                    observer,
+                    UserHandle.USER_ALL,
+                )
             } catch (e: RuntimeException) {
                 // IchthysDepth is missing: the backdrop is drawn without a cut-out.
                 Log.w(TAG, "cannot watch the masks", e)
@@ -315,9 +459,9 @@ constructor(
             awaitClose { context.contentResolver.unregisterContentObserver(observer) }
         }
 
-    private fun load(force: Boolean): DepthLayers? =
+    private fun load(force: Boolean, depth: Boolean, sky: Boolean): DepthLayers? =
         try {
-            loadInternal(force)
+            loadInternal(force, depth, sky)
         } catch (e: Exception) {
             // A wallpaper or mask that can't be read leaves the plain lock screen.
             Log.w(TAG, "depth layers not loaded", e)
@@ -327,16 +471,19 @@ constructor(
             null
         }
 
-    private fun loadInternal(force: Boolean): DepthLayers? {
+    private fun loadInternal(force: Boolean, depth: Boolean, sky: Boolean): DepthLayers? {
         val user = userTracker.userId
         val wm = context.getSystemService(WallpaperManager::class.java) ?: return null
         val lockId = wm.getWallpaperIdForUser(WallpaperManager.FLAG_LOCK, user)
         val key = "L" + lockId + "S" + wm.getWallpaperIdForUser(WallpaperManager.FLAG_SYSTEM, user)
         val screen = screenSize()
-        val cacheKey = "$user/$key/${screen.x}x${screen.y}"
+        // IchthysOS Living Sky: which layers are wanted is part of what was loaded.
+        val cacheKey = "$user/$key/${screen.x}x${screen.y}/" + (if (depth) "d" else "") +
+            (if (sky) "s" else "")
         cached?.let {
             // Without a mask last time, only a mask that has turned up since needs a new load.
-            if (!force && it.key == cacheKey && (it.hadMask || !maskExists(user, key))) {
+            if (!force && it.key == cacheKey && (it.hadMask || !maskExists(user, key)) &&
+                (it.hadSky || !maskExists(user, key, SKY))) {
                 return it.layers
             }
         }
@@ -344,7 +491,7 @@ constructor(
         // stock default image instead, drawn over the live one; no depth then.
         val shown = if (lockId > 0) WallpaperManager.FLAG_LOCK else WallpaperManager.FLAG_SYSTEM
         if (wm.getWallpaperInfo(shown, user) != null) {
-            cached = Cached(cacheKey, null, hadMask = true)
+            cached = Cached(cacheKey, null, hadMask = true, hadSky = true)
             return null
         }
         // The same picture IchthysDepth's LockWallpaper.bitmap() cuts the mask out of. Not
@@ -361,8 +508,15 @@ constructor(
 
         val backdrop = Bitmap.createBitmap(screen.x, screen.y, Bitmap.Config.ARGB_8888)
         Canvas(backdrop).drawBitmap(picture, region, dst, paint)
+        // IchthysOS: how bright it is behind the clock (the Depth face's contrast); Living Sky
+        // publishes its graded value over this while it shows.
+        val behindClock = com.android.settingslib.ichthys.clock.ClockBackdrop.measure(backdrop)
+        com.android.settingslib.ichthys.clock.ClockBackdrop.publishPhoto(behindClock)
+        // The glass clock's frost: this picture, very soft.
+        com.android.settingslib.ichthys.clock.ClockBackdrop.publishFrost(backdrop, screen.x, screen.y)
 
-        val mask = openMask(user, key)
+        // With depth off, nothing of the subject is drawn (Living Sky alone needs only the sky).
+        val mask = if (depth) openMask(user, key) else null
         val cutout =
             mask?.let {
                 val out = Bitmap.createBitmap(screen.x, screen.y, Bitmap.Config.ARGB_8888)
@@ -392,15 +546,76 @@ constructor(
                 small.recycle()
                 ByteArray(px.size) { i -> (px[i] ushr 24).toByte() }
             }
-        // A picture without a clear subject (a pattern, a gradient) leaves a speck: no depth then.
+        // IchthysOS: depth is only drawn when it is right. A real subject (a person, a car, a
+        // tower) comes out of the subject finder solid and with a clear edge against what is
+        // behind it; a speck, or a grey, mushy coverage (haze, a landscape's "most salient"
+        // patch) is no subject: the clock then sat half inside a mountain.
         var keep = cutout
-        if (subject != null) {
-            val covered = subject.count { (it.toInt() and 0xff) > SUBJECT_HIT_ALPHA }
-            if (covered < subject.size * MIN_SUBJECT_SHARE) {
-                Log.i(TAG, "depth: subject covers $covered/${subject.size} cells, ignored")
+        if (keep != null && subject != null) {
+            val q = com.android.settingslib.ichthys.clock.DepthSource.isRealSubject(keep, backdrop)
+            if (!q.first) {
+                Log.i(TAG, "depth: no clear subject (${q.second}), ignored")
                 keep?.recycle()
                 keep = null
                 subject = null
+            }
+        }
+        // IchthysOS Living Sky: the sky, cut to the screen like the picture, and what it tells.
+        // Depth asks for it too when there is no clear subject: a crisp skyline keeps the clock
+        // in the sky instead (DepthSource).
+        val wantSky = sky || (depth && keep == null)
+        val skyMask = if (wantSky) openMask(user, key, SKY) else null
+        var skyBitmap: Bitmap? = null
+        var land: Bitmap? = null
+        var skyInfo: LivingSky.SkyInfo? = null
+        var skylineOutline: com.android.settingslib.ichthys.clock.SubjectOutline.Profile? = null
+        if (skyMask != null) {
+            val sx = skyMask.width.toFloat() / picture.width
+            val sy = skyMask.height.toFloat() / picture.height
+            val skyRegion =
+                Rect(
+                    (region.left * sx).roundToInt(),
+                    (region.top * sy).roundToInt(),
+                    (region.right * sx).roundToInt(),
+                    (region.bottom * sy).roundToInt(),
+                )
+            // Its own paint: the cut-out's left SRC_IN on the shared one.
+            val skyPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+            val small =
+                Bitmap.createBitmap(screen.x / 2, screen.y / 2, Bitmap.Config.ALPHA_8).also {
+                    Canvas(it).drawBitmap(skyMask, skyRegion, Rect(0, 0, it.width, it.height),
+                        skyPaint)
+                }
+            val info = LivingSky.analyse(backdrop, small)
+            skyBitmap = small
+            skyInfo = info
+            if (info.hasSky) {
+                land =
+                    Bitmap.createBitmap(screen.x, screen.y, Bitmap.Config.ALPHA_8).also {
+                        val c = Canvas(it)
+                        c.drawColor(android.graphics.Color.BLACK)
+                        c.drawBitmap(skyMask, skyRegion, dst,
+                            Paint(Paint.FILTER_BITMAP_FLAG).apply {
+                                xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT)
+                            })
+                    }
+            }
+            skyMask.recycle()
+            Log.i(TAG, "living sky for $key: sky ${(info.share * 100).roundToInt()}% of the " +
+                "upper half, horizon ${(info.horizon * 100).roundToInt()}%, reason ${info.reason}")
+            // IchthysOS: no clear subject, but a crisp skyline (a ridge, a city, a hill line):
+            // the clock stays above it (DepthClockView fits it), nothing is drawn over it.
+            if ((depth || sky) && keep == null && info.hasSky) {
+                skylineOutline = com.android.settingslib.ichthys.clock.DepthSource.skyline(
+                    small, backdrop, screen.x, screen.y)
+                Log.i(TAG, "depth: skyline ${skylineOutline != null}")
+            }
+            if (!sky) {
+                // Asked for by depth only: Living Sky is off.
+                small.recycle()
+                skyBitmap = null
+                skyInfo = null
+                land = null
             }
         }
         val night = keep?.let { night(it) }
@@ -409,12 +624,39 @@ constructor(
             subject?.let {
                 com.android.settingslib.ichthys.clock.SubjectOutline.fromCoverage(
                     it, gridW, screen.y / SUBJECT_GRID, screen.x, screen.y, SUBJECT_HIT_ALPHA)
-            }
+            } ?: skylineOutline
         Log.i(TAG, "depth layers for $key: ${screen.x}x${screen.y}, cut-out ${keep != null}")
         val layers =
-            DepthLayers(backdrop.toHardware(), keep?.toHardware(), subject, gridW, night, outline)
-        cached = Cached(cacheKey, layers, hadMask = mask != null)
+            DepthLayers(backdrop.toHardware(), keep?.toHardware(), subject, gridW, night, outline,
+                skyBitmap, land, skyInfo)
+        cached = Cached(cacheKey, layers, hadMask = !depth || mask != null,
+            hadSky = !wantSky || skyMask != null)
         return layers
+    }
+
+    /**
+     * IchthysOS: whether the cut-out may be drawn over the clock: never when it would hide too
+     * much of it ([MAX_CLOCK_COVER] of the clock's box), so the time stays readable whatever the
+     * picture. Shape mode fits its digits around the subject instead, so it always may.
+     */
+    fun cutoutKeepsClockReadable(layers: DepthLayers): Boolean {
+        if (mode == com.android.settingslib.ichthys.clock.DepthClockView.DEPTH_SHAPE) return true
+        val grid = layers.subject ?: return true
+        val box = clockBounds
+        if (box.isEmpty || layers.gridWidth <= 0) return true
+        val gw = layers.gridWidth
+        val gh = grid.size / gw
+        val x0 = (box.left / SUBJECT_GRID).toInt().coerceIn(0, gw)
+        val x1 = (box.right / SUBJECT_GRID).toInt().coerceIn(0, gw)
+        val y0 = (box.top / SUBJECT_GRID).toInt().coerceIn(0, gh)
+        val y1 = (box.bottom / SUBJECT_GRID).toInt().coerceIn(0, gh)
+        if (x1 <= x0 || y1 <= y0) return true
+        var hit = 0
+        for (y in y0 until y1) for (x in x0 until x1) {
+            if ((grid[y * gw + x].toInt() and 0xff) > SUBJECT_HIT_ALPHA) hit++
+        }
+        val cover = hit.toFloat() / ((x1 - x0) * (y1 - y0))
+        return cover <= MAX_CLOCK_COVER
     }
 
     /** See [DepthLayers.night]. */
@@ -461,11 +703,14 @@ constructor(
         }
     }
 
-    /** The mask from IchthysDepth, or null while it is being made ([maskChanges] tells when). */
-    private fun openMask(user: Int, key: String): Bitmap? =
+    /**
+     * The mask from IchthysDepth, or null while it is being made ([maskChanges] tells when).
+     * [kind]: the subject's ("mask") or, IchthysOS Living Sky, the sky's ([SKY]).
+     */
+    private fun openMask(user: Int, key: String, kind: String = MASK): Bitmap? =
         try {
             context.contentResolver
-                .openFileDescriptor(Uri.parse("content://$AUTHORITY/mask/$user/$key"), "r")
+                .openFileDescriptor(Uri.parse("content://$AUTHORITY/$kind/$user/$key"), "r")
                 ?.use { BitmapFactory.decodeFileDescriptor(it.fileDescriptor) }
         } catch (e: FileNotFoundException) {
             null
@@ -478,10 +723,10 @@ constructor(
         }
 
     /** Whether IchthysDepth has the mask ready, without decoding it. */
-    private fun maskExists(user: Int, key: String): Boolean =
+    private fun maskExists(user: Int, key: String, kind: String = MASK): Boolean =
         try {
             context.contentResolver
-                .openFileDescriptor(Uri.parse("content://$AUTHORITY/mask/$user/$key"), "r")
+                .openFileDescriptor(Uri.parse("content://$AUTHORITY/$kind/$user/$key"), "r")
                 ?.use { true } ?: false
         } catch (e: FileNotFoundException) {
             false
@@ -518,6 +763,9 @@ constructor(
 
         private const val TAG = "IchthysDepth"
         private const val AUTHORITY = "org.ichthys.depth"
+        private const val MASK = "mask"
+        /** IchthysOS Living Sky: IchthysDepth's sky masks. */
+        private const val SKY = "sky"
 
         /** How long a ripple spreads and fades. */
         const val RIPPLE_MS = 1100L
@@ -530,6 +778,8 @@ constructor(
         private const val SUBJECT_GRID = 8
         /** Below this share of the screen covered, a mask has no real subject. */
         private const val MIN_SUBJECT_SHARE = 0.01f
+        /** IchthysOS: the most of the clock's box a cut-out may hide (overlap / X-ray). */
+        private const val MAX_CLOCK_COVER = 0.4f
         /** Coverage above which a touch counts as on the subject. */
         private const val SUBJECT_HIT_ALPHA = 128
 

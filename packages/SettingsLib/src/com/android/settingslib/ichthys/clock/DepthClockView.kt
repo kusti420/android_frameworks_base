@@ -29,6 +29,7 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.BitmapShader
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.os.BatteryManager
@@ -67,7 +68,9 @@ import kotlin.math.min
  *   it, [SHAPE_FOLLOW] gives each digit column its own height from the outline under it. Changes
  *   ease in; nothing is computed per frame otherwise.
  * - [KEY_FONT] picks the digits' typeface, [KEY_DATE_POS] / [KEY_DATE_ALIGN] put the date (or
- *   status) line above or below the digits, left, centred or right.
+ *   status) line above or below the digits, left, centred or right. [FONT_SQUARE] has no
+ *   typeface: its digits are drawn ([SquareDigits]) and measured through [pairWidth] /
+ *   [capHeight] / [rowStep], so everything built on the glyph paths works the same for it.
  */
 class DepthClockView
 @JvmOverloads
@@ -104,6 +107,22 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
     private val targetK = floatArrayOf(1f, 1f)
     private val fromK = floatArrayOf(1f, 1f)
     private val shownK = floatArrayOf(1f, 1f)
+    /** IchthysOS: the depth fit's sideways move of the whole clock (face px), eased like [shownK]. */
+    private var lastNoFit: String? = null
+    private var targetShift = 0f
+    private var fromShift = 0f
+    private var shownShift = 0f
+    /**
+     * IchthysOS: One UI's layout beside the subject ([sidePlan]): each glyph's own height on top
+     * of the even factor (hours left/right, then minutes; 1: even), target / from / shown, and
+     * the side it took (-1 left, 1 right, 0 none), which the date line aligns to.
+     */
+    private val targetV = floatArrayOf(1f, 1f, 1f, 1f)
+    private val fromV = floatArrayOf(1f, 1f, 1f, 1f)
+    private val shownV = floatArrayOf(1f, 1f, 1f, 1f)
+    private val shapedForV = FloatArray(4) { Float.NaN }
+    private var sideLayout = 0
+    private val shapedBounds = RectF()
     private var easeStart = 0L
     private var shapeShown = false
     /** Drawn at least once: from then on shape changes ease in (the first draw is placed at once). */
@@ -111,6 +130,17 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
     /** Extra height the stretched digits need below the natural face, measured in. */
     private var stretchExtra = 0f
     private val shapeMatrix = android.graphics.Matrix()
+    /**
+     * IchthysOS: what [glyphs] hold (digit and advance box left, per glyph), so the Square digits
+     * can be drawn again at a Shape height instead of being scaled ([easedGlyphs]); [glyphVersion]
+     * counts rebuilds, and [shaped] was last made from [shapedFor] at [shapedVersion].
+     */
+    private val glyphDigit = IntArray(4)
+    private val glyphLeft = FloatArray(4)
+    private var glyphVersion = 0
+    private val shapedFor = floatArrayOf(Float.NaN, Float.NaN)
+    private var shapedVersion = -1
+    private val stretchedGlyph = Path()
     private val outlineListener: () -> Unit = { post { shapeDirty = true; invalidate() } }
 
     /**
@@ -242,6 +272,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
             Context.RECEIVER_NOT_EXPORTED)
         readFill()
         TouchHeat.addListener(heatListener)
+        ClockBackdrop.addListener(heatListener)
         updateTicking()
     }
 
@@ -250,6 +281,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         DepthFaceAnchor.clear(this)
         stats.stop()
         TouchHeat.removeListener(heatListener)
+        ClockBackdrop.removeListener(heatListener)
         SubjectOutline.removeListener(outlineListener)
         LockWeather.removeListener(weatherListener)
         context.contentResolver.unregisterContentObserver(fillObserver)
@@ -373,6 +405,24 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
     var onWeatherPlaced: ((RectF?) -> Unit)? = null
     private var reportedWeather: RectF? = null
 
+    /**
+     * IchthysOS: false while the depth fit has stepped back (the clock couldn't sit above the
+     * subject without shrinking too far): the subject must not be drawn over the clock then.
+     * SystemUI hears it through [DepthFaceAnchor], a preview through [onDepthApplies].
+     */
+    var depthApplies = true
+        private set
+    var onDepthApplies: ((Boolean) -> Unit)? = null
+
+    private fun setDepthApplies(applies: Boolean) {
+        if (depthApplies == applies) return
+        depthApplies = applies
+        if (context.packageName == "com.android.systemui") {
+            DepthFaceAnchor.publishDepthApplies(this, applies)
+        }
+        onDepthApplies?.let { cb -> post { cb(applies) } }
+    }
+
     /** For previews: the outline to fit to, instead of SystemUI's [SubjectOutline.current]. */
     var previewOutline: SubjectOutline.Profile? = null
         set(v) {
@@ -431,10 +481,32 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
             out.setEmpty()
             return
         }
-        digitPaint.getTextBounds("00", 0, 2, bounds)
-        val half = digitPaint.measureText("00") / 2f
+        val half = pairWidth(digitPaint) / 2f
         out.set(width / 2f - half, digitTop, width / 2f + half, line2Base + digitSize * 0.02f)
     }
+
+    /** IchthysOS: true for [FONT_SQUARE], whose digits are [SquareDigits] rather than text. */
+    private val squareFont: Boolean
+        get() = font == FONT_SQUARE
+
+    /** "00"'s width at [paint]'s text size, as the digits are laid out. */
+    private fun pairWidth(paint: Paint): Float =
+        if (squareFont) SquareDigits.advance(paint.textSize) * 2f else paint.measureText("00")
+
+    /** The digits' ink height ("00"'s bounds) at [paint]'s text size. */
+    private fun capHeight(paint: Paint): Float {
+        if (squareFont) return SquareDigits.capHeight(paint.textSize)
+        paint.getTextBounds("00", 0, 2, bounds)
+        return bounds.height().toFloat()
+    }
+
+    /**
+     * From the hours' baseline to the minutes': a cap height and a hair, so the lines sit tight
+     * like one block. IchthysOS: Square keeps the same gap between its rows as between its
+     * digits, an even 2 x 2 block.
+     */
+    private fun rowStep(cap: Float, size: Float): Float =
+        if (squareFont) cap + size * SquareDigits.GAP else cap * 1.04f
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         // As wide as the host allows: the digits are sized to the width.
@@ -446,10 +518,9 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         // Measured from the real glyphs, as layoutFace() places them, plus a little for the
         // outline and overshoot.
         measurePaint.textSize = size
-        measurePaint.getTextBounds("00", 0, 2, bounds)
-        val cap = bounds.height().toFloat()
+        val cap = capHeight(measurePaint)
         // Plus a line under the digits for the night's touch count.
-        val h = (statusHeight() + size * 0.04f + cap * 2.04f + size * 0.03f + dp(18f) +
+        val h = (statusHeight() + size * 0.04f + cap + rowStep(cap, size) + size * 0.03f + dp(18f) +
             // IchthysOS: room for digits stretched taller in the Shape mode.
             // (Also while easing back out of Shape: it goes once the digits are back.)
             stretchExtra).toInt()
@@ -466,7 +537,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
     /** The text size at which "00" fills [WIDTH_SHARE] of [w], kept to a share of the screen. */
     private fun digitSizeFor(w: Int): Float {
         measurePaint.textSize = 100f
-        val textW = max(measurePaint.measureText("00"), 1f)
+        val textW = max(pairWidth(measurePaint), 1f)
         val byWidth = w * WIDTH_SHARE / textW * 100f
         val byScreen = resources.displayMetrics.heightPixels * MAX_SCREEN_SHARE / LINE_STEP
         return min(byWidth, byScreen)
@@ -477,14 +548,13 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         statusH = statusHeight()
         digitSize = digitSizeFor(w)
         digitPaint.textSize = digitSize
-        digitPaint.getTextBounds("00", 0, 2, bounds)
-        // Baselines a cap height apart, minus a little, so the lines sit tight like one block.
-        val cap = bounds.height().toFloat()
+        // Baselines a cap height apart, plus a little, so the lines sit tight like one block.
+        val cap = capHeight(digitPaint)
         capH = cap
         // IchthysOS editor v2: the date / status line above the digits, or below them.
         digitTop = if (datePos == DATE_BELOW) dp(4f) else statusH
         line1Base = digitTop + cap + digitSize * 0.04f
-        line2Base = line1Base + cap * 1.04f
+        line2Base = line1Base + rowStep(cap, digitSize)
         statusBase =
             if (datePos == DATE_BELOW) line2Base + digitSize * 0.03f + statusH - dp(10f)
             else statusH - dp(10f)
@@ -515,6 +585,224 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         return shader
     }
 
+    private val frostPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val frostMatrix = android.graphics.Matrix()
+    private var frostShader: BitmapShader? = null
+    private var frostFor: android.graphics.Bitmap? = null
+    /** The depth fit's sideways move this frame (the canvas is translated by it). */
+    private var drawShift = 0f
+
+    /**
+     * IchthysOS: the frost ([ClockBackdrop.frost]) through [path], mapped from the screen to
+     * this face (its place, scale and the fit's move); false when there is none to draw.
+     */
+    private fun drawFrost(canvas: Canvas, path: Path, alpha: Float): Boolean {
+        val frost = ClockBackdrop.frost ?: return false
+        val place = placement() ?: return false
+        if (place[2] <= 0f) return false
+        if (frost !== frostFor) {
+            frostShader = BitmapShader(frost, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply {
+                filterMode = BitmapShader.FILTER_MODE_LINEAR
+            }
+            frostFor = frost
+        }
+        val shader = frostShader ?: return false
+        frostMatrix.setScale(ClockBackdrop.frostW.toFloat() / frost.width,
+            ClockBackdrop.frostH.toFloat() / frost.height)
+        frostMatrix.postTranslate(-place[0], -place[1])
+        frostMatrix.postScale(1f / place[2], 1f / place[2])
+        frostMatrix.postTranslate(-drawShift, 0f)
+        shader.setLocalMatrix(frostMatrix)
+        // Lifted like light through frosted glass, and dimmed with Living Sky's grade.
+        val m = (ClockBackdrop.frostDim() * 1.12f).coerceIn(0.06f, 1.7f)
+        val c = (255 * m.coerceAtMost(1f)).toInt()
+        val add = (255 * ((m - 1f).coerceAtLeast(0f) * 0.35f + 0.06f)).toInt().coerceIn(0, 120)
+        frostPaint.colorFilter = android.graphics.LightingColorFilter(Color.rgb(c, c, c),
+            Color.rgb(add, add, add))
+        frostPaint.shader = shader
+        frostPaint.alpha = (255 * alpha).toInt()
+        canvas.drawPath(path, frostPaint)
+        frostPaint.shader = null
+        return true
+    }
+
+    private val clearGlass by lazy { android.graphics.RuntimeShader(CLEAR_GLASS) }
+    private val clearPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private var glassMask: Bitmap? = null
+    private var glassMaskShader: BitmapShader? = null
+    private val glassMaskKey = RectF()
+    private var glassMaskFor = -1L
+    private val maskPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+    private val pathBounds = RectF()
+    private val glassMap = android.graphics.Matrix()
+    private val glassGlobal = android.graphics.Matrix()
+    private val glassValues = FloatArray(9)
+    private val glassColumns = FloatArray(9)
+
+    /**
+     * IchthysOS: clear glass (OriginOS / Liquid Glass): the picture behind ([ClockBackdrop.frost],
+     * a quarter of the screen: softened a little, not frosted) inside the digits, a touch lifted
+     * and fuller, pulled inwards near the edges like a lens; the shape comes from the light on the
+     * rim (bright toward the top left, a dark rim away from it) and a soft shadow, not from a tint,
+     * so the scene always shows through and the colour is always the picture's. False when there
+     * is no picture.
+     */
+    private fun drawClearGlass(canvas: Canvas, path: Path, alpha: Float): Boolean {
+        val frost = ClockBackdrop.frost ?: return false
+        val place = placement() ?: return false
+        if (place[2] <= 0f || width <= 0 || height <= 0) return false
+        if (frost !== frostFor) {
+            frostShader = BitmapShader(frost, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply {
+                filterMode = BitmapShader.FILTER_MODE_LINEAR
+            }
+            frostFor = frost
+        }
+        val picture = frostShader ?: return false
+        val mask = glassMask(path) ?: return false
+        // Face px (the fit's move included) -> the screen, the face's turn included (clear glass
+        // shows the scene: it must sit exactly over it) -> the frost's px.
+        val toFrost = frost.width.toFloat() / max(1, ClockBackdrop.frostW)
+        val map = glassMap
+        map.setTranslate(drawShift, 0f)
+        val pp = previewPlacement
+        if (pp != null) {
+            map.postScale(pp[2], pp[2])
+            map.postTranslate(pp[0], pp[1])
+            if (pp.size >= 6 && pp[3] != 0f) map.postRotate(pp[3], pp[4], pp[5])
+        } else {
+            val global = glassGlobal
+            global.reset()
+            transformMatrixToGlobal(global)
+            map.postConcat(global)
+        }
+        map.postScale(toFrost, toFrost)
+        map.getValues(glassValues)
+        // Column-major for the shader.
+        for (r in 0 until 3) for (c in 0 until 3) glassColumns[c * 3 + r] = glassValues[r * 3 + c]
+        val m = (ClockBackdrop.frostDim() * 1.06f).coerceIn(0.06f, 1.7f)
+        val sh = clearGlass
+        sh.setInputShader("picture", picture)
+        sh.setInputShader("mask", mask)
+        sh.setFloatUniform("toFrost", glassColumns)
+        sh.setFloatUniform("maskMul", MASK_SCALE)
+        sh.setFloatUniform("bend", dp(9f))
+        sh.setFloatUniform("dim", m.coerceAtMost(1f))
+        sh.setFloatUniform("add", (m - 1f).coerceAtLeast(0f) * 0.35f)
+        sh.setFloatUniform("lift", (0.16f - ClockBackdrop.luma * 0.12f).coerceIn(0.05f, 0.16f))
+        sh.setFloatUniform("alpha", alpha)
+        // Over a dark picture the glass takes the picture's accent, pale at the top of the
+        // digits to full at their bottom.
+        val acc = ClockBackdrop.accent
+        val dark = if (acc == 0) 0f else ((0.12f - ClockBackdrop.luma) / 0.08f).coerceIn(0f, 1f)
+        sh.setFloatUniform("tint", Color.red(acc) / 255f, Color.green(acc) / 255f,
+            Color.blue(acc) / 255f)
+        sh.setFloatUniform("tintAmt", dark * 0.85f)
+        path.computeBounds(pathBounds, true)
+        sh.setFloatUniform("tintSpan", pathBounds.top, max(pathBounds.bottom, pathBounds.top + 1f))
+        // A soft shadow under the glass, lifting it off the picture.
+        shadowPaint.color = Color.argb((60 * alpha).toInt(), 0, 8, 16)
+        shadowPaint.maskFilter = shadowBlur
+        canvas.save()
+        canvas.translate(0f, dp(4f))
+        canvas.drawPath(path, shadowPaint)
+        canvas.restore()
+        clearPaint.shader = sh
+        canvas.drawPath(path, clearPaint)
+        clearPaint.shader = null
+        return true
+    }
+
+    private val shadowBlur by lazy {
+        android.graphics.BlurMaskFilter(dp(9f), android.graphics.BlurMaskFilter.Blur.NORMAL)
+    }
+
+    /**
+     * The digits, blurred a little ([MASK_SCALE] of the face): the glass shader reads the edges'
+     * direction and nearness from it. Made again only when the digits changed.
+     */
+    private fun glassMask(path: Path): BitmapShader? {
+        path.computeBounds(pathBounds, true)
+        val key = shownTime.toLong() * 31 + glyphVersion
+        if (pathBounds == glassMaskKey && key == glassMaskFor) glassMaskShader?.let { return it }
+        val w = max(1, (width * MASK_SCALE).toInt() + 1)
+        val h = max(1, (height * MASK_SCALE).toInt() + 1)
+        var bmp = glassMask
+        if (bmp == null || bmp.width != w || bmp.height != h) {
+            bmp?.recycle()
+            bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            glassMask = bmp
+        }
+        bmp.eraseColor(Color.TRANSPARENT)
+        val c = Canvas(bmp)
+        c.scale(MASK_SCALE, MASK_SCALE)
+        maskPaint.maskFilter = android.graphics.BlurMaskFilter(dp(4f),
+            android.graphics.BlurMaskFilter.Blur.NORMAL)
+        c.drawPath(path, maskPaint)
+        glassMaskKey.set(pathBounds)
+        glassMaskFor = key
+        glassMaskShader = BitmapShader(bmp, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply {
+            filterMode = BitmapShader.FILTER_MODE_LINEAR
+        }
+        return glassMaskShader
+    }
+
+    private var glassVeil: Shader? = null
+    private var glassVeilKey = -1L
+    private var glassEdge: Shader? = null
+    private var glassEdgeKey = -1L
+
+    /**
+     * IchthysOS: the glass's veil, top to bottom of the digits: a pale white (a breath of the
+     * clock colour in it) that thins out downwards; thin over the frost, dense without it.
+     */
+    private fun glassShader(bright: Float): Shader {
+        // Over a dark picture frosted glass glows: the veil thickens (linear luma behind it).
+        val dark = ((0.2f - ClockBackdrop.luma) / 0.18f).coerceIn(0f, 1f)
+        val key = (digitTop.toLong() shl 40) or (line2Base.toLong() shl 16) or
+            ((bright * 20).toLong() shl 8) or ((dark * 10).toLong() shl 4) or
+            (primary.toLong() and 0xf)
+        glassVeil?.let { if (key == glassVeilKey) return it }
+        val tint = blendColours(Color.WHITE, primary, 0.16f)
+        // Over the frost (bright < 0): a thin white veil, the picture does the rest. Without it:
+        // a denser frosted white that holds even over a bright picture.
+        val f = bright < 0f
+        val top = withAlpha(tint, (if (f) 0.46f else 0.9f) + dark * 0.28f)
+        val mid = withAlpha(tint, (if (f) 0.36f else 0.74f) + dark * 0.34f)
+        val bottom = withAlpha(tint, (if (f) 0.28f else 0.6f) + dark * 0.4f)
+        // Per row: each row of digits is its own pane, so the gradient repeats with the row
+        // pitch instead of running over both (the minutes came out a darker grey).
+        val pitch = max(1f, line2Base - line1Base)
+        val shader = LinearGradient(0f, digitTop, 0f, digitTop + pitch,
+            intArrayOf(top, mid, bottom), floatArrayOf(0f, 0.3f, 1f), Shader.TileMode.REPEAT)
+        glassVeil = shader
+        glassVeilKey = key
+        return shader
+    }
+
+    /** The light edge: bright along the top of each row, gone by its bottom. */
+    private fun glassEdgeShader(): Shader {
+        val key = (digitTop.toLong() shl 32) or line2Base.toLong()
+        glassEdge?.let { if (key == glassEdgeKey) return it }
+        // Repeats with the row pitch: bright at the top of each row only.
+        val pitch = max(1f, line2Base - line1Base)
+        val shader = LinearGradient(0f, digitTop, 0f, digitTop + pitch,
+            intArrayOf(Color.argb(200, 255, 255, 255), Color.argb(60, 255, 255, 255),
+                Color.argb(18, 255, 255, 255)),
+            floatArrayOf(0f, 0.3f, 1f), Shader.TileMode.REPEAT)
+        glassEdge = shader
+        glassEdgeKey = key
+        return shader
+    }
+
+    /** [a] to [b] by [t], channel by channel, alpha included. */
+    private fun blendColours(a: Int, b: Int, t: Float): Int {
+        val u = t.coerceIn(0f, 1f)
+        fun ch(x: Int, y: Int) = (x + (y - x) * u).toInt()
+        return Color.argb(ch(Color.alpha(a), Color.alpha(b)), ch(Color.red(a), Color.red(b)),
+            ch(Color.green(a), Color.green(b)), ch(Color.blue(a), Color.blue(b)))
+    }
+
     /** The digits as one path; rebuilt when the minute changes. */
     private fun digitsPath(): Path {
         // IchthysOS polish: compared as a number, so no strings are made on the frames between.
@@ -524,6 +812,14 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
             val hh = String.format(Locale.US, "%02d", displayHour())
             val mm = String.format(Locale.US, "%02d", minute())
             digits.reset()
+            if (squareFont) {
+                // IchthysOS: drawn, not set; centred like the text (its advances, side bearings
+                // included).
+                val left = width / 2f - pairWidth(digitPaint) / 2f
+                SquareDigits.textPath(hh, 0, 2, left, line1Base, digitSize, digits)
+                SquareDigits.textPath(mm, 0, 2, left, line2Base, digitSize, digits)
+                return digits
+            }
             val p = Path()
             digitPaint.getTextPath(hh, 0, 2, width / 2f, line1Base, p)
             digits.addPath(p)
@@ -535,17 +831,32 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
     }
 
     /**
-     * IchthysOS "Shape" ([DEPTH_SHAPE]): the digits stretched or squeezed in height only, as rigid
-     * glyphs, so the clock fills the room above the subject's outline (16 dp clear of it, and of
-     * the weather line under the clock when that is shown: [underLineH]). The factors are worked
-     * out again only when the time, the outline, the style or this face's place on the screen
-     * changes, then eased in (450 ms; at once while dozing or on the first draw). Out of Shape
-     * (another depth mode, a turned clock, no subject) the digits ease back to their height.
+     * IchthysOS depth fit, as One UI does it: the digits are never distorted. With depth on and a
+     * subject (or, in any mode, a skyline: DepthSource), the whole clock is scaled evenly so its
+     * bottom stays above the outline (16 dp clear, and the weather line under the clock:
+     * [underLineH]); a person may hide its lowest [AdaptiveShape.TUCK] (the "behind the head"
+     * look), a skyline nothing. When it would have to shrink below [FIT_MIN_K] the subject is
+     * where the time belongs: depth steps back ([depthApplies] false: no cut-out over the clock)
+     * and the clock stands whole in front. The factor is worked out again only when the time, the
+     * outline, the style or this face's place on the screen changes, then eased in (450 ms; at
+     * once while dozing or on the first draw).
      */
     private fun shapedPath(natural: Path): Path {
         val profile = previewOutline ?: SubjectOutline.current
-        val place = if (depthMode == DEPTH_SHAPE && profile != null) placement() else null
+        val skyline = profile?.skyline == true
+        val fit = depthMode != DEPTH_OFF || skyline
+        val place = if (fit && profile != null) placement() else null
         if (place == null || place[2] <= 0f || profile == null) {
+            if (context.packageName == "com.android.systemui") {
+                val why = "mode $depthMode profile ${profile != null} skyline $skyline " +
+                    "place ${place?.let { "${it[0]},${it[1]} x${it[2]}" }}"
+                if (why != lastNoFit) {
+                    lastNoFit = why
+                    android.util.Log.i("IchthysDepthFit", "no fit: $why")
+                }
+            }
+            setDepthApplies(true)
+            sideLayout = 0
             if (!shapeShown) return natural
             retarget(1f, 1f)
             if (easeStart == 0L) {
@@ -586,16 +897,71 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
                     MAX_SCREEN_BOTTOM) * ph
                 return (y - gap - top) / scale - reserve
             }
-            val l = limit(columns[0], columns[1])
-            val r = limit(columns[2], columns[3])
-            if (shapeStyle == SHAPE_FOLLOW) {
-                val k = AdaptiveShape.follow(digitTop, blockH, floatArrayOf(l, r))
-                retarget(k[0], k[1])
-            } else {
-                val k = AdaptiveShape.stretch(digitTop, blockH, min(l, r), shapeStyle == SHAPE_TUCK)
-                retarget(k, k)
+            // The largest even size that sits above the outline, at the clock's own place or
+            // moved sideways as little as it takes (One UI moves the clock beside the subject).
+            val tuck = if (skyline) 0f else AdaptiveShape.TUCK * blockH
+            val midX = (columns[0] + columns[3]) / 2f
+            val half = (columns[3] - columns[0]) / 2f
+            val margin = dp(4f)
+            fun evenShift(k: Float): Float {
+                val hw = half * k
+                val minS = min(0f, margin + hw - midX)
+                val maxS = max(0f, width - margin - hw - midX)
+                for (s in FIT_SHIFTS) {
+                    val shift = if (s < 0f) -s * minS else s * maxS
+                    if (digitTop + blockH * k <= limit(midX + shift - hw, midX + shift + hw) + tuck) {
+                        return shift
+                    }
+                }
+                return Float.NaN
             }
-            val extra = max(0f, max(targetK[0], targetK[1]) - 1f) * blockH
+            // 1. Full size, at its own place or moved beside the subject.
+            // 2. A person or a thing in the way (not a skyline): One UI's layout beside it, each
+            //    minute digit as tall as the room in its own column ([sidePlan]).
+            // 3. Smaller, evenly, down to [FIT_MIN_K]; else depth steps back.
+            var bestK = Float.NaN
+            var bestShift = 0f
+            var v: FloatArray? = null
+            var side = 0
+            val full = if (blockH > 0f) evenShift(1f) else Float.NaN
+            if (!full.isNaN()) {
+                bestK = 1f
+                bestShift = full
+            } else {
+                val plan = if (skyline || blockH <= 0f) null else sidePlan(midX, half, left, scale, pw, ::limit)
+                if (plan != null) {
+                    bestK = plan[0]
+                    bestShift = plan[1]
+                    side = plan[2].toInt()
+                    v = floatArrayOf(plan[3], plan[4], plan[5], plan[6])
+                } else {
+                    var k = 1f - 0.05f
+                    while (blockH > 0f && k >= FIT_MIN_K - 0.001f) {
+                        val s = evenShift(k)
+                        if (!s.isNaN()) {
+                            bestK = k
+                            bestShift = s
+                            break
+                        }
+                        k -= 0.05f
+                    }
+                }
+            }
+            if (context.packageName == "com.android.systemui") {
+                android.util.Log.i("IchthysDepthFit", "fit: k ${bestK} shift ${bestShift} " +
+                    "side $side v ${v?.joinToString()} " +
+                    "block ${digitTop}+${blockH} room ${limit(midX - half, midX + half) + tuck} " +
+                    "skyline $skyline mode $depthMode place ${left},${top} x${scale}")
+            }
+            if (bestK.isNaN()) {
+                setDepthApplies(false)
+                retarget(1f, 1f, 0f)
+            } else {
+                setDepthApplies(true)
+                retarget(bestK, bestK, bestShift, v)
+            }
+            sideLayout = if (bestK.isNaN()) 0 else side
+            val extra = max(0f, targetBottom() - (line2Base + digitSize * 0.02f))
             // Grows at once (the taller digits need the room now), shrinks once they have eased.
             if (extra > stretchExtra + 1f) {
                 stretchExtra = extra
@@ -603,7 +969,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
             }
         }
         if (easeStart == 0L && stretchExtra > 0f) {
-            val extra = max(0f, max(targetK[0], targetK[1]) - 1f) * blockH
+            val extra = max(0f, targetBottom() - (line2Base + digitSize * 0.02f))
             if (kotlin.math.abs(extra - stretchExtra) > 1f) {
                 stretchExtra = extra
                 requestLayout()
@@ -613,23 +979,114 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
     }
 
     /** New target factors: eased from where the digits are now, or at once before the first draw. */
-    private fun retarget(k0: Float, k1: Float) {
-        if (shapeShown && k0 == targetK[0] && k1 == targetK[1]) return
+    private fun retarget(k0: Float, k1: Float, shift: Float = 0f, v: FloatArray? = null) {
+        val sameV = (0 until 4).all { targetV[it] == (v?.get(it) ?: 1f) }
+        if (shapeShown && k0 == targetK[0] && k1 == targetK[1] && shift == targetShift && sameV) return
         targetK[0] = k0
         targetK[1] = k1
+        targetShift = shift
+        for (i in 0 until 4) targetV[i] = v?.get(i) ?: 1f
         if (!hasDrawn || dozingNow) {
             shownK[0] = k0
             shownK[1] = k1
+            shownShift = shift
+            targetV.copyInto(shownV)
             easeStart = 0L
         } else {
             fromK[0] = shownK[0]
             fromK[1] = shownK[1]
+            fromShift = shownShift
+            shownV.copyInto(fromV)
             easeStart = android.os.SystemClock.uptimeMillis()
         }
         shapeShown = true
     }
 
-    /** The glyphs at the eased factors (one more frame asked for while easing). */
+    /** The turn the face is drawn at on the screen (its own and its hosts'; the preview's). */
+    private fun turnDegrees(): Float {
+        previewPlacement?.let { return if (it.size >= 6) it[3] else 0f }
+        var r = 0f
+        var v: android.view.View? = this
+        while (v != null) {
+            r += v.rotation
+            v = v.parent as? android.view.View
+        }
+        return r
+    }
+
+    /** The minutes' ink top in the natural face (the hours' and the gap above it unscaled). */
+    private fun minuteTop(): Float = line2Base - capH
+
+    /**
+     * Where the minutes' top goes with the hours at even factor [k] and height factor [vh]: the
+     * hours keep their place at the face's top, the gap between the rows scales evenly.
+     */
+    private fun minuteTopAt(k: Float, vh: Float): Float =
+        digitTop + (line1Base - digitTop) * k * vh + (minuteTop() - line1Base) * k
+
+    /** The target layout's lowest point (face px, unshifted). */
+    private fun targetBottom(): Float {
+        val k = max(targetK[0], targetK[1])
+        val vh = max(targetV[0], targetV[1])
+        val vm = max(targetV[2], targetV[3])
+        return minuteTopAt(k, vh) + (capH * vm + digitSize * 0.02f) * k
+    }
+
+    /**
+     * IchthysOS: One UI's depth clock beside the subject (the owner's reference: their portrait
+     * on a Samsung). The clock goes to the side with more room, a little smaller; every digit
+     * keeps its width and only its height changes: the hours an even pair, each minute digit as
+     * tall as the room above the subject in its own column ([SIDE_MIN_V] .. [SIDE_MAX_V] of its
+     * height), so one over a raised hand stays short and one in the free space reaches down
+     * beside it. [limit] is the lowest y (this face) a column x0..x1 may reach. Returns
+     * k, shift, side, then the four height factors; null when neither side has room.
+     */
+    private fun sidePlan(midX: Float, half: Float, left: Float, scale: Float, screenW: Float,
+            limit: (Float, Float) -> Float): FloatArray? {
+        // Kept off the screen's edge (not the face's, which may be offset or wider): a margin,
+        // and more for a turned clock, whose corners and date swing out (face px).
+        val turn = Math.toRadians(turnDegrees().toDouble())
+        val turnOut = kotlin.math.abs(kotlin.math.sin(turn)).toFloat()
+        var k = SIDE_K
+        while (k >= SIDE_MIN_K - 0.001f) {
+            val hw = half * k
+            val margin = dp(SIDE_MARGIN_DP) / scale +
+                turnOut * (line2Base + digitSize * 0.02f - digitTop) * k * 0.6f
+            var best: FloatArray? = null
+            for (side in intArrayOf(1, -1)) {
+                // Where the clock's outer edge goes on the screen, as a move of the face's middle;
+                // and never past this face's own edges (what is drawn outside them is clipped:
+                // the right column went missing), with room for the glass's shadow.
+                val inside = dp(14f)
+                val shift =
+                    if (side > 0) min((screenW - left) / scale - margin, width - inside) - hw - midX
+                    else max(-left / scale + margin, inside) + hw - midX
+                if (side > 0 && shift <= 0f || side < 0 && shift >= 0f) continue
+                fun x(c: Float) = midX + (c - midX) * k + shift
+                // The hours whole above the subject.
+                val hoursBottom = digitTop + (line1Base + digitSize * 0.02f - digitTop) * k
+                if (hoursBottom > limit(x(columns[0]), x(columns[3]))) continue
+                val top = minuteTopAt(k, 1f)
+                val capK = capH * k
+                val vl = (limit(x(columns[0]), x(columns[1])) - top - digitSize * 0.02f * k) / capK
+                val vr = (limit(x(columns[2]), x(columns[3])) - top - digitSize * 0.02f * k) / capK
+                if (vl < SIDE_MIN_V || vr < SIDE_MIN_V) continue
+                val plan = floatArrayOf(k, shift, side.toFloat(), 1f, 1f,
+                    min(vl, SIDE_MAX_V), min(vr, SIDE_MAX_V))
+                if (best == null || plan[5] + plan[6] > best[5] + best[6]) best = plan
+            }
+            if (best != null) return best
+            k -= 0.05f
+        }
+        return null
+    }
+
+    /**
+     * The glyphs at the eased factors (one more frame asked for while easing). IchthysOS: the
+     * Square digits are drawn again at their new height, their strokes keeping their weight
+     * (only the verticals grow), where a font's glyphs are scaled. Made again only when the
+     * factors or the glyphs changed.
+     */
     private fun easedGlyphs(): Path {
         buildGlyphs()
         if (easeStart != 0L) {
@@ -637,12 +1094,41 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
             val e = EASE.getInterpolation(t)
             shownK[0] = fromK[0] + (targetK[0] - fromK[0]) * e
             shownK[1] = fromK[1] + (targetK[1] - fromK[1]) * e
+            shownShift = fromShift + (targetShift - fromShift) * e
+            for (i in 0 until 4) shownV[i] = fromV[i] + (targetV[i] - fromV[i]) * e
             if (t >= 1f) easeStart = 0L else postInvalidateOnAnimation()
         }
+        if (shownK[0] == shapedFor[0] && shownK[1] == shapedFor[1] &&
+            (0 until 4).all { shownV[it] == shapedForV[it] } &&
+            shapedVersion == glyphVersion) return shaped
+        shapedFor[0] = shownK[0]
+        shapedFor[1] = shownK[1]
+        shownV.copyInto(shapedForV)
+        shapedVersion = glyphVersion
         shaped.reset()
+        // IchthysOS: evenly, about the top middle of the digit block; beside the subject each
+        // glyph's height on top ([sidePlan]), its width kept. The minutes follow the hours down.
+        val midX = (columns[0] + columns[3]) / 2f
+        val mTop = minuteTop()
+        val vh = max(shownV[0], shownV[1])
         for (i in 0 until 4) {
-            shapeMatrix.setScale(1f, shownK[i % 2], 0f, digitTop)
-            shaped.addPath(glyphs[i], shapeMatrix)
+            val k = shownK[i % 2]
+            val v = shownV[i]
+            val minutes = i >= 2
+            val anchor = if (minutes) mTop else digitTop
+            var glyph = glyphs[i]
+            var sy = k * v
+            if (squareFont && v != 1f) {
+                // Drawn again at the new height, the strokes keeping their weight.
+                val top = if (minutes) mTop else line1Base - capH
+                SquareDigits.glyph(glyphDigit[i], glyphLeft[i], top, top + capH * v, digitSize,
+                    stretchedGlyph)
+                glyph = stretchedGlyph
+                sy = k
+            }
+            shapeMatrix.setScale(k, sy, midX, anchor)
+            if (minutes) shapeMatrix.postTranslate(0f, minuteTopAt(k, vh) - mTop)
+            shaped.addPath(glyph, shapeMatrix)
         }
         return shaped
     }
@@ -670,15 +1156,29 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         var x1Left = 0f
         var x0Right = Float.MAX_VALUE
         var x1Right = 0f
+        glyphVersion++
         for ((row, pair) in listOf(hh to line1Base, mm to line2Base).withIndex()) {
             val text = pair.first
-            val w = glyphPaint.measureText(text)
-            val a = glyphPaint.measureText(text, 0, 1)
+            val w = if (squareFont) pairWidth(glyphPaint) else glyphPaint.measureText(text)
+            val a =
+                if (squareFont) SquareDigits.advance(digitSize) else glyphPaint.measureText(text, 0, 1)
             val x = width / 2f - w / 2f
             glyphs[row * 2].reset()
             glyphs[row * 2 + 1].reset()
-            glyphPaint.getTextPath(text, 0, 1, x, pair.second, glyphs[row * 2])
-            glyphPaint.getTextPath(text, 1, 2, x + a, pair.second, glyphs[row * 2 + 1])
+            glyphDigit[row * 2] = text[0] - '0'
+            glyphDigit[row * 2 + 1] = text[1] - '0'
+            glyphLeft[row * 2] = x
+            glyphLeft[row * 2 + 1] = x + a
+            if (squareFont) {
+                // IchthysOS: SquareDigits.glyph sets the path itself.
+                SquareDigits.glyph(glyphDigit[row * 2], x, pair.second - capH, pair.second,
+                    digitSize, glyphs[row * 2])
+                SquareDigits.glyph(glyphDigit[row * 2 + 1], x + a, pair.second - capH,
+                    pair.second, digitSize, glyphs[row * 2 + 1])
+            } else {
+                glyphPaint.getTextPath(text, 0, 1, x, pair.second, glyphs[row * 2])
+                glyphPaint.getTextPath(text, 1, 2, x + a, pair.second, glyphs[row * 2 + 1])
+            }
             x0Left = min(x0Left, x)
             x1Left = max(x1Left, x + a)
             x0Right = min(x0Right, x + a)
@@ -753,7 +1253,11 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
      */
     private fun updateAnchors(path: Path) {
         val k = if (path === shaped) max(shownK[0], shownK[1]) else 1f
-        val digitsBottom = digitTop + (line2Base + digitSize * 0.02f - digitTop) * k
+        // IchthysOS: the shaped digits as drawn (beside the subject the columns differ in height).
+        if (path === shaped) shaped.computeBounds(shapedBounds, true)
+        val digitsBottom =
+            if (path === shaped && !shapedBounds.isEmpty) shapedBounds.bottom + digitSize * 0.02f * k
+            else digitTop + (line2Base + digitSize * 0.02f - digitTop) * k
         val bottom =
             if (showDate && datePos == DATE_BELOW && !dateRect.isEmpty) max(digitsBottom, dateRect.bottom)
             else digitsBottom
@@ -787,9 +1291,14 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         }
         underTop = under
         // What shows: the digits' block and the date line.
-        val half = digitPaint.measureText("00") / 2f
-        contentRect.set(width / 2f - half, line1Base - capH - digitSize * 0.01f,
-            width / 2f + half, digitsBottom)
+        // The fit's even scale and sideways move included.
+        val half = pairWidth(digitPaint) / 2f * k
+        val cx = width / 2f + if (path === shaped) shownShift else 0f
+        contentRect.set(cx - half, line1Base - capH - digitSize * 0.01f, cx + half, digitsBottom)
+        if (path === shaped && !shapedBounds.isEmpty) {
+            contentRect.left = shapedBounds.left + shownShift
+            contentRect.right = shapedBounds.right + shownShift
+        }
         if (showDate && !dateRect.isEmpty) contentRect.union(dateRect)
         if (context.packageName == "com.android.systemui") DepthFaceAnchor.publish(this, underTop)
         val cb = onFaceLayout ?: return
@@ -814,12 +1323,17 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         updateUnderLine()
         val path = shapedPath(digitsPath())
         val doze = dozeFraction()
+        // IchthysOS: the depth fit's sideways move takes the date and the digits along.
+        val shift = if (path === shaped) shownShift else 0f
+        drawShift = shift
+        canvas.save()
+        canvas.translate(shift, 0f)
         dateRect.setEmpty()
         if (showDate) {
             // Below shaped digits, the line follows their (lowest) bottom.
             if (datePos == DATE_BELOW && path === shaped) {
-                val natural = line2Base + digitSize * 0.02f - digitTop
-                statusBase = digitTop + natural * max(shownK[0], shownK[1]) + digitSize * 0.03f +
+                shaped.computeBounds(shapedBounds, true)
+                statusBase = shapedBounds.bottom + digitSize * 0.05f * max(shownK[0], shownK[1]) +
                     statusH - dp(10f)
             } else if (datePos == DATE_BELOW) {
                 statusBase = line2Base + digitSize * 0.03f + statusH - dp(10f)
@@ -829,12 +1343,15 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         } else {
             weatherRect.setEmpty()
         }
+        if (!weatherRect.isEmpty) weatherRect.offset(shift, 0f)
         reportWeather()
         paint.shader = null
         // IchthysOS polish: awake and dozing looks cross-fade with the doze amount (SystemUI's
         // doze animation); without one, it is one or the other.
         if (doze < 1f) drawAwake(canvas, path, 1f - doze)
         if (doze > 0f) drawDozing(canvas, path, doze)
+        canvas.restore()
+        if (!dateRect.isEmpty) dateRect.offset(shift, 0f)
         updateAnchors(path)
         hasDrawn = true
     }
@@ -871,14 +1388,53 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
                 // light fading into the clock colour (the depth look's palette, not the theme
                 // accent, so it never turns red).
                 paint.color = primary
-                paint.setShadowLayer(dp(14f), 0f, dp(6f),
-                    Color.argb((90 * alpha).toInt(), 0, 20, 24))
+                // IchthysOS: over a bright picture (a midday sky) the pale digits need more
+                // to stand on: a deeper, wider shadow and a faint dark edge (ClockBackdrop).
+                val bright = ClockBackdrop.brightness()
+                paint.setShadowLayer(dp(14f + 6f * bright), 0f, dp(6f),
+                    Color.argb(((90 + 110 * bright) * alpha).toInt(), 0, 20, 24))
                 paint.shader = fillShader()
                 // With a shader only the paint's alpha counts: it fades the fill.
                 paint.alpha = (Color.alpha(primary) * alpha).toInt()
                 canvas.drawPath(path, paint)
                 paint.shader = null
                 paint.clearShadowLayer()
+                if (bright > 0.05f) {
+                    paint.style = Paint.Style.STROKE
+                    paint.strokeWidth = dp(1.1f)
+                    paint.color = Color.argb((70 * bright * alpha).toInt(), 0, 18, 22)
+                    canvas.drawPath(path, paint)
+                    paint.style = Paint.Style.FILL
+                }
+            }
+            FILL_GLASS -> {
+                val bright = ClockBackdrop.brightness()
+                // A soft lift off the picture, more over a bright one.
+                paint.color = Color.WHITE
+                paint.setShadowLayer(dp(10f), 0f, dp(3f),
+                    Color.argb(((28 + 70 * bright) * alpha).toInt(), 0, 10, 20))
+                // IchthysOS: clear glass first: the scene itself through the digits, bent like a
+                // lens at their edges and lit on them ([drawClearGlass]); the frosted veil only
+                // when there is no picture to show.
+                if (drawClearGlass(canvas, path, alpha)) {
+                    paint.clearShadowLayer()
+                    paint.shader = null
+                    return
+                }
+                val frosted = drawFrost(canvas, path, alpha)
+                if (frosted) paint.clearShadowLayer()
+                paint.shader = glassShader(if (frosted) -1f else bright)
+                paint.alpha = (255 * alpha).toInt()
+                canvas.drawPath(path, paint)
+                paint.clearShadowLayer()
+                // The light catching the glass's upper edges.
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = dp(1.6f)
+                paint.shader = glassEdgeShader()
+                paint.alpha = (255 * alpha).toInt()
+                canvas.drawPath(path, paint)
+                paint.shader = null
+                paint.style = Paint.Style.FILL
             }
             else -> {
                 paint.color = withAlpha(INK, alpha)
@@ -982,9 +1538,22 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         // bright and busy pictures.
         val strength = 0.92f + (0.7f - 0.92f) * doze
         datePaint.color = withAlpha(POND_CREAM, strength)
-        datePaint.setShadowLayer(dp(5f), 0f, dp(1f), Color.argb((110 * (1f - doze)).toInt(), 0, 14, 18))
+        val bright = ClockBackdrop.brightness()
+        datePaint.setShadowLayer(dp(5f + 3f * bright), 0f, dp(1f),
+            Color.argb(((110 + 100 * bright) * (1f - doze)).toInt(), 0, 14, 18))
         val text = dateLine()
         datePaint.getFontMetrics(dateMetrics)
+        // IchthysOS: beside the subject the line aligns with the clock's outer edge (One UI), its
+        // own alignment otherwise. The canvas is moved with the clock: edges in its face px.
+        val align = when {
+            sideLayout > 0 -> ALIGN_END
+            sideLayout < 0 -> ALIGN_START
+            else -> dateAlign
+        }
+        val clockHalf = (columns[3] - columns[0]) / 2f * max(shownK[0], shownK[1])
+        val clockMid = (columns[0] + columns[3]) / 2f
+        val startX = if (sideLayout != 0) clockMid - clockHalf else dp(4f)
+        val endX = if (sideLayout != 0) clockMid + clockHalf else width - dp(4f)
         val fm = dateMetrics
         // IchthysOS lock screen weather: after the date, in the same line, the two aligned as
         // one (parts that don't fit the face's width are left out).
@@ -999,9 +1568,9 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
                     datePaint.textSize * weatherOptions.size / 100f, room)) {
                 val total = textW + gap + weatherDrawer.width
                 val left =
-                    when (dateAlign) {
-                        ALIGN_START -> dp(4f)
-                        ALIGN_END -> width - dp(4f) - total
+                    when (align) {
+                        ALIGN_START -> startX
+                        ALIGN_END -> endX - total
                         else -> width / 2f - total / 2f
                     }
                 datePaint.textAlign = Paint.Align.LEFT
@@ -1021,14 +1590,14 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         // IchthysOS editor v2: left, centred or right.
         val textW = datePaint.measureText(text)
         val x =
-            when (dateAlign) {
+            when (align) {
                 ALIGN_START -> {
                     datePaint.textAlign = Paint.Align.LEFT
-                    dp(4f)
+                    startX
                 }
                 ALIGN_END -> {
                     datePaint.textAlign = Paint.Align.RIGHT
-                    width - dp(4f)
+                    endX
                 }
                 else -> {
                     datePaint.textAlign = Paint.Align.CENTER
@@ -1037,7 +1606,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
             }
         canvas.drawText(text, x, statusBase, datePaint)
         val l =
-            when (dateAlign) {
+            when (align) {
                 ALIGN_START -> x
                 ALIGN_END -> x - textW
                 else -> x - textW / 2f
@@ -1232,6 +1801,12 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         const val FILL_SOLID = 0
         const val FILL_GRADIENT = 1
         const val FILL_HEAT = 2
+        /**
+         * IchthysOS: frosted glass (OriginOS-like): the picture shows through a pale veil,
+         * brighter at the top, with a crisp light edge; inside, the picture itself, very soft
+         * (ClockBackdrop.frost), so the digits read as frosted glass in the scene.
+         */
+        const val FILL_GLASS = 3
 
         /** Settings.Secure: 1 shows the raw status line (seconds, touches, CPU) over the date. */
         const val KEY_DETAILS = "ichthys_clock_details"
@@ -1246,6 +1821,79 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         const val DEPTH_XRAY = 1
         const val DEPTH_OVERLAP = 2
         const val DEPTH_SHAPE = 3
+        /**
+         * IchthysOS: the smallest the depth fit shrinks the clock; needing more, depth steps back
+         * and the clock stands whole in front.
+         */
+        private const val FIT_MIN_K = 0.6f
+        /**
+         * IchthysOS: the sideways moves the depth fit tries, as fractions of the room to each
+         * side (negative: left), nearest the clock's own place first.
+         */
+        private val FIT_SHIFTS = floatArrayOf(0f, 0.25f, -0.25f, 0.5f, -0.5f, 0.75f, -0.75f, 1f, -1f)
+        /**
+         * IchthysOS: the layout beside the subject ([sidePlan]): its largest even factor, and how
+         * short / tall a minute digit may be made (of its own height; its width stays).
+         */
+        private const val SIDE_K = 0.8f
+        /** One UI's side clock is small: a large face may shrink this far beside the subject. */
+        private const val SIDE_MIN_K = 0.4f
+        /** The side clock's distance from the screen's edge. */
+        private const val SIDE_MARGIN_DP = 24f
+        private const val SIDE_MIN_V = 0.55f
+        private const val SIDE_MAX_V = 1.35f
+
+        /** The clear glass's edge map: this share of the face's px. */
+        private const val MASK_SCALE = 0.25f
+
+        /**
+         * Clear glass ([drawClearGlass]). In face px: [picture] the scene (its own px via
+         * frostMul / frostAdd), [mask] the digits blurred (its px via maskMul). The mask's
+         * gradient points inwards; near the rim the picture is sampled further in (a lens) and the
+         * rim is lit by its facing against a light from the top left.
+         */
+        private const val CLEAR_GLASS = """
+            uniform shader picture;
+            uniform shader mask;
+            uniform float3x3 toFrost;
+            uniform float maskMul;
+            uniform float bend;
+            uniform float dim;
+            uniform float add;
+            uniform float lift;
+            uniform float alpha;
+            uniform half3 tint;
+            uniform float tintAmt;
+            uniform float2 tintSpan;
+
+            half4 main(float2 p) {
+                float2 m = p * maskMul;
+                float a = mask.eval(m).a;
+                float gx = mask.eval(m + float2(1.0, 0.0)).a - mask.eval(m - float2(1.0, 0.0)).a;
+                float gy = mask.eval(m + float2(0.0, 1.0)).a - mask.eval(m - float2(0.0, 1.0)).a;
+                float2 g = float2(gx, gy);
+                float gl = length(g);
+                float2 n = gl > 0.0001 ? g / gl : float2(0.0);
+                // 0 deep inside .. 1 on the outline (the blurred edge is half covered there).
+                float edge = clamp((1.0 - a) * 2.0, 0.0, 1.0);
+                float2 q = p + n * edge * edge * bend;
+                float3 f = toFrost * float3(q, 1.0);
+                half3 c = picture.eval(f.xy / f.z).rgb * dim + add;
+                half l = dot(c, half3(0.2126, 0.7152, 0.0722));
+                c = mix(half3(l), c, 1.18);
+                c = 1.0 - (1.0 - c) * (1.0 - lift);
+                c *= 1.06;
+                float t = clamp((p.y - tintSpan.x) / (tintSpan.y - tintSpan.x), 0.0, 1.0);
+                half3 pale = 1.0 - (1.0 - tint) * 0.3;
+                half3 full = 1.0 - (1.0 - tint) * 0.9;
+                c = mix(c, mix(pale, full, half(t)), half(tintAmt));
+                float facing = dot(-n, float2(-0.6, -0.8));
+                float rim = smoothstep(0.25, 0.95, edge);
+                c = mix(c, half3(1.0), rim * clamp(facing, 0.0, 1.0) * 0.85);
+                c *= 1.0 - rim * clamp(-facing, 0.0, 1.0) * 0.32;
+                return half4(clamp(c, 0.0, 1.0), 1.0) * alpha;
+            }
+        """
 
         /**
          * Settings.Secure, how [DEPTH_SHAPE] sizes the digits (height only, letterforms intact):
@@ -1269,6 +1917,12 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         const val FONT_THIN = 3
         const val FONT_SERIF = 4
         const val FONT_MONO = 5
+        /**
+         * IchthysOS: square-cornered, hollow seven-segment strokes, drawn ([SquareDigits]) rather
+         * than set; [digitTypeface] gives the Tall face for it, for anything that only knows
+         * typefaces.
+         */
+        const val FONT_SQUARE = 6
         private val CONDENSED = setOf(FONT_TALL, FONT_FLEX, FONT_THIN)
 
         /** Settings.Secure: the date / status line above ([DATE_ABOVE]) or below the digits. */
@@ -1351,6 +2005,147 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
  * follows it, so the line sits under the digits you can see (Shape, a subject in front) instead
  * of under the face's full box. Only one face publishes at a time; a detached one clears its own.
  */
+/**
+ * IchthysOS: how bright the picture is behind the clock (linear luma 0..1), published by SystemUI
+ * (the lock wallpaper, or Living Sky's grade of it) and the editor's preview. The Depth face
+ * strengthens its shadow and edge over a bright picture so the time stays readable.
+ */
+object ClockBackdrop {
+    @Volatile
+    var luma = 0f
+        private set
+
+    private val listeners = java.util.concurrent.CopyOnWriteArraySet<() -> Unit>()
+
+    fun addListener(l: () -> Unit) = listeners.add(l)
+
+    fun removeListener(l: () -> Unit) = listeners.remove(l)
+
+    fun publish(value: Float) {
+        val v = value.coerceIn(0f, 1f)
+        if (kotlin.math.abs(v - luma) < 0.01f) return
+        luma = v
+        listeners.forEach { it() }
+    }
+
+    /** The picture's own brightness behind the clock (before any Living Sky grade). */
+    @Volatile
+    var photoLuma = 0f
+        private set
+
+    /** [publish] for the picture itself: its brightness is also the frost's reference. */
+    fun publishPhoto(value: Float) {
+        photoLuma = value.coerceIn(0f, 1f)
+        publish(value)
+    }
+
+    /**
+     * IchthysOS: the picture, very soft (a small copy drawn smoothly over [frostW] x [frostH]
+     * screen px): the glass digits (FILL_GLASS) show it through them, frosted.
+     */
+    @Volatile
+    var frost: android.graphics.Bitmap? = null
+        private set
+    var frostW = 1
+        private set
+    var frostH = 1
+        private set
+
+    /** Publishes [picture] (covering a [screenW] x [screenH] screen) as the frost. */
+    fun publishFrost(picture: android.graphics.Bitmap, screenW: Int, screenH: Int) {
+        val soft = if (picture.config == android.graphics.Bitmap.Config.HARDWARE)
+            picture.copy(android.graphics.Bitmap.Config.ARGB_8888, false) else picture
+        // Down in steps (each a smooth halving), so the copy is an even blur, not aliasing.
+        // IchthysOS: a quarter of the screen, not a thumbnail: the glass shows the scene behind
+        // it (a branch, a roof line), only a little softened, where 54 x 120 was one colour.
+        val tw = kotlin.math.max(54, screenW / 4)
+        val th = kotlin.math.max(120, screenH / 4)
+        var b = soft
+        while (b.width > tw * 2) {
+            val next = android.graphics.Bitmap.createScaledBitmap(b,
+                kotlin.math.max(1, b.width / 2), kotlin.math.max(1, b.height / 2), true)
+            if (b !== soft && b !== picture) b.recycle()
+            b = next
+        }
+        val small = android.graphics.Bitmap.createScaledBitmap(b, tw, th, true)
+        if (b !== soft && b !== small) b.recycle()
+        if (soft !== picture) soft.recycle()
+        accent = accentOf(small)
+        frost = small
+        frostW = screenW
+        frostH = screenH
+        listeners.forEach { it() }
+    }
+
+    /**
+     * IchthysOS: the picture's main accent colour (its most common saturated, not dark hue;
+     * opaque), or 0 when it has none: the clear glass takes it over a dark background, where
+     * there is nothing behind the glass to show (One UI tints its depth clock from the picture).
+     */
+    @Volatile
+    var accent = 0
+        private set
+
+    private fun accentOf(b: android.graphics.Bitmap): Int {
+        val bins = 24
+        val weight = FloatArray(bins)
+        val r = FloatArray(bins)
+        val g = FloatArray(bins)
+        val bl = FloatArray(bins)
+        val hsv = FloatArray(3)
+        var total = 0
+        for (y in 0 until b.height step 4) for (x in 0 until b.width step 4) {
+            val c = b.getPixel(x, y)
+            total++
+            android.graphics.Color.colorToHSV(c, hsv)
+            if (hsv[1] < 0.35f || hsv[2] < 0.35f) continue
+            val i = ((hsv[0] / 360f) * bins).toInt().coerceIn(0, bins - 1)
+            val w = hsv[1] * hsv[2]
+            weight[i] += w
+            r[i] += ((c shr 16) and 0xff) * w
+            g[i] += ((c shr 8) and 0xff) * w
+            bl[i] += (c and 0xff) * w
+        }
+        var best = 0
+        for (i in 1 until bins) if (weight[i] > weight[best]) best = i
+        // At least ~2 % of the picture, else it is no accent.
+        if (total == 0 || weight[best] < total * 0.02f * 0.3f) return 0
+        val w = weight[best]
+        return android.graphics.Color.rgb((r[best] / w).toInt(), (g[best] / w).toInt(),
+            (bl[best] / w).toInt())
+    }
+
+    /** How much darker or lighter the graded picture is than the frost's copy (Living Sky). */
+    fun frostDim(): Float =
+        if (photoLuma <= 0.002f) 1f else (luma / photoLuma).coerceIn(0.06f, 1.6f)
+
+    /** 0 (dark enough as it is) .. 1 (a bright midday sky). */
+    fun brightness(): Float {
+        val t = ((luma - 0.18f) / (0.55f - 0.18f)).coerceIn(0f, 1f)
+        return t * t * (3f - 2f * t)
+    }
+
+    /** Mean linear luma of [picture]'s area behind a lock screen clock (8%..45% of the height). */
+    fun measure(picture: android.graphics.Bitmap): Float {
+        val soft = if (picture.config == android.graphics.Bitmap.Config.HARDWARE)
+            picture.copy(android.graphics.Bitmap.Config.ARGB_8888, false) else picture
+        val small = android.graphics.Bitmap.createScaledBitmap(soft, 36, 80, true)
+        var sum = 0f
+        var n = 0
+        for (y in 6 until 36) for (x in 0 until 36) {
+            val c = small.getPixel(x, y)
+            val r = ((c shr 16) and 0xff) / 255f
+            val g = ((c shr 8) and 0xff) / 255f
+            val b = (c and 0xff) / 255f
+            sum += 0.2126f * r * r + 0.7152f * g * g + 0.0722f * b * b
+            n++
+        }
+        if (small !== soft) small.recycle()
+        if (soft !== picture) soft.recycle()
+        return if (n > 0) sum / n else 0f
+    }
+}
+
 object DepthFaceAnchor {
     @Volatile
     var underTop = Float.NaN
@@ -1374,10 +2169,22 @@ object DepthFaceAnchor {
     fun clear(from: Any) {
         if (owner !== from) return
         owner = null
-        if (!underTop.isNaN()) {
-            underTop = Float.NaN
-            listeners.forEach { it() }
-        }
+        val notify = !underTop.isNaN() || !depthApplies
+        underTop = Float.NaN
+        depthApplies = true
+        if (notify) listeners.forEach { it() }
+    }
+
+    /** IchthysOS: see [DepthClockView.depthApplies]. */
+    @Volatile
+    var depthApplies = true
+        private set
+
+    fun publishDepthApplies(from: Any, applies: Boolean) {
+        owner = from
+        if (depthApplies == applies) return
+        depthApplies = applies
+        listeners.forEach { it() }
     }
 }
 
