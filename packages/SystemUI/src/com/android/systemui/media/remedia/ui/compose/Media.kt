@@ -92,6 +92,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -1095,7 +1096,9 @@ private fun ContentScope.Navigation(
                             track = { sliderState ->
                                 SeekBarTrack(
                                     sliderState = sliderState,
-                                    isSquiggly = viewModel.isSquiggly,
+                                    // IchthysOS: crDroid "Squiggle animation".
+                                    isSquiggly =
+                                        viewModel.isSquiggly && rememberMediaSquiggleEnabled(),
                                     colors = colors,
                                     isThumbEnabled = isEnabled,
                                     modifier = Modifier.fillMaxWidth(),
@@ -2022,3 +2025,42 @@ private data class DeviceChipStyle(
     val contentColor: Color,
     val borderColor: Color? = null,
 )
+
+/**
+ * IchthysOS: crDroid "Squiggle animation" (Settings.Secure.MEDIA_SQUIGGLE_ANIMATION, default on).
+ * Only the legacy SeekBarObserver read it; this compose player is the one that runs.
+ */
+@Composable
+private fun rememberMediaSquiggleEnabled(): Boolean {
+    val context = LocalContext.current
+    val resolver = context.contentResolver
+    fun read(): Boolean =
+        android.provider.Settings.Secure.getIntForUser(
+            resolver,
+            android.provider.Settings.Secure.MEDIA_SQUIGGLE_ANIMATION,
+            1,
+            android.os.UserHandle.USER_CURRENT,
+        ) == 1
+    val enabled by
+        produceState(initialValue = read(), context) {
+            val observer =
+                object : android.database.ContentObserver(
+                    android.os.Handler(android.os.Looper.getMainLooper())
+                ) {
+                    override fun onChange(selfChange: Boolean) {
+                        value = read()
+                    }
+                }
+            resolver.registerContentObserver(
+                android.provider.Settings.Secure.getUriFor(
+                    android.provider.Settings.Secure.MEDIA_SQUIGGLE_ANIMATION
+                ),
+                false,
+                observer,
+                android.os.UserHandle.USER_ALL,
+            )
+            value = read()
+            awaitDispose { resolver.unregisterContentObserver(observer) }
+        }
+    return enabled
+}

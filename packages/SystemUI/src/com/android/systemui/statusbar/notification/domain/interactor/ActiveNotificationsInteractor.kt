@@ -133,6 +133,13 @@ constructor(
             .distinctUntilChanged()
             .flowOn(backgroundDispatcher)
 
+    /** IchthysOS: are there any notifications that "Clear all" leaves behind (ongoing)? */
+    val hasNonClearableNotifications: Flow<Boolean> =
+        repository.notifStats
+            .map { it.hasNonClearableAlertingNotifs || it.hasNonClearableSilentNotifs }
+            .distinctUntilChanged()
+            .flowOn(backgroundDispatcher)
+
     val hasClearableAlertingNotifications: Flow<Boolean> =
         repository.notifStats
             .map { it.hasClearableAlertingNotifs }

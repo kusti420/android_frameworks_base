@@ -747,14 +747,15 @@ public class QuickSettingsControllerImpl implements QuickSettingsController, Dum
      * cannot be pulled down while the keyguard is showing, so the shade's QS is only reachable
      * after unlocking.
      *
-     * <p>Defaults to on, matching the preference XML. Read the same way as the neighbouring
-     * pulldown settings: on demand, per current user, because the shade's context user is not
-     * necessarily the foreground user.
+     * <p>Settings.Secure, where crDroidSettings writes it. Defaults to on, matching the
+     * preference XML. Read the same way as the neighbouring pulldown settings: on demand, per
+     * current user, because the shade's context user is not necessarily the foreground user.
      */
     private boolean isLockscreenQuickSettingsEnabled() {
-        return Settings.System.getIntForUser(
+        return Settings.Secure.getIntForUser(
                 mPanelView.getContext().getContentResolver(),
-                "enable_lockscreen_quick_settings", 1, UserHandle.USER_CURRENT) != 0;
+                Settings.Secure.ENABLE_LOCKSCREEN_QUICK_SETTINGS, 1,
+                UserHandle.USER_CURRENT) != 0;
     }
 
     /**

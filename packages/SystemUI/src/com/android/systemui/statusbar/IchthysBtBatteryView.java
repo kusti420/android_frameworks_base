@@ -78,6 +78,8 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
 
     private BluetoothController mBluetoothController;
     private boolean mZigzag;
+    // IchthysOS: Status bar > "Bluetooth battery" (bluetooth_show_battery, default on).
+    private boolean mShowBatterySetting = true;
     private Levels mLevels = Levels.NONE;
     private int mLevelRequest;
     private String mText = "";
@@ -139,6 +141,9 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
         getContext().getContentResolver().registerContentObserver(
                 Settings.Secure.getUriFor(FONT_MONO_SETTING), false, mSettingsObserver,
                 UserHandle.USER_ALL);
+        getContext().getContentResolver().registerContentObserver(
+                Settings.System.getUriFor(Settings.System.BLUETOOTH_SHOW_BATTERY), false,
+                mSettingsObserver, UserHandle.USER_ALL);
         mBluetoothController = Dependency.get(BluetoothController.class);
         mBluetoothController.addCallback(this);
         readSettings();
@@ -166,6 +171,8 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
             face = Typeface.MONOSPACE;
         }
         mTextPaint.setTypeface(face);
+        mShowBatterySetting = Settings.System.getIntForUser(getContext().getContentResolver(),
+                Settings.System.BLUETOOTH_SHOW_BATTERY, 1, UserHandle.USER_CURRENT) == 1;
         updateLevel();
     }
 
@@ -209,7 +216,7 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
     }
 
     private void applyLevels(Levels levels) {
-        final boolean show = mZigzag && levels.overall >= 0;
+        final boolean show = mZigzag && mShowBatterySetting && levels.overall >= 0;
         if (!levels.sameAs(mLevels)) {
             mLevels = levels;
             if (levels.hasBothBuds()) {
@@ -231,9 +238,9 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
         if (getVisibility() != visibility) {
             setVisibility(visibility);
         }
-        // The pill replaces the stock Bluetooth-with-battery icon in the lattice.
-        if (sShowing != show) {
-            sShowing = show;
+        // The pill replaces the stock Bluetooth-with-battery icon in the lattice next to it.
+        if (mShowing != show) {
+            mShowing = show;
             if (getParent() instanceof android.view.ViewGroup) {
                 final android.view.ViewGroup parent = (android.view.ViewGroup) getParent();
                 for (int i = 0; i < parent.getChildCount(); i++) {
@@ -243,11 +250,15 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
         }
     }
 
-    /** Whether a pill is showing a device level; the lattice then hides the "bluetooth" slot. */
-    private static volatile boolean sShowing;
+    /**
+     * Whether this pill is showing a device level; the lattice in the same parent then hides the
+     * "bluetooth" slot. IchthysOS: per instance, not a process-wide static: only the home status
+     * bar has a pill, so the keyguard status bar and the shade header keep their Bluetooth icon.
+     */
+    private boolean mShowing;
 
-    public static boolean isShowing() {
-        return sShowing;
+    public boolean isShowingLevel() {
+        return mShowing;
     }
 
     /** Glyph + level follow the bar's icon tint (white on dark, dark on light); the ring is accent. */

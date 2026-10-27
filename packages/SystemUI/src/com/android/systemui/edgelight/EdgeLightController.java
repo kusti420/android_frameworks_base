@@ -172,6 +172,17 @@ public class EdgeLightController implements CoreStartable {
             }
         });
 
+        // IchthysOS: a pulse runs for seconds; stop it as soon as the device wakes up, instead of
+        // letting it animate over the unlocked UI (the dozing check only ran at trigger time).
+        mStatusBarStateController.addCallback(new StatusBarStateController.StateListener() {
+            @Override
+            public void onDozingChanged(boolean isDozing) {
+                if (!isDozing) {
+                    mHandler.post(EdgeLightController.this::hide);
+                }
+            }
+        });
+
         readSettings();
     }
 

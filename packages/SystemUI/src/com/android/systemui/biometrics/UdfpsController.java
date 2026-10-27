@@ -827,6 +827,9 @@ public class UdfpsController implements DozeReceiver, Dumpable {
         if (mWakefulnessLifecycle != null) {
             mWakefulnessLifecycle.addObserver(mWakefulnessLifecycleObserver);
         }
+
+        // IchthysOS: lift nothing until a finger is really down (see mIchthysUdfpsScanning).
+        setIchthysUdfpsScanning(false);
     }
 
     /**
@@ -1113,13 +1116,6 @@ public class UdfpsController implements DozeReceiver, Dumpable {
             long time,
             long gestureStart,
             boolean isAod) {
-        // IchthysOS depth lock screen: its own wallpaper copy and cut-out step aside while a
-        // finger is on the sensor, leaving only the real wallpaper and the sensor's light.
-        com.android.systemui.keyguard.data.repository.IchthysDepthRepository.fingerOnSensor
-                .setValue(true);
-        // IchthysOS: Night Light / Extra dim lift while the sensor scans (ColorDisplayService):
-        // tinted light over the finger makes every optical capture fail.
-        setIchthysUdfpsScanning(true);
         mExecution.assertIsMainThread();
 
         if (mOverlay == null) {
@@ -1149,6 +1145,14 @@ public class UdfpsController implements DozeReceiver, Dumpable {
             mDeviceEntryFaceAuthInteractor.onUdfpsSensorTouched();
         }
         mOnFingerDown = true;
+        // IchthysOS depth lock screen: its own wallpaper copy and cut-out step aside while a
+        // finger is on the sensor, leaving only the real wallpaper and the sensor's light.
+        // Set only past the early returns above: nothing would clear them for a dropped down.
+        com.android.systemui.keyguard.data.repository.IchthysDepthRepository.fingerOnSensor
+                .setValue(true);
+        // IchthysOS: Night Light / Extra dim lift while the sensor scans (ColorDisplayService):
+        // tinted light over the finger makes every optical capture fail.
+        setIchthysUdfpsScanning(true);
         if (isOptical()) {
             Log.e(TAG, "onFingerDown | isOptical=true, calling showIlluminationOverlay");
             showIlluminationOverlay();
@@ -1174,14 +1178,20 @@ public class UdfpsController implements DozeReceiver, Dumpable {
         }
     }
 
-    /** See ColorDisplayService#ICHTHYS_UDFPS_SCANNING. Only writes on a change. */
-    private boolean mIchthysUdfpsScanning;
+    /**
+     * See ColorDisplayService#ICHTHYS_UDFPS_SCANNING. Only writes on a change. Starts true so the
+     * constructor's write of 0 always goes out: a SystemUI that died mid-scan left a 1 behind.
+     */
+    private boolean mIchthysUdfpsScanning = true;
 
     private void setIchthysUdfpsScanning(boolean scanning) {
         if (scanning == mIchthysUdfpsScanning) {
             return;
         }
         mIchthysUdfpsScanning = scanning;
+        // IchthysOS: written synchronously on purpose. The lift must be under way before the
+        // illumination and the first capture (the async write saved ~1 ms and risked a tinted
+        // capture, which is exactly the failure this flag exists to prevent).
         android.provider.Settings.Global.putInt(mContext.getContentResolver(),
                 "ichthys_udfps_scanning", scanning ? 1 : 0);
     }

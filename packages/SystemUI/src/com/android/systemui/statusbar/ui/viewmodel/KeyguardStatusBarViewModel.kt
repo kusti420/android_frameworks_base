@@ -26,6 +26,7 @@ import com.android.systemui.scene.domain.interactor.SceneInteractor
 import com.android.systemui.scene.shared.model.Overlays
 import com.android.systemui.scene.shared.model.Scenes
 import com.android.systemui.shade.domain.interactor.ShadeStatusBarComponentsInteractor
+import com.android.systemui.shared.settings.data.repository.SecureSettingsRepository
 import com.android.systemui.statusbar.domain.interactor.KeyguardStatusBarInteractor
 import com.android.systemui.statusbar.events.shared.model.SystemEventAnimationState
 import com.android.systemui.statusbar.events.shared.model.SystemEventAnimationState.Idle
@@ -65,6 +66,7 @@ constructor(
     shadeStatusBarComponentsInteractor: ShadeStatusBarComponentsInteractor,
     darkIconInteractor: ShadeDarkIconInteractor,
     val statusBarIconBlockListInteractor: HomeStatusBarIconBlockListInteractor,
+    secureSettingsRepository: SecureSettingsRepository,
 ) : HydratedActivatable(enableEnqueuedActivations = true) {
     /** True if this view should be visible and false otherwise. */
     val isVisible: StateFlow<Boolean> =
@@ -73,8 +75,12 @@ constructor(
                 sceneInteractor.currentScene,
                 sceneInteractor.currentOverlays,
                 keyguardInteractor.isDozing,
-            ) { useDesktopStatusBar, currentScene, currentOverlays, isDozing ->
+                // IchthysOS: "Hide status bar" on the lock screen. The legacy
+                // KeyguardStatusBarViewController reader never runs with scene_container on.
+                secureSettingsRepository.boolSetting(KEY_HIDE_ON_KEYGUARD, false),
+            ) { useDesktopStatusBar, currentScene, currentOverlays, isDozing, hideOnKeyguard ->
                 !useDesktopStatusBar &&
+                    !hideOnKeyguard &&
                     (currentScene == Scenes.Lockscreen || currentScene == Scenes.Communal) &&
                     Overlays.NotificationsShade !in currentOverlays &&
                     Overlays.QuickSettingsShade !in currentOverlays &&
@@ -129,5 +135,10 @@ constructor(
     @AssistedFactory
     interface Factory {
         fun create(): KeyguardStatusBarViewModel
+    }
+
+    private companion object {
+        /** IchthysOS: Settings.Secure key hiding the status bar on the lock screen. */
+        const val KEY_HIDE_ON_KEYGUARD = "ichthys_lockscreen_hide_statusbar"
     }
 }

@@ -186,20 +186,43 @@ public class StatusBarWeather extends TextView implements TunerService.Tunable,
     }
 
     private void queryAndUpdate() {
-        if (mStyle == STYLE_DISABLED || !mWeatherClient.isOmniJawsEnabled(getContext())) {
+        if (mStyle == STYLE_DISABLED) {
             mWeatherInfo = null;
             updateVisibility();
             return;
         }
-        try {
-            mWeatherClient.queryWeather(getContext());
-            mWeatherInfo = mWeatherClient.getWeatherInfo();
-        } catch (Exception e) {
-            mWeatherInfo = null;
+        // IchthysOS: the OmniJaws provider queries (two cursors, plus a package lookup) run on the
+        // background looper; a cold provider start used to stall the UI thread at boot. Only the
+        // newest request is applied.
+        final int request = ++mQueryRequest;
+        final Context context = getContext();
+        if (mBgHandler == null) {
+            mBgHandler = new android.os.Handler(Dependency.get(Dependency.BG_LOOPER));
         }
-        updateContent();
-        updateVisibility();
+        mBgHandler.post(() -> {
+            OmniJawsClient.WeatherInfo info = null;
+            try {
+                if (mWeatherClient.isOmniJawsEnabled(context)) {
+                    mWeatherClient.queryWeather(context);
+                    info = mWeatherClient.getWeatherInfo();
+                }
+            } catch (Exception e) {
+                info = null;
+            }
+            final OmniJawsClient.WeatherInfo result = info;
+            context.getMainExecutor().execute(() -> {
+                if (request != mQueryRequest) {
+                    return;
+                }
+                mWeatherInfo = mStyle == STYLE_DISABLED ? null : result;
+                updateContent();
+                updateVisibility();
+            });
+        });
     }
+
+    private int mQueryRequest;
+    private android.os.Handler mBgHandler;
 
     private void updateContent() {
         if (mWeatherInfo == null) {

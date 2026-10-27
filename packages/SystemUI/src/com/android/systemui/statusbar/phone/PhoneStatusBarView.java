@@ -332,8 +332,33 @@ public class PhoneStatusBarView extends FrameLayout {
             mBrightnessTracking = false;
             mBrightnessControlActive = false;
             mBrightnessHandler.removeCallbacks(mLongPressBrightnessChange);
+            commitBrightness();
         }
         return mBrightnessControlActive;
+    }
+
+    // IchthysOS: the value the slide last applied as a temporary brightness, persisted once when
+    // the finger lifts instead of a settings write on every move.
+    private boolean mBrightnessPending;
+    private boolean mPendingAutomatic;
+    private int mPendingBrightness;
+    private float mPendingAutoAdj;
+
+    private void commitBrightness() {
+        if (!mBrightnessPending) {
+            return;
+        }
+        mBrightnessPending = false;
+        final ContentResolver cr = mContext.getContentResolver();
+        if (mPendingAutomatic) {
+            Settings.System.putFloatForUser(cr,
+                    Settings.System.SCREEN_AUTO_BRIGHTNESS_ADJ, mPendingAutoAdj,
+                    UserHandle.USER_CURRENT);
+        } else {
+            Settings.System.putIntForUser(cr,
+                    Settings.System.SCREEN_BRIGHTNESS, mPendingBrightness,
+                    UserHandle.USER_CURRENT);
+        }
     }
 
     // Custom Options: bottom edge (screen-space) of the region that arms brightness control.
@@ -372,18 +397,20 @@ public class PhoneStatusBarView extends FrameLayout {
             // In auto-brightness mode, nudge the adjustment slider (-1..1) instead.
             float adj = Math.max(-1.0f, Math.min(1.0f, (2.0f * value) - 1.0f));
             mDisplayManager.setTemporaryAutoBrightnessAdjustment(adj);
-            Settings.System.putFloatForUser(cr,
-                    Settings.System.SCREEN_AUTO_BRIGHTNESS_ADJ, adj, UserHandle.USER_CURRENT);
+            mPendingAutomatic = true;
+            mPendingAutoAdj = adj;
+            mBrightnessPending = true;
         } else {
             int newBrightness = mMinimumBacklight
                     + Math.round(value * (mMaximumBacklight - mMinimumBacklight));
             newBrightness = Math.max(mMinimumBacklight,
                     Math.min(mMaximumBacklight, newBrightness));
-            // Apply immediately for live feedback, then persist so it sticks.
+            // Apply immediately for live feedback; commitBrightness() persists it on lift.
             mDisplayManager.setTemporaryBrightness(displayId,
                     BrightnessSynchronizer.brightnessIntToFloat(newBrightness));
-            Settings.System.putIntForUser(cr,
-                    Settings.System.SCREEN_BRIGHTNESS, newBrightness, UserHandle.USER_CURRENT);
+            mPendingAutomatic = false;
+            mPendingBrightness = newBrightness;
+            mBrightnessPending = true;
         }
     }
 

@@ -93,9 +93,19 @@ constructor(
 
     /** Reads the current state (binder / settings calls; call off the main thread). */
     fun readState(): State {
-        val m = cdm ?: return State()
+        if (cdm == null) return State()
         return State(
-            activated = m.isReduceBrightColorsActivated,
+            // IchthysOS: the setting, not ColorDisplayManager.isReduceBrightColorsActivated, which
+            // ColorDisplayService updates asynchronously after a toggle (the switch showed the old
+            // state); the tile reads the setting for the same reason. It is also a cached
+            // settings read rather than a binder call.
+            activated =
+                Settings.Secure.getIntForUser(
+                    context.contentResolver,
+                    Settings.Secure.REDUCE_BRIGHT_COLORS_ACTIVATED,
+                    0,
+                    userTracker.userId,
+                ) != 0,
             intensityPercent =
                 PERCENT_MAX -
                     Settings.Secure.getIntForUser(

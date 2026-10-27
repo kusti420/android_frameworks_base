@@ -38,6 +38,7 @@ import android.util.ArrayMap;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.view.View;
+import android.view.ViewGroup;
 
 import com.android.keyguard.AlphaOptimizedLinearLayout;
 import com.android.systemui.res.R;
@@ -373,10 +374,25 @@ public class StatusIconContainer extends AlphaOptimizedLinearLayout {
      * scaled to fill it. Icons without a glyph, past {@link #ZZ_MAX_ICONS} or beyond the
      * available width are hidden (never an empty disc, never drawn over the clock).
      */
-    /** The Bluetooth BT-battery pill stands in for the stock "bluetooth" slot while it shows. */
-    private static boolean isBtReplacedByPill(StatusIconDisplayable icon) {
-        return "bluetooth".equals(icon.getSlot())
-                && com.android.systemui.statusbar.IchthysBtBatteryView.isShowing();
+    /**
+     * The Bluetooth BT-battery pill stands in for the stock "bluetooth" slot while it shows.
+     * IchthysOS: only a pill next to this container (same parent) counts; the keyguard status bar
+     * and the shade header have none and keep their Bluetooth icon.
+     */
+    private boolean isBtReplacedByPill(StatusIconDisplayable icon) {
+        if (!"bluetooth".equals(icon.getSlot()) || !(getParent() instanceof ViewGroup)) {
+            return false;
+        }
+        final ViewGroup parent = (ViewGroup) getParent();
+        for (int i = 0; i < parent.getChildCount(); i++) {
+            final View child = parent.getChildAt(i);
+            if (child instanceof com.android.systemui.statusbar.IchthysBtBatteryView
+                    && ((com.android.systemui.statusbar.IchthysBtBatteryView) child)
+                            .isShowingLevel()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void calculateZigzagTranslations() {

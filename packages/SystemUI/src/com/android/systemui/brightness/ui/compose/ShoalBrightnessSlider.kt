@@ -224,7 +224,9 @@ internal fun ShoalBrightnessSlider(
                     ),
             )
             Spacer(Modifier.weight(1f))
-            if (showToggles) {
+            // IchthysOS: "Auto brightness icon" (qs_show_auto_brightness) gates only the auto
+            // brightness pills (auto and its minimum floor); Night Light keeps its pill.
+            run {
                 if (nightMode != null) {
                     val scheduled = nightMode == IchthysNightLightController.Mode.SCHEDULED
                     val nightLabel = stringResource(R.string.quick_settings_night_display_label)
@@ -255,8 +257,10 @@ internal fun ShoalBrightnessSlider(
                         // The tile's long press: its temperature and schedule dialog.
                         onLongClick = onNightLightLongClick,
                     )
-                    Spacer(Modifier.width(6.dp))
+                    if (showToggles) Spacer(Modifier.width(6.dp))
                 }
+            }
+            if (showToggles) {
                 ShoalPill(
                     icon = ShoalPillIcon.Floor,
                     // The floor value stays readable next to its glyph while the floor is on.

@@ -200,6 +200,11 @@ public class StatusBarIconView extends AnimatedImageView implements StatusIconDi
     private String mNumberText;
     private boolean mShowNotificationCount;
     private boolean mNewIconStyle;
+
+    /** IchthysOS: crDroid "Colored icons" is on, so this shows the full-colour app icon. */
+    public boolean isColoredIconStyle() {
+        return mNewIconStyle && isNotification();
+    }
     // crDroid: observes the colored-icons / notification-count toggles so a change applies live to
     // the already-created icon views (no reboot / config change needed).
     private ContentObserver mIconToggleObserver;

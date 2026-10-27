@@ -54,8 +54,10 @@ import com.android.systemui.scene.shared.model.Overlays
 import com.android.systemui.scene.shared.model.Scenes
 import com.android.systemui.scene.ui.composable.Overlay
 import com.android.systemui.shade.ShadeDisplayAware
+import com.android.systemui.shade.domain.interactor.IchthysPulldownInteractor
 import com.android.systemui.shade.domain.interactor.ShadeModeInteractor
 import com.android.systemui.shade.shared.model.ShadeMode
+import com.android.systemui.shade.ui.viewmodel.QuickPulldownSwipeDetector
 import com.android.systemui.statusbar.core.StatusBarForDesktop
 import com.android.systemui.statusbar.domain.interactor.RemoteInputInteractor
 import com.android.systemui.statusbar.notification.domain.interactor.NotificationContainerInteractor
@@ -69,6 +71,7 @@ import dagger.assisted.AssistedInject
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
@@ -101,6 +104,7 @@ constructor(
     private val toastDisplayer: Lazy<SceneContainerToastDisplayer>,
     @Assisted private val motionEventHandlerReceiver: (MotionEventHandler?) -> Unit,
     private val accessibilityInteractor: AccessibilityInteractor,
+    pulldownInteractor: IchthysPulldownInteractor,
 ) : HydratedActivatable() {
 
     /** The scene that should be rendered. */
@@ -143,18 +147,29 @@ constructor(
 
     private val dynamicSizeEdgeDetector = DynamicSizeEdgeDetector { statusBarHeightPx }
 
+    private val quickPulldownSwipeDetector = QuickPulldownSwipeDetector(dynamicSizeEdgeDetector)
+
     /**
      * The [SwipeSourceDetector] to use for defining which areas of the screen can be defined in the
      * [UserAction]s for this container.
      */
     val swipeSourceDetector: SwipeSourceDetector by
-        shadeModeInteractor.shadeMode
-            .map {
-                if (it is ShadeMode.Dual) {
+        combine(shadeModeInteractor.shadeMode, pulldownInteractor.quickPulldownMode) {
+                shadeMode,
+                quickPulldown ->
+                if (shadeMode is ShadeMode.Dual) {
                     SceneContainerSwipeDetector(
                         dynamicSizeEdgeDetector = dynamicSizeEdgeDetector,
                         invocationGestureSplitRatio = dualShadeGestureSplitRatio,
                     )
+                } else if (
+                    shadeMode is ShadeMode.Single &&
+                        (quickPulldown == IchthysPulldownInteractor.QUICK_PULLDOWN_END ||
+                            quickPulldown == IchthysPulldownInteractor.QUICK_PULLDOWN_START)
+                ) {
+                    // IchthysOS: crDroid quick pulldown needs to know which top corner a swipe
+                    // started in; see singleShadeActions().
+                    quickPulldownSwipeDetector
                 } else {
                     dynamicSizeEdgeDetector
                 }

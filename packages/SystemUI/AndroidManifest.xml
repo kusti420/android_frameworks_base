@@ -540,21 +540,13 @@
         </activity>
 
         <!-- Android 7.1.1-style vertical card-stack recents (LegacyRecentsImpl). Exported so the
-             launcher's Quickstep can launch it in place of the stock overview. -->
+             launcher's Quickstep can launch it in place of the stock overview.
+             IchthysOS: guarded by START_TASKS_FROM_RECENTS (the launcher holds it, SystemUI's own
+             launches are same-uid) so other apps can't pop recents over themselves. -->
         <activity android:name=".recents.LegacyRecentsActivity"
                   android:theme="@android:style/Theme.Translucent.NoTitleBar"
                   android:exported="true"
-                  android:excludeFromRecents="true"
-                  android:launchMode="singleInstance"
-                  android:resizeableActivity="false"
-                  android:stateNotNeeded="true"
-                  android:configChanges="orientation|screenSize|keyboardHidden|screenLayout" />
-
-        <!-- Slim Recents: compact side-anchored recents panel (SlimRecentsImpl). Exported so
-             the launcher's Quickstep can launch it in place of the stock overview. -->
-        <activity android:name=".recents.SlimRecentsActivity"
-                  android:theme="@android:style/Theme.Translucent.NoTitleBar"
-                  android:exported="true"
+                  android:permission="android.permission.START_TASKS_FROM_RECENTS"
                   android:excludeFromRecents="true"
                   android:launchMode="singleInstance"
                   android:resizeableActivity="false"
@@ -564,10 +556,12 @@
         <!-- The card-list recents styles: Samsung 7.1.1 (Grace UX) cascade plus the four Home
              Up-style layouts (grid, stack, list, slim list). One activity for all of them; the
              live style comes from the recents_type System setting. Exported so the launcher's
-             Quickstep can launch it in place of the stock overview. -->
+             Quickstep can launch it in place of the stock overview; IchthysOS: guarded by
+             START_TASKS_FROM_RECENTS like the Classic one above. -->
         <activity android:name=".recents.oneui.OneUiRecentsActivity"
                   android:theme="@android:style/Theme.Translucent.NoTitleBar"
                   android:exported="true"
+                  android:permission="android.permission.START_TASKS_FROM_RECENTS"
                   android:excludeFromRecents="true"
                   android:launchMode="singleInstance"
                   android:resizeableActivity="false"

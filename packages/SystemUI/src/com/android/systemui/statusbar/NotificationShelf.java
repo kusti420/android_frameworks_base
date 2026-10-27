@@ -213,20 +213,41 @@ public class NotificationShelf extends ActivatableNotificationView {
      * Update the state of the shelf.
      */
     private boolean mIchthysGlass;
+    private boolean mIchthysOnKeyguard;
+    private boolean mIchthysDepthEnabled;
+
+    /** The background takes the tint as its colour, so a translucent white is the glass. */
+    private static final int ICHTHYS_GLASS_TINT = android.graphics.Color.argb(36, 255, 255, 255);
 
     /**
      * IchthysOS depth lock screen (tracker#58): on the lock screen the shelf is clear glass over
      * the wallpaper (a faint white, like the shortcuts), not a dark card.
      */
     private void applyIchthysDepthGlass(boolean onKeyguard) {
-        final boolean glass = onKeyguard && android.provider.Settings.Secure.getIntForUser(
-                mContext.getContentResolver(), "ichthys_lockscreen_depth", 0,
-                android.os.UserHandle.USER_CURRENT) != 0;
+        // This runs on every stack layout pass; read the setting (a binder call, USER_CURRENT
+        // skips the cache) only as the lock screen comes up. It can't change while it shows, and
+        // a user switch always goes through it.
+        if (onKeyguard != mIchthysOnKeyguard) {
+            mIchthysOnKeyguard = onKeyguard;
+            if (onKeyguard) {
+                mIchthysDepthEnabled = android.provider.Settings.Secure.getIntForUser(
+                        mContext.getContentResolver(), "ichthys_lockscreen_depth", 0,
+                        android.os.UserHandle.USER_CURRENT) != 0;
+            }
+        }
+        final boolean glass = onKeyguard && mIchthysDepthEnabled;
         if (glass == mIchthysGlass || super.mBackgroundNormal == null) return;
         mIchthysGlass = glass;
-        // The background takes the tint as its colour, so a translucent white is the glass.
-        super.mBackgroundNormal.setTint(
-                glass ? android.graphics.Color.argb(36, 255, 255, 255) : calculateBgColor());
+        super.mBackgroundNormal.setTint(glass ? ICHTHYS_GLASS_TINT : calculateBgColor());
+    }
+
+    @Override
+    protected void setBackgroundTintColor(int color) {
+        super.setBackgroundTintColor(color);
+        // IchthysOS: a colour update just tinted the background; keep the glass over it.
+        if (mIchthysGlass) {
+            super.mBackgroundNormal.setTint(ICHTHYS_GLASS_TINT);
+        }
     }
 
     public void updateState(StackScrollAlgorithm.StackScrollAlgorithmState algorithmState,

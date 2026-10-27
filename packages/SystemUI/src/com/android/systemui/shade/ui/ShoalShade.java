@@ -104,7 +104,8 @@ public final class ShoalShade {
         try {
             final String surface = Settings.Secure.getString(context.getContentResolver(),
                     KEY_SURFACE);
-            if ("tonal".equals(surface)) return false;
+            // IchthysOS: "stock" (theme.surface) means plain Monet, so no Shoal shade either.
+            if ("tonal".equals(surface) || "stock".equals(surface)) return false;
             if ("hairline".equals(surface)) return true;
             // Unset means the option defaults: quickSettings.style = "shoal", theme.surfaces = 4.
             if (!"grid".equals(Settings.Secure.getString(context.getContentResolver(),

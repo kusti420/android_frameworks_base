@@ -26,6 +26,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import com.android.compose.animation.scene.ContentScope
+import com.android.systemui.qs.ui.composable.IchthysQsSettings
+import com.android.systemui.qs.ui.composable.rememberIchthysSystemInt
 import com.android.systemui.shade.ui.ShadeColors
 
 /** Scrim for QS/Shade, this will fill the max size, so it should be inside a Box like layout. */
@@ -38,20 +40,30 @@ fun ContentScope.ShadePanelScrim(isTransparencyEnabled: Boolean, modifier: Modif
             modifier
                 .element(Shade.Elements.BackgroundScrim)
                 .fillMaxSize()
-                .background(color = scrimColor(isTransparencyEnabled))
+                .background(color = scrimColor(isTransparencyEnabled, rememberQsOpacity()))
     )
 }
 
+/**
+ * IchthysOS: crDroid QS "Background opacity" (`qs_transparency`, 1..100 %, default 100). The
+ * Shade and QS scenes share this scrim element, so both get the same alpha.
+ */
+@Composable
+private fun rememberQsOpacity(): Float =
+    rememberIchthysSystemInt(IchthysQsSettings.QS_TRANSPARENCY, 100).coerceIn(1, 100) / 100f
+
 @Composable
 @ReadOnlyComposable
-private fun scrimColor(isTransparencyEnabled: Boolean): Color {
+private fun scrimColor(isTransparencyEnabled: Boolean, opacity: Float): Color {
     // Read configuration to invalidate on changes
     LocalConfiguration.current
-    return Color(
-        ShadeColors.shadePanel(
-            context = LocalContext.current,
-            blurSupported = isTransparencyEnabled,
-            withScrim = true,
+    val color =
+        Color(
+            ShadeColors.shadePanel(
+                context = LocalContext.current,
+                blurSupported = isTransparencyEnabled,
+                withScrim = true,
+            )
         )
-    )
+    return if (opacity >= 1f) color else color.copy(alpha = color.alpha * opacity)
 }

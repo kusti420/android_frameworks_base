@@ -43,13 +43,17 @@ import android.app.StatusBarManager;
 import android.app.StatusBarManager.NavbarFlags;
 import android.app.StatusBarManager.WindowVisibleState;
 import android.content.Context;
+import android.database.ContentObserver;
 import android.graphics.Rect;
 import android.hardware.display.DisplayManager;
 import android.inputmethodservice.InputMethodService.BackDispositionMode;
 import android.inputmethodservice.InputMethodService.ImeWindowVisibility;
 import android.os.Handler;
+import android.os.Looper;
 import android.os.RemoteException;
 import android.os.Trace;
+import android.os.UserHandle;
+import android.provider.Settings;
 import android.util.Log;
 import android.view.Display;
 import android.view.View;
@@ -351,6 +355,10 @@ public class TaskbarDelegate implements CommandQueue.Callbacks,
             mPipOptional.ifPresent(this::addPipExclusionBoundsChangeListener);
             mEdgeBackGestureHandler.setBackAnimation(mBackAnimation);
             mTaskStackChangeListeners.registerTaskStackListener(mTaskStackListener);
+            mContext.getContentResolver().registerContentObserver(
+                    Settings.System.getUriFor(Settings.System.ENABLE_ROTATION_BUTTON),
+                    false /* notifyForDescendants */, mRotationButtonObserver,
+                    UserHandle.USER_ALL);
             mInitialized = true;
         } finally {
             Trace.endSection();
@@ -372,6 +380,7 @@ public class TaskbarDelegate implements CommandQueue.Callbacks,
         mLightBarController.setNavigationBar(null);
         mPipOptional.ifPresent(this::removePipExclusionBoundsChangeListener);
         mTaskStackChangeListeners.unregisterTaskStackListener(mTaskStackListener);
+        mContext.getContentResolver().unregisterContentObserver(mRotationButtonObserver);
         mInitialized = false;
     }
 
@@ -558,8 +567,36 @@ public class TaskbarDelegate implements CommandQueue.Callbacks,
 
     @Override
     public void onRotationProposal(int rotation, boolean isValid) {
+        mLastProposedRotation = rotation;
+        // IchthysOS: crDroid "Rotation button" (enable_rotation_button, default on). NavigationBar
+        // honours it, but while the launcher taskbar draws the navbar the proposal goes here, and
+        // Launcher3 never reads the key. An invalid proposal (which hides the button) still
+        // goes through.
+        if (isValid && !isRotationButtonEnabled()) {
+            return;
+        }
         mLauncherProxyService.onRotationProposal(rotation, isValid);
     }
+
+    /** IchthysOS: last rotation proposed, so a visible suggestion can be withdrawn. */
+    private int mLastProposedRotation;
+
+    private boolean isRotationButtonEnabled() {
+        return Settings.System.getIntForUser(mContext.getContentResolver(),
+                Settings.System.ENABLE_ROTATION_BUTTON, 1, UserHandle.USER_CURRENT) != 0;
+    }
+
+    /** IchthysOS: hide a showing rotation suggestion as soon as the switch is turned off. */
+    private final ContentObserver mRotationButtonObserver =
+            new ContentObserver(new Handler(Looper.getMainLooper())) {
+                @Override
+                public void onChange(boolean selfChange) {
+                    if (!isRotationButtonEnabled()) {
+                        mLauncherProxyService.onRotationProposal(mLastProposedRotation,
+                                false /* isValid */);
+                    }
+                }
+            };
 
     @Override
     public void disable(int displayId, int state1, int state2, boolean animate) {

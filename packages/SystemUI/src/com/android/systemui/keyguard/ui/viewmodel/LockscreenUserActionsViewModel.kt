@@ -31,8 +31,8 @@ import com.android.systemui.shade.shared.model.ShadeMode
 import com.android.systemui.shade.ui.viewmodel.dualShadeActions
 import com.android.systemui.shade.ui.viewmodel.singleShadeActions
 import com.android.systemui.shade.ui.viewmodel.splitShadeActions
+import com.android.systemui.util.settings.SecureSettings
 import com.android.systemui.util.settings.SettingsProxyExt.observerFlow
-import com.android.systemui.util.settings.SystemSettings
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -52,7 +52,7 @@ constructor(
     private val communalInteractor: CommunalInteractor,
     private val shadeInteractor: ShadeInteractor,
     private val shadeModeInteractor: ShadeModeInteractor,
-    private val systemSettings: SystemSettings,
+    private val secureSettings: SecureSettings,
 ) : UserActionsViewModel() {
 
     override suspend fun hydrateActions(setActions: (Map<UserAction, UserActionResult>) -> Unit) {
@@ -107,16 +107,17 @@ constructor(
 
     /**
      * crDroid `enable_lockscreen_quick_settings`, defaulting to on to match the preference XML.
+     * It lives in Settings.Secure, which is where crDroidSettings writes it.
      *
      * Read through the `*ForUser` variant with [UserHandle.USER_CURRENT]: the shade runs in a
      * per-display window context whose `getUserId()` is not the foreground user.
      */
     private fun lockscreenQuickSettingsEnabled(): Flow<Boolean> =
-        systemSettings
+        secureSettings
             .observerFlow(KEY_LOCKSCREEN_QUICK_SETTINGS)
             .onStart { emit(Unit) }
             .map {
-                systemSettings.getIntForUser(
+                secureSettings.getIntForUser(
                     KEY_LOCKSCREEN_QUICK_SETTINGS,
                     1,
                     UserHandle.USER_CURRENT,

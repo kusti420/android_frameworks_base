@@ -115,6 +115,8 @@ public class NetworkTraffic extends TextView implements TunerService.Tunable, Da
 
     private ConnectivityManager mConnectivityManager;
     private final Handler mTrafficHandler;
+    // IchthysOS: the refresh loop only runs while the screen is on.
+    private boolean mScreenOn = true;
 
     private final RelativeSizeSpan mSpeedRelativeSizeSpan = new RelativeSizeSpan(0.70f);
     private final RelativeSizeSpan mUnitRelativeSizeSpan = new RelativeSizeSpan(0.65f);
@@ -225,8 +227,9 @@ public class NetworkTraffic extends TextView implements TunerService.Tunable, Da
                     setTrafficDrawable();
                 }
 
-                // Schedule periodic refresh
-                if (mEnabled && mAttached) {
+                // Schedule periodic refresh. IchthysOS: not while the screen is off, where nobody
+                // sees it and each refresh costs two NetworkStats binder calls.
+                if (mEnabled && mAttached && mScreenOn) {
                     mTrafficHandler.sendEmptyMessageDelayed(MESSAGE_TYPE_PERIODIC_REFRESH,
                             mRefreshInterval * 1000);
                 }
@@ -318,6 +321,9 @@ public class NetworkTraffic extends TextView implements TunerService.Tunable, Da
 
             IntentFilter filter = new IntentFilter();
             filter.addAction(ConnectivityManager.CONNECTIVITY_ACTION);
+            filter.addAction(Intent.ACTION_SCREEN_OFF);
+            filter.addAction(Intent.ACTION_SCREEN_ON);
+            mScreenOn = mContext.getSystemService(android.os.PowerManager.class).isInteractive();
             mContext.registerReceiver(mIntentReceiver, filter, null, mTrafficHandler);
 
             updateViews();
@@ -358,6 +364,15 @@ public class NetworkTraffic extends TextView implements TunerService.Tunable, Da
             if (action == null) return;
             if (action.equals(ConnectivityManager.CONNECTIVITY_ACTION)) {
                 mConnectionAvailable = mConnectivityManager.getActiveNetwork() != null;
+                updateViews();
+            } else if (action.equals(Intent.ACTION_SCREEN_OFF)) {
+                // IchthysOS: stop polling until the screen is back on.
+                mScreenOn = false;
+                clearHandlerCallbacks();
+            } else if (action.equals(Intent.ACTION_SCREEN_ON)) {
+                mScreenOn = true;
+                // Fresh baseline, so the first sample is not averaged over the screen-off time.
+                mLastUpdateTime = 0;
                 updateViews();
             }
         }

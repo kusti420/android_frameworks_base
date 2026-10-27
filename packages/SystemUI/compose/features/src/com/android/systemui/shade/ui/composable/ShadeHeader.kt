@@ -106,6 +106,7 @@ import com.android.systemui.privacy.AbstractOngoingPrivacyChip
 import com.android.systemui.privacy.OngoingPrivacyChip
 import com.android.systemui.privacy.PrivacyItem
 import com.android.systemui.privacy.ui.view.ComposeOngoingPrivacyChip
+import com.android.systemui.qs.ui.composable.rememberIchthysSystemInt
 import com.android.systemui.res.R
 import com.android.systemui.scene.shared.model.DualShadeEducationElement
 import com.android.systemui.scene.shared.model.Scenes
@@ -364,33 +365,45 @@ fun ContentScope.ExpandedShadeHeader(
                     }
                 }
             }
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
+            // IchthysOS: Mute | Vibrate | Ring centred on the screen, over the free space between
+            // the date and the icons; the row underneath keeps its stock layout.
+            Box(
+                contentAlignment = Alignment.Center,
                 modifier = Modifier.element(ShadeHeader.Elements.ExpandedContent).fillMaxWidth(),
             ) {
-                VariableDayDate(
-                    longerDateText = viewModel.longerDateText,
-                    shorterDateText = viewModel.shorterDateText,
-                    textColor = textColor,
-                    modifier = Modifier.sysuiResTag("expanded_shade_header_day_date"),
-                )
-                ShadeHighlightChip {
-                    val paddingEnd = with(LocalDensity.current) { 3.sp.toDp() }
-                    StatusIcons(
-                        viewModel = viewModel,
-                        useExpandedFormat = useExpandedFormat,
-                        foregroundColor = textColor.toArgb(),
-                        backgroundColor = ShadeHeader.Colors.inverseTextColor.toArgb(),
-                        modifier = Modifier.padding(end = paddingEnd).weight(1f, fill = false),
-                    )
-                    BatteryInfo(
-                        viewModel = viewModel,
-                        showIcon = true,
-                        useExpandedFormat = true,
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    VariableDayDate(
+                        longerDateText = viewModel.longerDateText,
+                        shorterDateText = viewModel.shorterDateText,
                         textColor = textColor,
+                        modifier = Modifier.sysuiResTag("expanded_shade_header_day_date"),
                     )
+                    ShadeHighlightChip {
+                        val paddingEnd = with(LocalDensity.current) { 3.sp.toDp() }
+                        StatusIcons(
+                            viewModel = viewModel,
+                            useExpandedFormat = useExpandedFormat,
+                            foregroundColor = textColor.toArgb(),
+                            backgroundColor = ShadeHeader.Colors.inverseTextColor.toArgb(),
+                            modifier = Modifier.padding(end = paddingEnd).weight(1f, fill = false),
+                        )
+                        BatteryInfo(
+                            viewModel = viewModel,
+                            showIcon = true,
+                            useExpandedFormat = true,
+                            textColor = textColor,
+                        )
+                    }
                 }
+                ShoalRingerPill(
+                    accent = MaterialTheme.colorScheme.primary,
+                    onAccent = MaterialTheme.colorScheme.onPrimary,
+                    mutedColor = textColor.copy(alpha = 0.7f),
+                )
             }
         }
     }
@@ -424,6 +437,8 @@ private fun ContentScope.ShoalShadeHeader(
     val configuration = LocalConfiguration.current
     val textColor = remember(configuration) { Color(ShoalShade.textColor(context)) }
     val mutedColor = remember(configuration) { Color(ShoalShade.mutedColor(context)) }
+    val accentColor = remember(configuration) { Color(ShoalShade.accent(context)) }
+    val inkColor = remember(configuration) { Color(ShoalShade.inkColor(context)) }
     val textFamily =
         remember(context) {
             FontFamily(Font(DeviceFontFamilyName(ShoalShade.textFamily(context))))
@@ -455,15 +470,25 @@ private fun ContentScope.ShoalShadeHeader(
                 shoalHeader = true,
                 modifier = Modifier.sysuiResTag("expanded_header_clock"),
             )
-            VariableDayDate(
-                longerDateText = longDate,
-                shorterDateText = viewModel.shorterDateText,
-                textColor = mutedColor,
-                textStyle = TextStyle(fontFamily = textFamily, fontSize = 13.sp),
-                modifier =
-                    Modifier.element(ShadeHeader.Elements.CollapsedContentStart)
-                        .sysuiResTag("expanded_shade_header_day_date"),
-            )
+            // The date, and Mute | Vibrate | Ring in the free space after it (before the icons).
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                VariableDayDate(
+                    longerDateText = longDate,
+                    shorterDateText = viewModel.shorterDateText,
+                    textColor = mutedColor,
+                    textStyle = TextStyle(fontFamily = textFamily, fontSize = 13.sp),
+                    modifier =
+                        Modifier.weight(1f)
+                            .element(ShadeHeader.Elements.CollapsedContentStart)
+                            .sysuiResTag("expanded_shade_header_day_date"),
+                )
+                ShoalRingerPill(
+                    accent = accentColor,
+                    onAccent = inkColor,
+                    mutedColor = mutedColor,
+                    modifier = Modifier.element(ShoalRingerElement).padding(end = 10.dp),
+                )
+            }
         }
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -512,6 +537,8 @@ private fun ContentScope.ShoalShadeHeader(
 }
 
 private val ShoalHeaderPaddingTop = 10.dp
+/** IchthysOS: the ringer pill, shared between the Shade and Quick Settings scenes. */
+private val ShoalRingerElement = ElementKey("ShoalRinger")
 private val ShoalHeaderPaddingBottom = 8.dp
 private const val ShoalDatePattern = "EEE, d MMMM"
 
@@ -834,7 +861,10 @@ private fun BatteryInfo(
         if (showIcon) {
             val tint = (chipHighlightModel?.foregroundColor ?: textColor).toArgb()
             AndroidView(
-                factory = { context -> IchthysShoalBatteryView(context) },
+                // IchthysOS: the QS header battery style / percent overrides apply here.
+                factory = { context ->
+                    IchthysShoalBatteryView(context).apply { setQsHeader(true) }
+                },
                 update = { view -> view.onDarkChanged(ArrayList(), 0f, tint) },
                 modifier = modifier.sysuiResTag(ShadeHeader.TestTags.BatteryTestTag),
             )
@@ -853,11 +883,14 @@ private fun BatteryInfo(
             ChipHighlightModel.Strong -> IsAreaDark { !isQuickSettingsDarkTheme }
             ChipHighlightModel.Weak -> IsAreaDark { isQuickSettingsDarkTheme }
         }
+    // IchthysOS: crDroid "Battery estimate" (qs_show_battery_estimate, default on). The legacy
+    // ShadeHeaderController reader never runs with scene_container on.
+    val showEstimateSetting = rememberIchthysSystemInt("qs_show_battery_estimate", 1) != 0
     BatteryWithEstimate(
         viewModelFactory = viewModel.batteryViewModelFactory,
         isDarkProvider = { isDarkProvider },
         showIcon = showIcon,
-        showEstimate = useExpandedFormat,
+        showEstimate = useExpandedFormat && showEstimateSetting,
         textColor = textColor,
         modifier = modifier.sysuiResTag(ShadeHeader.TestTags.BatteryTestTag),
     )

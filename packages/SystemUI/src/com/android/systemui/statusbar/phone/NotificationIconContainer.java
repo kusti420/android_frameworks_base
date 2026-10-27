@@ -255,7 +255,10 @@ public class NotificationIconContainer extends ViewGroup {
 
     @Override
     protected boolean drawChild(Canvas canvas, View child, long drawingTime) {
-        if (mZigzag && !mZzLightBar && mZzShown.contains(child)) {
+        // IchthysOS: with "Colored icons" on, the app icon keeps its colours.
+        if (mZigzag && !mZzLightBar && mZzShown.contains(child)
+                && !(child instanceof StatusBarIconView
+                        && ((StatusBarIconView) child).isColoredIconStyle())) {
             // Muted grey glyphs on the dark neutral discs, whatever the app's icon colour.
             IchthysZigzag.discBounds(child, mZzCell, mZzLayerBounds);
             final int save = canvas.saveLayer(mZzLayerBounds, mZzGlyphPaint);
@@ -348,6 +351,11 @@ public class NotificationIconContainer extends ViewGroup {
         setMeasuredDimension(measuredWidth, measuredHeight);
     }
 
+    /** IchthysOS: the lattice cap, lowered by the user's notification icon limit. */
+    private int zigzagMaxIcons() {
+        return Math.min(ZZ_MAX_ICONS, Math.max(0, mMaxIcons));
+    }
+
     /** Zig-zag measure: icon i sits half a pitch after icon i - 1, alternating rows. */
     private void measureZigzag(int widthMeasureSpec, int heightMeasureSpec) {
         final int width = MeasureSpec.getSize(widthMeasureSpec);
@@ -363,7 +371,8 @@ public class NotificationIconContainer extends ViewGroup {
         final int measuredHeight = MeasureSpec.getSize(heightMeasureSpec);
         final float cell = IchthysZigzag.cellFor(this,
                 measuredHeight - getPaddingTop() - getPaddingBottom());
-        count = Math.min(count, ZZ_MAX_ICONS);
+        // IchthysOS: honour the notification icon limit (ichthys_statusbar_notif_icons) too.
+        count = Math.min(count, zigzagMaxIcons());
         int totalWidth = (int) (getActualPaddingStart() + getActualPaddingEnd());
         if (count > 0) {
             totalWidth += (int) Math.ceil(cell + (count - 1) * IchthysZigzag.halfPitch(cell));
@@ -407,7 +416,7 @@ public class NotificationIconContainer extends ViewGroup {
             iconState.noAnimations = true;
             final float cx = left + cell / 2f + shown * halfPitch;
             if (!(view instanceof StatusBarIconView) || view.getVisibility() != VISIBLE
-                    || shown >= ZZ_MAX_ICONS || cx + cell / 2f > right
+                    || shown >= zigzagMaxIcons() || cx + cell / 2f > right
                     || !IchthysZigzag.glyphRect(view, mZzGlyph)) {
                 iconState.visibleState = StatusBarIconView.STATE_HIDDEN;
                 continue;

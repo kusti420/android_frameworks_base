@@ -17,6 +17,8 @@
 package com.android.systemui.statusbar.policy;
 
 import android.annotation.NonNull;
+import android.app.ActivityManager;
+import android.app.WindowConfiguration;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -54,6 +56,9 @@ import com.android.systemui.plugins.DarkIconDispatcher;
 import com.android.systemui.plugins.DarkIconDispatcher.DarkReceiver;
 import com.android.systemui.res.R;
 import com.android.systemui.settings.UserTracker;
+import com.android.systemui.shared.system.ActivityManagerWrapper;
+import com.android.systemui.shared.system.TaskStackChangeListener;
+import com.android.systemui.shared.system.TaskStackChangeListeners;
 import com.android.systemui.statusbar.phone.ui.StatusBarIconController;
 import com.android.systemui.tuner.TunerService;
 import com.android.systemui.tuner.TunerService.Tunable;
@@ -166,16 +171,35 @@ public class Clock extends TextView implements
     private boolean mBoldStatusBarClock;
 
     // Custom Options: clock auto-hide state.
-    // Hide the clock this long (ms) after it was last shown by a relevant event.
-    private static final long CLOCK_AUTO_HIDE_DELAY_MS = 5000;
+    // IchthysOS: "Auto hide" now means what its summary says, "Hide clock if launcher is
+    // visible": the clock is hidden while the home (launcher) task is on top. The old 5 s timer
+    // hid it for good, as only a status bar window visibility change brought it back.
     private boolean mClockAutoHide;
-    // True while the clock is currently suppressed by the auto-hide timeout.
-    private boolean mClockAutoHidden;
+    // True while the launcher is the top task (only tracked while auto-hide is on).
+    private boolean mLauncherOnTop;
+    private boolean mTaskListenerRegistered;
+    // IchthysOS: "clock" in the hidden-icons list (Status bar icons > Clock switch).
+    private boolean mHiddenByIconList;
     // The visibility last requested by external (policy) callers, so auto-hide never
     // overrides a policy-driven hide; defaults to VISIBLE until told otherwise.
     private int mRequestedVisibility = VISIBLE;
-    private final Handler mAutoHideHandler = new Handler();
-    private final Runnable mClockAutoHideRunnable = this::hideClock;
+    private final TaskStackChangeListener mTaskStackListener = new TaskStackChangeListener() {
+        @Override
+        public void onTaskStackChangedBackground() {
+            // Binder call, so it runs on the listener's background thread.
+            final ActivityManager.RunningTaskInfo top =
+                    ActivityManagerWrapper.getInstance().getRunningTask();
+            final boolean home = top != null
+                    && top.getActivityType() == WindowConfiguration.ACTIVITY_TYPE_HOME;
+            post(() -> setLauncherOnTop(home));
+        }
+
+        @Override
+        public void onTaskMovedToFront(ActivityManager.RunningTaskInfo taskInfo) {
+            setLauncherOnTop(taskInfo != null
+                    && taskInfo.getActivityType() == WindowConfiguration.ACTIVITY_TYPE_HOME);
+        }
+    };
 
     // Custom Options: status bar clock position (left/center/right).
     // The position slot this clock instance occupies. The inflated start-side clock
@@ -328,8 +352,8 @@ public class Clock extends TextView implements
             Dependency.get(TunerService.class).removeTunable(this);
             mUserTracker.removeCallback(mUserChangedCallback);
         }
-        // Custom Options: cancel any pending auto-hide.
-        mAutoHideHandler.removeCallbacks(mClockAutoHideRunnable);
+        // Custom Options: stop tracking the launcher for auto-hide.
+        setTaskListenerRegistered(false);
     }
 
     // Custom Options: capture externally-requested (policy) visibility so auto-hide and
@@ -374,55 +398,50 @@ public class Clock extends TextView implements
             super.setVisibility(GONE);
             return;
         }
-        if (mClockAutoHide && mClockAutoHidden && mRequestedVisibility == VISIBLE) {
-            // Policy wants us shown, but we are in the auto-hidden window: stay hidden.
+        if (mRequestedVisibility == VISIBLE
+                && ((mClockAutoHide && mLauncherOnTop) || mHiddenByIconList)) {
+            // Policy wants us shown, but the launcher is on top (auto-hide) or the user hid the
+            // clock in the hidden-icons list: stay hidden.
             super.setVisibility(GONE);
             return;
         }
         super.setVisibility(mRequestedVisibility);
     }
 
-    @Override
-    protected void onWindowVisibilityChanged(int visibility) {
-        super.onWindowVisibilityChanged(visibility);
-        // Custom Options: reveal the clock (and restart the timer) whenever the status bar
-        // window becomes visible again (e.g. screen on / shade shown) - a relevant event.
-        if (mClockAutoHide && visibility == VISIBLE) {
-            showClock();
-        }
-    }
-
     // Custom Options: entry point to (re)apply the auto-hide state after the setting changes.
     private void updateAutoHide() {
-        if (mClockAutoHide) {
-            // Show now, then arm the hide timer.
-            showClock();
+        // IchthysOS: only the real status bar clocks follow the launcher; the QS header clock
+        // never auto-hides.
+        setTaskListenerRegistered(mClockAutoHide && mIsStatusBar && mAttached);
+        if (!mTaskListenerRegistered) {
+            mLauncherOnTop = false;
+        }
+        applyClockPositionVisibility();
+    }
+
+    private void setTaskListenerRegistered(boolean register) {
+        if (register == mTaskListenerRegistered) {
+            return;
+        }
+        mTaskListenerRegistered = register;
+        if (register) {
+            TaskStackChangeListeners.getInstance().registerTaskStackListener(mTaskStackListener);
+            // Pick up the current top task, off the main thread.
+            new Handler(Dependency.get(Dependency.BG_LOOPER)).post(
+                    mTaskStackListener::onTaskStackChangedBackground);
         } else {
-            mAutoHideHandler.removeCallbacks(mClockAutoHideRunnable);
-            mClockAutoHidden = false;
-            // Restore whatever visibility policy last requested (respecting the slot gate).
+            TaskStackChangeListeners.getInstance().unregisterTaskStackListener(mTaskStackListener);
+        }
+    }
+
+    private void setLauncherOnTop(boolean launcherOnTop) {
+        if (!mTaskListenerRegistered) {
+            launcherOnTop = false;
+        }
+        if (mLauncherOnTop != launcherOnTop) {
+            mLauncherOnTop = launcherOnTop;
             applyClockPositionVisibility();
         }
-    }
-
-    // Custom Options: reveal the clock (respecting policy) and schedule the next auto-hide.
-    public void showClock() {
-        if (!mClockAutoHide) {
-            return;
-        }
-        mClockAutoHidden = false;
-        applyClockPositionVisibility();
-        mAutoHideHandler.removeCallbacks(mClockAutoHideRunnable);
-        mAutoHideHandler.postDelayed(mClockAutoHideRunnable, CLOCK_AUTO_HIDE_DELAY_MS);
-    }
-
-    // Custom Options: suppress the clock via auto-hide, but only if policy currently allows it.
-    private void hideClock() {
-        if (!mClockAutoHide) {
-            return;
-        }
-        mClockAutoHidden = true;
-        applyClockPositionVisibility();
     }
 
     private final BroadcastReceiver mIntentReceiver = new BroadcastReceiver() {
@@ -525,6 +544,14 @@ public class Clock extends TextView implements
             case STATUS_BAR_CLOCK_AUTO_HIDE:
                 mClockAutoHide = TunerService.parseIntegerSwitch(newValue, false);
                 updateAutoHide();
+                return;
+            case StatusBarIconController.ICON_HIDE_LIST:
+                // IchthysOS: the "Clock" switch on the Status bar icons page writes "clock" into
+                // this list; only the status bar clocks honour it, not the QS header clock.
+                mHiddenByIconList = mIsStatusBar && StatusBarIconController.getIconHideList(
+                        getContext(), newValue).contains(getContext().getString(
+                                com.android.internal.R.string.status_bar_clock));
+                applyClockPositionVisibility();
                 return;
             case STATUS_BAR_CLOCK_POSITION:
                 // Custom Options: default left (2). This fires during addTunable() before
@@ -882,11 +909,35 @@ public class Clock extends TextView implements
     private final Runnable mSecondTick = new Runnable() {
         @Override
         public void run() {
+            // IchthysOS: the inactive centre/right clocks (GONE) and a hidden status bar do not
+            // tick; onVisibilityAggregated restarts the tick when this clock is shown again.
+            if (!mTickVisible || mSecondsHandler == null) {
+                return;
+            }
             if (mCalendar != null) {
                 updateClock();
             }
             mSecondsHandler.postAtTime(this, SystemClock.uptimeMillis() / 1000 * 1000 + 1000);
         }
     };
+
+    /** IchthysOS: whether this clock is on screen, see {@link #mSecondTick}. */
+    private boolean mTickVisible = true;
+
+    @Override
+    public void onVisibilityAggregated(boolean isVisible) {
+        super.onVisibilityAggregated(isVisible);
+        if (mTickVisible == isVisible) {
+            return;
+        }
+        mTickVisible = isVisible;
+        if (isVisible && mSecondsHandler != null && getDisplay() != null
+                && getDisplay().getState() == Display.STATE_ON) {
+            mSecondsHandler.removeCallbacks(mSecondTick);
+            mSecondsHandler.postAtTime(mSecondTick,
+                    SystemClock.uptimeMillis() / 1000 * 1000 + 1000);
+            updateClock();
+        }
+    }
 }
 

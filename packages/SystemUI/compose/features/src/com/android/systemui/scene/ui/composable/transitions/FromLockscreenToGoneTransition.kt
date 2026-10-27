@@ -16,6 +16,7 @@
 package com.android.systemui.scene.ui.composable.transitions
 
 import androidx.compose.animation.core.AnimationVector
+import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.TwoWayConverter
@@ -25,6 +26,7 @@ import com.android.systemui.keyguard.ICHTHYS_DEPTH_UNLOCK_MS
 import androidx.compose.ui.unit.dp
 import com.android.compose.animation.Easings
 import com.android.compose.animation.scene.TransitionBuilder
+import com.android.systemui.keyguard.data.repository.IchthysDepthRepository
 import com.android.systemui.plugins.keyguard.ui.composable.elements.LockscreenElementKeys
 
 /**
@@ -58,10 +60,33 @@ private object IchthysUnlockSpec : FiniteAnimationSpec<Float> {
     }
 }
 
+/**
+ * IchthysOS: the fade of the lock screen elements, over the whole unlock. With depth on it runs in
+ * 0.6..0.97, after the layers have come apart; without depth in the stock 0..0.3. Easings are
+ * evaluated per frame, so one transition covers both and follows depth without a restart.
+ */
+private object IchthysUnlockFade : Easing {
+    override fun transform(fraction: Float): Float {
+        val progress = fraction * UNLOCK_FADE_END
+        val local =
+            if (IchthysDepthRepository.enabledNow) (progress - 0.6f) / (UNLOCK_FADE_END - 0.6f)
+            else progress / 0.3f
+        return Easings.PredictiveBack.transform(local.coerceIn(0f, 1f))
+    }
+}
+
+/** IchthysOS: the stock motion (the clock's lift), standing still with depth on. */
+private object IchthysStockOnly : Easing {
+    override fun transform(fraction: Float): Float =
+        if (IchthysDepthRepository.enabledNow) 0f else Easings.PredictiveBack.transform(fraction)
+}
+
+private const val UNLOCK_FADE_END = 0.97f
+
 fun TransitionBuilder.lockscreenToGoneWithAnimationOverLockscreenTransition() {
     spec = IchthysUnlockSpec
 
-    fractionRange(start = 0.6f, end = 0.97f, easing = Easings.PredictiveBack) {
+    fractionRange(end = UNLOCK_FADE_END, easing = IchthysUnlockFade) {
         // Fade out all lock screen elements, except the status bar.
         fade(LockscreenElementKeys.Region.Upper)
         fade(LockscreenElementKeys.LockIcon)
@@ -76,8 +101,11 @@ fun TransitionBuilder.lockscreenToGoneWithAnimationOverLockscreenTransition() {
 fun TransitionBuilder.lockscreenToGoneTransition() {
     lockscreenToGoneWithAnimationOverLockscreenTransition()
 
-    fractionRange(start = 0.6f, end = 0.97f, easing = Easings.PredictiveBack) {
+    fractionRange(end = UNLOCK_FADE_END, easing = IchthysUnlockFade) {
         translate(LockscreenElementKeys.Notifications.Stack, y = (-72).dp)
+    }
+    fractionRange(end = 0.3f, easing = IchthysStockOnly) {
+        translate(LockscreenElementKeys.Region.Upper, y = (-48).dp)
     }
 }
 

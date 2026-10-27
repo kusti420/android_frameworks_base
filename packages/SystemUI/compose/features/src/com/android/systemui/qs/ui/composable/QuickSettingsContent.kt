@@ -60,10 +60,16 @@ fun ContentScope.QuickSettingsContent(
     // content (see ShoalMediaDockHost), so the carousel must not be here a second time. The grid
     // style keeps it where it was.
     val isMediaDocked = rememberShoalQsEnabled()
+    // IchthysOS: crDroid brightness slider "When to show" (0 = never, 1 = expanded, 2 = always;
+    // the collapsed shade has no slider, so 1 and 2 both show it here) and "Position" (1 = bottom).
+    val showBrightnessSlider =
+        rememberIchthysLineageSecureInt(IchthysQsSettings.SHOW_BRIGHTNESS_SLIDER, 1) != 0
+    val brightnessAtBottom =
+        rememberIchthysLineageSecureInt(IchthysQsSettings.BRIGHTNESS_SLIDER_POSITION, 0) == 1
     QuickSettingsPanelLayout(
         brightness =
             @Composable {
-                if (viewModel.isBrightnessSliderVisible) {
+                if (viewModel.isBrightnessSliderVisible && showBrightnessSlider) {
                     var isBrightnessSliderInteractable by remember { mutableStateOf(false) }
                     LaunchedEffect(Unit) {
                         snapshotFlow { Elements.QuickSettingsContent.currentAlpha() }
@@ -133,6 +139,7 @@ fun ContentScope.QuickSettingsContent(
             },
         // IchthysOS: without the carousel there is nothing to put beside the tiles.
         mediaInRow = mediaInRow && !isMediaDocked,
+        brightnessAtBottom = brightnessAtBottom,
         modifier =
             modifier
                 .element(Elements.QuickSettingsContent)
@@ -148,6 +155,8 @@ private fun QuickSettingsPanelLayout(
     // IchthysOS: null when the media player is docked outside this layout.
     media: (@Composable () -> Unit)?,
     mediaInRow: Boolean,
+    // IchthysOS: crDroid "Position" = bottom puts the slider below the tiles and media.
+    brightnessAtBottom: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     if (mediaInRow) {
@@ -156,7 +165,7 @@ private fun QuickSettingsPanelLayout(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = modifier,
         ) {
-            brightness()
+            if (!brightnessAtBottom) brightness()
             Row(
                 horizontalArrangement = spacedBy(QuickSettingsShade.Dimensions.HorizontalPadding),
                 verticalAlignment = Alignment.CenterVertically,
@@ -164,6 +173,7 @@ private fun QuickSettingsPanelLayout(
                 Box(modifier = Modifier.weight(1f)) { tiles() }
                 Box(modifier = Modifier.weight(1f)) { media?.invoke() }
             }
+            if (brightnessAtBottom) brightness()
         }
     } else {
         Column(
@@ -171,9 +181,10 @@ private fun QuickSettingsPanelLayout(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = modifier,
         ) {
-            brightness()
+            if (!brightnessAtBottom) brightness()
             tiles()
             media?.invoke()
+            if (brightnessAtBottom) brightness()
         }
     }
 }

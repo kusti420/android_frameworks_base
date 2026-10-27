@@ -32,6 +32,7 @@ import android.media.session.MediaSessionManager;
 
 import com.android.internal.util.ContrastColorUtil;
 import com.android.settingslib.Utils;
+import com.android.settingslib.utils.ThreadUtils;
 
 import java.util.List;
 
@@ -57,7 +58,9 @@ public class PulseColorController implements ColorAnimator.ColorAnimationListene
 
     private int mLavaColor = Color.WHITE;
     private long mLastAlbumSample;
-    private int mAlbumColor = Color.WHITE;
+    // IchthysOS: written by the background sampler, read by the renderers in onDraw.
+    private volatile int mAlbumColor = Color.WHITE;
+    private volatile boolean mAlbumSampling;
 
     public PulseColorController(Context context, InvalidateCallback callback) {
         mContext = context;
@@ -123,19 +126,37 @@ public class PulseColorController implements ColorAnimator.ColorAnimationListene
 
     private int getAlbumColor() {
         long now = System.currentTimeMillis();
-        if (now - mLastAlbumSample < ALBUM_REFRESH_MS) {
+        if (now - mLastAlbumSample < ALBUM_REFRESH_MS || mAlbumSampling) {
             return mAlbumColor;
         }
         mLastAlbumSample = now;
-        int sampled = sampleArtworkColor();
-        if (sampled != 0) {
-            // Ensure the album color reads well against a dark lockscreen,
-            // mirroring crDroid's ColorController contrast handling.
-            int c = ContrastColorUtil.findContrastColorAgainstDark(sampled, 0x000000, true, 2);
-            mAlbumColor = ContrastColorUtil.findContrastColor(c, 0xffffff, true, 2);
-        } else {
-            mAlbumColor = Utils.getColorAccentDefaultColor(mContext);
-        }
+        // IchthysOS: this is called from the renderers' onDraw. getActiveSessions / getMetadata
+        // are binder calls and the artwork is scaled down, so sample on a background thread and
+        // draw with the cached colour meanwhile.
+        mAlbumSampling = true;
+        ThreadUtils.postOnBackgroundThread(() -> {
+            try {
+                int sampled = sampleArtworkColor();
+                int color;
+                if (sampled != 0) {
+                    // Ensure the album color reads well against a dark lockscreen,
+                    // mirroring crDroid's ColorController contrast handling.
+                    int c = ContrastColorUtil.findContrastColorAgainstDark(sampled, 0x000000,
+                            true, 2);
+                    color = ContrastColorUtil.findContrastColor(c, 0xffffff, true, 2);
+                } else {
+                    color = Utils.getColorAccentDefaultColor(mContext);
+                }
+                if (color != mAlbumColor) {
+                    mAlbumColor = color;
+                    if (mCallback != null) {
+                        mCallback.onColorChanged();
+                    }
+                }
+            } finally {
+                mAlbumSampling = false;
+            }
+        });
         return mAlbumColor;
     }
 

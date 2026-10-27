@@ -51,6 +51,7 @@ import com.android.systemui.window.domain.interactor.WindowRootViewBlurInteracto
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.onEach
+import lineageos.providers.LineageSettings
 
 @VolumeDialogScope
 class VolumeDialogSlidersViewBinder
@@ -79,13 +80,16 @@ constructor(
         // VolumeDialogRingerViewBinder). Scoped to One UI only (the slider is anchored to parent
         // with verticalBias 0.5, so GONE-ing the bottom section does not collapse it), so the
         // global dimen and every other volume style are untouched.
+        // IchthysOS: only the vertical dialog has the One UI pill, like the other volume binders;
+        // the horizontal one (custom_volume_horizontal) keeps its own layout.
         val oneUiStyle =
-            Settings.System.getIntForUser(
-                view.context.contentResolver,
-                "volume_panel_style",
-                1,
-                UserHandle.USER_CURRENT,
-            ) == 1
+            viewModel.isVolumeDialogVertical &&
+                Settings.System.getIntForUser(
+                    view.context.contentResolver,
+                    "volume_panel_style",
+                    1,
+                    UserHandle.USER_CURRENT,
+                ) == 1
         if (oneUiStyle) {
             // IchthysOS: start collapsed every time the dialog is (re-)bound.
             OneUiExpandState.collapse()
@@ -111,7 +115,18 @@ constructor(
                 it.verticalBias = ONEUI_VERTICAL_BIAS
                 it.topMargin = 0
                 it.bottomMargin = 0
-                it.marginEnd = (ONEUI_EDGE_MARGIN_DP * density).toInt()
+                // IchthysOS: the margin goes on the screen-edge side, which is the start with
+                // "Volume panel on left" (VolumeDialog uses Gravity.START then).
+                val edgeMargin = (ONEUI_EDGE_MARGIN_DP * density).toInt()
+                val panelOnLeft =
+                    LineageSettings.Secure.getIntForUser(
+                        view.context.contentResolver,
+                        LineageSettings.Secure.VOLUME_PANEL_ON_LEFT,
+                        0,
+                        UserHandle.USER_CURRENT,
+                    ) != 0
+                it.marginEnd = if (panelOnLeft) 0 else edgeMargin
+                it.marginStart = if (panelOnLeft) edgeMargin else 0
                 mainSliderContainer.layoutParams = it
             }
             mainSliderContainer.applyOneUiPill(

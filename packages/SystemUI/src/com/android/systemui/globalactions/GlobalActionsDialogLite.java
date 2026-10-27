@@ -580,6 +580,12 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
      */
     public void showOrHideDialog(boolean keyguardShowing, boolean isDeviceProvisioned,
             @Nullable Expandable expandable, int displayId) {
+        // IchthysOS: "Power menu on secure lock screen" off. PhoneWindowManager only gates the
+        // power key; the QS footer power button calls in here with keyguardShowing = false, so
+        // ask KeyguardStateController whether a secure lock screen is actually up.
+        if (isPowerMenuBlockedOnLockscreen() && (mDelegate == null || !mDelegate.isShowing())) {
+            return;
+        }
         mKeyguardShowing = keyguardShowing;
         mDeviceProvisioned = isDeviceProvisioned;
         if (mDelegate != null && mDelegate.isShowing()) {
@@ -597,6 +603,16 @@ public class GlobalActionsDialogLite implements DialogInterface.OnDismissListene
         } else {
             handleShow(expandable, displayId);
         }
+    }
+
+    /** IchthysOS: Settings.System.LOCKSCREEN_ENABLE_POWER_MENU (default on) on a locked device. */
+    private boolean isPowerMenuBlockedOnLockscreen() {
+        return mKeyguardStateController.isShowing()
+                && mKeyguardStateController.isMethodSecure()
+                && !mKeyguardStateController.canDismissLockScreen()
+                && Settings.System.getIntForUser(mContext.getContentResolver(),
+                        Settings.System.LOCKSCREEN_ENABLE_POWER_MENU, 1,
+                        UserHandle.USER_CURRENT) == 0;
     }
 
     /**

@@ -21,6 +21,7 @@ import com.android.compose.animation.scene.UserAction
 import com.android.compose.animation.scene.UserActionResult
 import com.android.systemui.res.R
 import com.android.systemui.shade.ShadeDisplayAware
+import com.android.systemui.shade.domain.interactor.IchthysPulldownInteractor
 import com.android.systemui.shade.domain.interactor.ShadeModeInteractor
 import com.android.systemui.shade.shared.model.ShadeMode
 import com.android.systemui.shade.ui.viewmodel.dualShadeActions
@@ -28,27 +29,44 @@ import com.android.systemui.shade.ui.viewmodel.singleShadeActions
 import com.android.systemui.shade.ui.viewmodel.splitShadeActions
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
+import kotlinx.coroutines.flow.combine
 
 class GoneUserActionsViewModel
 @AssistedInject
 constructor(
     private val shadeModeInteractor: ShadeModeInteractor,
     @ShadeDisplayAware private val resources: Resources,
+    private val pulldownInteractor: IchthysPulldownInteractor,
 ) : UserActionsViewModel() {
 
     override suspend fun hydrateActions(setActions: (Map<UserAction, UserActionResult>) -> Unit) {
         val twoFingerSwipeEnabled =
             resources.getBoolean(R.bool.config_enableTwoFingerSwipeDownShade)
-        shadeModeInteractor.shadeMode.collect { shadeMode ->
-            setActions(
-                when (shadeMode) {
-                    ShadeMode.Single -> singleShadeActions(requireTwoPointersForTopEdgeForQs = true)
-                    ShadeMode.Split -> splitShadeActions()
-                    ShadeMode.Dual ->
-                        dualShadeActions(twoFingerSwipeEnabled = twoFingerSwipeEnabled)
-                }.associate { it }
+        // IchthysOS: crDroid quick/smart pulldown; see IchthysPulldownInteractor.
+        combine(
+                shadeModeInteractor.shadeMode,
+                pulldownInteractor.quickPulldownMode,
+                pulldownInteractor.isSmartPulldownActive,
+                ::Triple,
             )
-        }
+            .collect { (shadeMode, quickPulldown, smartPulldown) ->
+                setActions(
+                    when (shadeMode) {
+                        ShadeMode.Single ->
+                            singleShadeActions(
+                                requireTwoPointersForTopEdgeForQs = true,
+                                quickPulldown = quickPulldown,
+                                openQsDirectly =
+                                    smartPulldown ||
+                                        quickPulldown ==
+                                            IchthysPulldownInteractor.QUICK_PULLDOWN_ALWAYS,
+                            )
+                        ShadeMode.Split -> splitShadeActions()
+                        ShadeMode.Dual ->
+                            dualShadeActions(twoFingerSwipeEnabled = twoFingerSwipeEnabled)
+                    }.associate { it }
+                )
+            }
     }
 
     @AssistedFactory

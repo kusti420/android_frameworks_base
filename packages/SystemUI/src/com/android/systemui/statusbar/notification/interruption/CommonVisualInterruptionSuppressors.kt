@@ -243,7 +243,7 @@ class HunJustLaunchedFsiSuppressor :
 
 /**
  * crDroid: "Less boring heads up" - when enabled (Settings.System.LESS_BORING_HEADS_UP), only
- * peek for phone calls and alarms; suppress the peek for everything else.
+ * peek for phone calls, alarms and messages; suppress the peek for everything else.
  */
 class LessBoringHeadsUpSuppressor(private val systemSettings: SystemSettings) :
     VisualInterruptionFilter(types = setOf(PEEK), reason = "less boring heads up") {
@@ -252,7 +252,11 @@ class LessBoringHeadsUpSuppressor(private val systemSettings: SystemSettings) :
             return false
         }
         val category = entry.sbn.notification.category
-        return category != CATEGORY_CALL && category != CATEGORY_ALARM
+        // IchthysOS: the summary promises alarm, dialer *and messaging* apps, so messages
+        // (CATEGORY_MESSAGE, which messaging apps set) pop up too.
+        return category != CATEGORY_CALL &&
+            category != CATEGORY_ALARM &&
+            category != Notification.CATEGORY_MESSAGE
     }
 }
 

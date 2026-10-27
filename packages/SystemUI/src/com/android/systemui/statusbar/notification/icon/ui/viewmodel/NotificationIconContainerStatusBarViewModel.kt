@@ -78,8 +78,12 @@ constructor(
                     IchthysIndicatorSettingsRepository.KEY_NOTIF_DOT_REPLACE_ICONS,
                     false,
                 ),
-            ) { dotEnabled, replaceIcons ->
-                dotEnabled && replaceIcons
+                // IchthysOS: with the default logic "light" (0) the dot only lights while dozing,
+                // so replacing the icons left the awake status bar with no notification sign at
+                // all. The icons are replaced only under "unseen" (1), where the dot shows awake.
+                systemSettings.intSetting(IchthysIndicatorSettingsRepository.KEY_NOTIF_DOT_LOGIC, 0),
+            ) { dotEnabled, replaceIcons, logic ->
+                dotEnabled && replaceIcons && logic == NOTIF_DOT_LOGIC_UNSEEN
             }
             .distinctUntilChanged()
 
@@ -124,6 +128,8 @@ constructor(
 
     private companion object {
         const val ICON_LIMIT_KEY = "ichthys_statusbar_notif_icons"
+        /** ichthys_notif_dot_logic value "unseen"; see IchthysOptions statusBar.notificationDot. */
+        const val NOTIF_DOT_LOGIC_UNSEEN = 1
     }
 
     private class IconColorsImpl(override val tint: Int, private val areas: Collection<Rect>) :

@@ -18,6 +18,7 @@ package com.android.systemui.biometrics
 
 import android.app.AppGlobals
 import android.os.UserHandle
+import android.os.VibrationAttributes
 import android.os.VibrationEffect
 import android.provider.Settings
 import com.android.systemui.statusbar.VibratorHelper
@@ -31,6 +32,13 @@ import com.android.systemui.statusbar.VibratorHelper
  * Callers play their stock haptic only when these return false.
  */
 object IchthysFpHaptics {
+
+    /**
+     * The usage the stock auth haptics play with (VibratorHelper.vibrateAuthSuccess / Error), so a
+     * chosen pattern plays when the stock one would; without it the usage is UNKNOWN.
+     */
+    private val ATTRIBUTES =
+        VibrationAttributes.createForUsage(VibrationAttributes.USAGE_COMMUNICATION_REQUEST)
 
     private fun get(key: String, def: Int): Int {
         val context = AppGlobals.getInitialApplication() ?: return def
@@ -50,7 +58,7 @@ object IchthysFpHaptics {
                 4 -> VibrationEffect.createOneShot(120, VibrationEffect.DEFAULT_AMPLITUDE)
                 else -> return false
             }
-        vibratorHelper.vibrate(effect)
+        vibratorHelper.vibrate(effect, ATTRIBUTES)
         return true
     }
 
@@ -66,7 +74,7 @@ object IchthysFpHaptics {
                 4 -> VibrationEffect.createOneShot(320, VibrationEffect.DEFAULT_AMPLITUDE)
                 else -> return false
             }
-        vibratorHelper.vibrate(effect)
+        vibratorHelper.vibrate(effect, ATTRIBUTES)
         return true
     }
 }

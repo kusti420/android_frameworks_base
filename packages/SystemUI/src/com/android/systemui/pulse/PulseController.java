@@ -23,6 +23,7 @@ package com.android.systemui.pulse;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.database.ContentObserver;
+import android.hardware.display.DisplayManager;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
@@ -30,6 +31,7 @@ import android.os.UserHandle;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.provider.Settings;
+import android.view.Display;
 import android.view.View;
 import android.widget.FrameLayout;
 
@@ -51,6 +53,7 @@ public class PulseController implements VisualizerStreamHandler.Listener,
     private final StatusBarStateController mStatusBarStateController;
     private final Handler mHandler;
     private final Vibrator mVibrator;
+    private final DisplayManager mDisplayManager;
 
     private PulseView mView;
     private PulseColorController mColorController;
@@ -70,6 +73,8 @@ public class PulseController implements VisualizerStreamHandler.Listener,
     private boolean mAttached;
     private boolean mKeyguardShowing;
     private boolean mDozing;
+    // IchthysOS: the default display is fully off (no AOD), see shouldShow().
+    private boolean mScreenOff;
     private boolean mShowing;
     private long mLastHapticTime;
     private boolean mBassArmed = true;
@@ -81,6 +86,7 @@ public class PulseController implements VisualizerStreamHandler.Listener,
         mStatusBarStateController = statusBarStateController;
         mHandler = new Handler(Looper.getMainLooper());
         mVibrator = context.getSystemService(Vibrator.class);
+        mDisplayManager = context.getSystemService(DisplayManager.class);
     }
 
     /** Attaches the Pulse view behind everything in the given panel container. */
@@ -120,6 +126,10 @@ public class PulseController implements VisualizerStreamHandler.Listener,
                 mStatusBarStateController.getState() == StatusBarState.KEYGUARD;
         mDozing = mStatusBarStateController.isDozing();
         mStatusBarStateController.addCallback(mStateListener);
+        if (mDisplayManager != null) {
+            mDisplayManager.registerDisplayListener(mDisplayListener, mHandler);
+        }
+        mScreenOff = isDefaultDisplayOff();
 
         updateShowing();
     }
@@ -131,6 +141,9 @@ public class PulseController implements VisualizerStreamHandler.Listener,
         }
         mAttached = false;
         mStatusBarStateController.removeCallback(mStateListener);
+        if (mDisplayManager != null) {
+            mDisplayManager.unregisterDisplayListener(mDisplayListener);
+        }
         mResolver.unregisterContentObserver(mObserver);
         if (mStreamHandler != null) {
             mStreamHandler.unlink();
@@ -209,6 +222,12 @@ public class PulseController implements VisualizerStreamHandler.Listener,
 
     private boolean shouldShow() {
         if (!mMasterEnabled || !mKeyguardShowing) {
+            return false;
+        }
+        // IchthysOS: never capture audio (or buzz to the bass) with the screen fully off. With
+        // doze running but no AOD, or with doze off, keyguard/dozing alone stayed true in a
+        // pocket, so the Visualizer stayed linked.
+        if (mScreenOff) {
             return false;
         }
         if (mDozing) {
@@ -340,8 +359,10 @@ public class PulseController implements VisualizerStreamHandler.Listener,
 
     @Override
     public void onColorChanged() {
-        if (mShowing && mView != null) {
-            mView.postInvalidate();
+        // IchthysOS: also called from the album colour sampler's background thread.
+        final PulseView view = mView;
+        if (mShowing && view != null) {
+            view.postInvalidate();
         }
     }
 
@@ -351,8 +372,10 @@ public class PulseController implements VisualizerStreamHandler.Listener,
         if (mBassHaptics == 0 || mVibrator == null || !mVibrator.hasVibrator()) {
             return;
         }
-        // mode 1 = "running" (only while awake), mode 2 = "always".
-        if (mBassHaptics == 1 && mDozing) {
+        // IchthysOS: the Visualizer is only linked while Pulse is showing, and never with the
+        // screen off (shouldShow). Mode 1 = on the lock screen only, mode 2 = also on the
+        // always-on display; Settings labels them that way.
+        if (!mShowing || (mBassHaptics == 1 && mDozing)) {
             return;
         }
         if (level < BASS_HAPTIC_THRESHOLD) {
@@ -374,6 +397,35 @@ public class PulseController implements VisualizerStreamHandler.Listener,
         } catch (Exception ignored) {
         }
     }
+
+    private boolean isDefaultDisplayOff() {
+        final Display display = mDisplayManager != null
+                ? mDisplayManager.getDisplay(Display.DEFAULT_DISPLAY) : null;
+        return display != null && display.getState() == Display.STATE_OFF;
+    }
+
+    private final DisplayManager.DisplayListener mDisplayListener =
+            new DisplayManager.DisplayListener() {
+        @Override
+        public void onDisplayAdded(int displayId) {
+        }
+
+        @Override
+        public void onDisplayRemoved(int displayId) {
+        }
+
+        @Override
+        public void onDisplayChanged(int displayId) {
+            if (displayId != Display.DEFAULT_DISPLAY) {
+                return;
+            }
+            final boolean off = isDefaultDisplayOff();
+            if (off != mScreenOff) {
+                mScreenOff = off;
+                updateShowing();
+            }
+        }
+    };
 
     private final StatusBarStateController.StateListener mStateListener =
             new StatusBarStateController.StateListener() {

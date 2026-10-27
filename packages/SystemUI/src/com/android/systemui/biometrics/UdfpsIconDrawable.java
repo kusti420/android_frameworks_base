@@ -89,6 +89,13 @@ public abstract class UdfpsIconDrawable extends Drawable {
         Dependency.get(TunerService.class).removeTunable(mTunable);
     }
 
+    /** IchthysOS: undoes {@link #destroy()}, for a view that is attached again. */
+    public void resume() {
+        if (mUdfpsIcons != null) {
+            Dependency.get(TunerService.class).addTunable(mTunable, UDFPS_ICON);
+        }
+    }
+
     @Override
     public void setAlpha(int alpha) {
         if (mUdfpsDrawable != null) {
