@@ -3356,7 +3356,8 @@ public final class SystemServer implements Dumpable {
 
         // IchthysOS: Guard, per-app network firewall, DNS/connect monitor and tracker scan
         // (kusti420/ichthysos-tracker#27). Connectivity and NetworkPolicyManager are up by now;
-        // the firewall is rebuilt at PHASE_SYSTEM_SERVICES_READY, before third-party apps run.
+        // the firewall is rebuilt at its first boot phase (ACTIVITY_MANAGER_READY), before
+        // third-party apps run.
         if (SystemProperties.getBoolean("ro.ichthys.guard.enabled", true)) {
             t.traceBegin("StartIchthysGuardService");
             try {

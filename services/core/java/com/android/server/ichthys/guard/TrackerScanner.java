@@ -48,7 +48,9 @@ final class TrackerScanner {
 
     static final String TRACKERS_FILE = "/product/etc/ichthys-guard/trackers.json";
     /** Dex files larger than this are skipped (keeps system_server's heap sane). */
-    private static final long MAX_DEX_BYTES = 96L * 1024 * 1024;
+    // IchthysOS: real classes*.dex stay well below this (64K-method limit); this runs inside
+    // system_server, where the old 96 MB (buffered twice) let a crafted APK exhaust the heap.
+    private static final long MAX_DEX_BYTES = 32L * 1024 * 1024;
 
     /** Small built-in fallback DB, used when {@link #TRACKERS_FILE} is missing or broken. */
     private static final String[][] DEFAULT_SIGNATURES = {
@@ -223,6 +225,10 @@ final class TrackerScanner {
                         collectPackages(readAll(in, e.getSize()), packages);
                     } catch (IOException | RuntimeException ex) {
                         Slog.w(TAG, "Bad dex " + n + " in " + path + ": " + ex);
+                    } catch (OutOfMemoryError oom) {
+                        // IchthysOS: one APK must not take system_server (and every boot's
+                        // backfill) down with it.
+                        Slog.w(TAG, "Out of memory scanning " + n + " in " + path);
                     }
                 }
             } catch (IOException e) {

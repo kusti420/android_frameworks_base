@@ -20,6 +20,7 @@ import static android.net.ConnectivityManager.FIREWALL_CHAIN_OEM_DENY_3;
 
 import android.annotation.Nullable;
 import android.app.ActivityManager;
+import android.app.AlarmManager;
 import android.app.AppGlobals;
 import android.app.AppOpsManager;
 import android.app.KeyguardManager;
@@ -33,6 +34,7 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.SuspendDialogInfo;
+import android.hardware.display.DisplayManager;
 import android.net.ConnectivityManager;
 import android.net.IIpConnectivityMetrics;
 import android.net.INetdEventCallback;
@@ -57,6 +59,7 @@ import android.util.Slog;
 import android.util.SparseBooleanArray;
 import android.util.SparseIntArray;
 import android.util.Xml;
+import android.view.Display;
 
 import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
@@ -180,9 +183,15 @@ public final class IchthysGuardService extends SystemService {
     /** uid -> ACCESS_*; only non-ALLOW entries are stored. */
     @GuardedBy("mLock")
     private final SparseIntArray mPolicy = new SparseIntArray();
-    /** Wall clock ms the emergency pause ends at, 0 when enforcing. */
+    /** Wall clock ms the emergency pause ends at, 0 when enforcing (what Settings shows). */
     @GuardedBy("mLock")
     private long mPausedUntil;
+    /**
+     * IchthysOS: elapsedRealtime the pause ends at, 0 when enforcing. This one decides: it keeps
+     * counting in deep sleep (the handler's uptime clock doesn't) and ignores wall clock changes.
+     */
+    @GuardedBy("mLock")
+    private long mPauseEndElapsed;
     /** uid -> BEHAVIOUR_* flags; only non-zero entries. */
     @GuardedBy("mLock")
     private final SparseIntArray mBehaviour = new SparseIntArray();
@@ -211,6 +220,28 @@ public final class IchthysGuardService extends SystemService {
     @GuardedBy("mLock")
     private final ArrayMap<String, ScanEntry> mScans = new ArrayMap<>();
 
+    /**
+     * IchthysOS: rules of uninstalled apps, so a reinstall gets them back right away (Settings
+     * keys its rules by package, but only pushes them on its own start). "pkg|userId" -> uid at
+     * removal, and that uid -> {access, behaviour flags}. Memory only, a few entries.
+     */
+    @GuardedBy("mLock")
+    private final LinkedHashMap<String, Integer> mRemovedPackageUids =
+            new LinkedHashMap<String, Integer>(16, 0.75f, false) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, Integer> eldest) {
+                    return size() > 64;
+                }
+            };
+    @GuardedBy("mLock")
+    private final LinkedHashMap<Integer, int[]> mRemovedUidRules =
+            new LinkedHashMap<Integer, int[]>(16, 0.75f, false) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<Integer, int[]> eldest) {
+                    return size() > 64;
+                }
+            };
+
     // Handler-thread only.
     private final LinkedHashMap<String, String> mJoinCache =
             new LinkedHashMap<String, String>(1024, 0.75f, true) {
@@ -226,9 +257,11 @@ public final class IchthysGuardService extends SystemService {
             new RemoteCallbackList<>();
 
     @GuardedBy("mApplyLock")
-    private boolean mOemChainEnabled;
-    @GuardedBy("mApplyLock")
     private int[] mAppliedDeny;
+    @GuardedBy("mApplyLock")
+    private boolean mFirewallLogged;
+    /** Set at PHASE_SYSTEM_SERVICES_READY: from then on a missing ConnectivityManager is a bug. */
+    private volatile boolean mBootPhaseReached;
     @GuardedBy("mApplyLock")
     private int[] mAppliedMetered;
 
@@ -257,11 +290,18 @@ public final class IchthysGuardService extends SystemService {
 
     private final Runnable mResumeRunnable = () -> {
         synchronized (mLock) {
+            // A newer pause (or an early resume) already moved the end: not ours to end.
+            if (mPauseEndElapsed == 0 || SystemClock.elapsedRealtime() < mPauseEndElapsed) {
+                return;
+            }
             mPausedUntil = 0;
+            mPauseEndElapsed = 0;
         }
         Slog.i(TAG, "Emergency pause over, enforcing again");
         applyFirewall();
     };
+    /** IchthysOS: ends the pause on time even in deep sleep. */
+    private final AlarmManager.OnAlarmListener mResumeAlarm = () -> mResumeRunnable.run();
 
     private final Runnable mDispatchRunnable = this::dispatchPending;
 
@@ -307,12 +347,18 @@ public final class IchthysGuardService extends SystemService {
     }
 
     private void onBootPhaseInternal(int phase) {
-        if (phase == PHASE_SYSTEM_SERVICES_READY) {
+        // IchthysOS: SystemServer starts Guard after PHASE_SYSTEM_SERVICES_READY has already run,
+        // so that phase is never delivered here; the first phase that is (ACTIVITY_MANAGER_READY,
+        // still before any third-party app runs) sets the firewall up. Waiting for 500 left mCm
+        // null forever: no deny rule and no enabled chain ever reached the network stack.
+        if (phase >= PHASE_SYSTEM_SERVICES_READY && !mBootPhaseReached) {
             mCm = getContext().getSystemService(ConnectivityManager.class);
             mNpmi = LocalServices.getService(NetworkPolicyManagerInternal.class);
+            mBootPhaseReached = true;
             // Synchronously, so the rules are in place before third-party apps start.
             applyFirewall();
-        } else if (phase == PHASE_ACTIVITY_MANAGER_READY) {
+        }
+        if (phase == PHASE_ACTIVITY_MANAGER_READY) {
             registerReceivers();
             registerMonitor();
             registerBehaviourWatchers();
@@ -325,6 +371,10 @@ public final class IchthysGuardService extends SystemService {
             });
         } else if (phase == PHASE_BOOT_COMPLETED) {
             if (!mMonitorRegistered) registerMonitor();
+            // IchthysOS: again once the network stack is fully up; the enable at
+            // PHASE_SYSTEM_SERVICES_READY may be dropped (applyFirewall reads the state back).
+            mHandler.post(this::applyFirewall);
+            mScanHandler.post(this::releaseLauncherlessQuarantines);
             mScanHandler.post(this::backfillScans);
             mHandler.post(this::applyLan);
             // First snapshot only; later changes of the battery allowlist are alerted.
@@ -340,7 +390,7 @@ public final class IchthysGuardService extends SystemService {
         final int[] deny;
         final int[] metered;
         synchronized (mLock) {
-            final boolean paused = mPausedUntil != 0;
+            final boolean paused = isPausedLocked();
             final SparseBooleanArray d = new SparseBooleanArray();
             int nMetered = 0;
             final int[] m = new int[mPolicy.size()];
@@ -373,21 +423,38 @@ public final class IchthysGuardService extends SystemService {
             Arrays.sort(metered);
         }
         synchronized (mApplyLock) {
-            if (mCm == null) return; // Before PHASE_SYSTEM_SERVICES_READY; applied there.
+            // IchthysOS: fetched again when missing. The one fetch at PHASE_SYSTEM_SERVICES_READY
+            // could come back null, and then every apply returned here silently: no deny rule
+            // and no enabled chain ever reached the network stack.
+            if (mCm == null && mBootPhaseReached) {
+                mCm = getContext().getSystemService(ConnectivityManager.class);
+            }
+            if (mCm == null) {
+                if (mBootPhaseReached) Slog.w(TAG, "ConnectivityManager unavailable; rules pending");
+                return;
+            }
             final long token = Binder.clearCallingIdentity();
             try {
                 // Behaviours re-run this on every screen/foreground change: skip no-op writes.
-                if (!Arrays.equals(deny, mAppliedDeny) || !mOemChainEnabled) {
-                    try {
+                // IchthysOS: the chain is (re)enabled at every apply, never trusted from a cache:
+                // enabling it at PHASE_SYSTEM_SERVICES_READY did not stick (the BPF configuration
+                // was still BACKGROUND only after boot), and anything else that turns the chain
+                // off (cmd connectivity set-package-networking-enabled true) would leave every
+                // deny rule in place but unenforced.
+                try {
+                    if (!Arrays.equals(deny, mAppliedDeny)) {
                         mCm.replaceFirewallChain(FIREWALL_CHAIN_OEM_DENY_3, deny);
                         mAppliedDeny = deny;
-                        if (!mOemChainEnabled) {
-                            mCm.setFirewallChainEnabled(FIREWALL_CHAIN_OEM_DENY_3, true);
-                            mOemChainEnabled = true;
-                        }
-                    } catch (RuntimeException e) {
-                        Slog.e(TAG, "Failed to update FIREWALL_CHAIN_OEM_DENY_3", e);
                     }
+                    // Idempotent and cheap (one BPF configuration write); the getter is hidden
+                    // from services, so the chain is simply switched on at every apply.
+                    mCm.setFirewallChainEnabled(FIREWALL_CHAIN_OEM_DENY_3, true);
+                    if (!mFirewallLogged) {
+                        mFirewallLogged = true;
+                        Slog.i(TAG, "Firewall applied: " + deny.length + " uids on OEM_DENY_3");
+                    }
+                } catch (RuntimeException e) {
+                    Slog.e(TAG, "Failed to update FIREWALL_CHAIN_OEM_DENY_3", e);
                 }
                 if (mNpmi != null && !Arrays.equals(metered, mAppliedMetered)) {
                     try {
@@ -457,44 +524,69 @@ public final class IchthysGuardService extends SystemService {
     private final BroadcastReceiver mScreenReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            final String action = intent.getAction();
-            final boolean locked;
-            if (Intent.ACTION_SCREEN_OFF.equals(action)) {
-                locked = true;
-            } else if (Intent.ACTION_USER_PRESENT.equals(action)) {
-                locked = false;
-            } else if (Intent.ACTION_SCREEN_ON.equals(action)) {
-                final KeyguardManager km = context.getSystemService(KeyguardManager.class);
-                locked = km != null && km.isKeyguardLocked();
-            } else if (PowerManager.ACTION_POWER_SAVE_WHITELIST_CHANGED.equals(action)) {
+            if (PowerManager.ACTION_POWER_SAVE_WHITELIST_CHANGED.equals(intent.getAction())) {
                 checkBatteryExemptions(true);
-                return;
-            } else {
-                return;
             }
-            final boolean changed;
-            synchronized (mLock) {
-                changed = mScreenLocked != locked;
-                mScreenLocked = locked;
-            }
-            if (changed) applyFirewall();
         }
     };
 
+    /**
+     * IchthysOS: screen off or keyguard showing, from the default display's own state and the
+     * keyguard. The global SCREEN_OFF/ON and USER_PRESENT broadcasts follow the device-wide
+     * interactive state, which an awake secondary display (Backstage) holds "on" while the main
+     * screen is off, so screen-off rules never applied then.
+     */
+    private boolean computeScreenLocked() {
+        final Context context = getContext();
+        final DisplayManager dm = context.getSystemService(DisplayManager.class);
+        final Display display = dm != null ? dm.getDisplay(Display.DEFAULT_DISPLAY) : null;
+        final KeyguardManager km = context.getSystemService(KeyguardManager.class);
+        return (display != null && !Display.isOnState(display.getState()))
+                || (km != null && km.isKeyguardLocked());
+    }
+
+    /** Handler thread. */
+    private void updateScreenLocked() {
+        final boolean locked = computeScreenLocked();
+        final boolean changed;
+        synchronized (mLock) {
+            changed = mScreenLocked != locked;
+            mScreenLocked = locked;
+        }
+        if (changed) applyFirewall();
+    }
+
     private void registerBehaviourWatchers() {
         final Context context = getContext();
-        final PowerManager power = context.getSystemService(PowerManager.class);
-        final KeyguardManager km = context.getSystemService(KeyguardManager.class);
         synchronized (mLock) {
-            mScreenLocked = (power != null && !power.isInteractive())
-                    || (km != null && km.isKeyguardLocked());
+            mScreenLocked = computeScreenLocked();
         }
         final IntentFilter screen = new IntentFilter();
-        screen.addAction(Intent.ACTION_SCREEN_OFF);
-        screen.addAction(Intent.ACTION_SCREEN_ON);
-        screen.addAction(Intent.ACTION_USER_PRESENT);
         screen.addAction(PowerManager.ACTION_POWER_SAVE_WHITELIST_CHANGED);
         context.registerReceiverForAllUsers(mScreenReceiver, screen, null, mHandler);
+        final DisplayManager dm = context.getSystemService(DisplayManager.class);
+        if (dm != null) {
+            dm.registerDisplayListener(new DisplayManager.DisplayListener() {
+                @Override
+                public void onDisplayAdded(int displayId) {
+                }
+
+                @Override
+                public void onDisplayRemoved(int displayId) {
+                }
+
+                @Override
+                public void onDisplayChanged(int displayId) {
+                    if (displayId == Display.DEFAULT_DISPLAY) updateScreenLocked();
+                }
+            }, mHandler, DisplayManager.EVENT_TYPE_DISPLAY_CHANGED
+                    | DisplayManager.EVENT_TYPE_DISPLAY_STATE);
+        }
+        final KeyguardManager km = context.getSystemService(KeyguardManager.class);
+        if (km != null) {
+            km.addKeyguardLockedStateListener(new HandlerExecutor(mHandler),
+                    locked -> updateScreenLocked());
+        }
         try {
             ActivityManager.getService().registerUidObserver(mUidObserver,
                     ActivityManager.UID_OBSERVER_PROCSTATE | ActivityManager.UID_OBSERVER_GONE,
@@ -587,7 +679,7 @@ public final class IchthysGuardService extends SystemService {
         }
     }
 
-    private void replaceBehavioursInternal(int[] uids, int[] flags) {
+    private void replaceBehavioursInternal(int[] uids, int[] flags, int callingUserId) {
         if (uids == null || flags == null || uids.length != flags.length) {
             throw new IllegalArgumentException("uids and flags differ in length");
         }
@@ -601,8 +693,9 @@ public final class IchthysGuardService extends SystemService {
             }
             next.put(uids[i], f);
         }
+        final ArraySet<Integer> users = replaceScope(callingUserId, uids);
         synchronized (mLock) {
-            mBehaviour.clear();
+            removeUsersLocked(mBehaviour, users);
             for (int i = 0; i < next.size(); i++) {
                 mBehaviour.put(next.keyAt(i), next.valueAt(i));
             }
@@ -659,7 +752,7 @@ public final class IchthysGuardService extends SystemService {
         commitPolicy();
     }
 
-    private void replacePoliciesInternal(int[] uids, int[] access) {
+    private void replacePoliciesInternal(int[] uids, int[] access, int callingUserId) {
         if (uids == null || access == null || uids.length != access.length) {
             throw new IllegalArgumentException("uids and access differ in length");
         }
@@ -675,13 +768,37 @@ public final class IchthysGuardService extends SystemService {
             }
             next.put(uids[i], access[i]);
         }
+        final ArraySet<Integer> users = replaceScope(callingUserId, uids);
         synchronized (mLock) {
-            mPolicy.clear();
+            removeUsersLocked(mPolicy, users);
             for (int i = 0; i < next.size(); i++) {
                 mPolicy.put(next.keyAt(i), next.valueAt(i));
             }
         }
         commitPolicy();
+    }
+
+    /**
+     * IchthysOS: the users whose rules a "replace the whole table" call rewrites: the caller's
+     * own user and the users of the uids it lists. Settings runs per user (a work profile has
+     * its own) and lists only its own apps, so one user's push must not wipe another's rules.
+     */
+    private static ArraySet<Integer> replaceScope(int callingUserId, int[] uids) {
+        final ArraySet<Integer> users = new ArraySet<>();
+        users.add(callingUserId);
+        for (int uid : uids) {
+            users.add(UserHandle.getUserId(uid));
+        }
+        return users;
+    }
+
+    /** Callers hold mLock (the tables are guarded by it). */
+    private static void removeUsersLocked(SparseIntArray table, ArraySet<Integer> users) {
+        for (int i = table.size() - 1; i >= 0; i--) {
+            if (users.contains(UserHandle.getUserId(table.keyAt(i)))) {
+                table.removeAt(i);
+            }
+        }
     }
 
     private void commitPolicy() {
@@ -692,19 +809,52 @@ public final class IchthysGuardService extends SystemService {
     }
 
     private void pauseInternal(int minutes) {
-        mHandler.removeCallbacks(mResumeRunnable);
-        if (minutes <= 0) {
-            mHandler.post(mResumeRunnable);
-            return;
-        }
-        minutes = Math.min(minutes, MAX_PAUSE_MINUTES);
-        final long ms = minutes * 60_000L;
+        final long ms = minutes <= 0 ? 0 : Math.min(minutes, MAX_PAUSE_MINUTES) * 60_000L;
         synchronized (mLock) {
-            mPausedUntil = System.currentTimeMillis() + ms;
+            mPausedUntil = ms == 0 ? 0 : System.currentTimeMillis() + ms;
+            mPauseEndElapsed = ms == 0 ? 0 : SystemClock.elapsedRealtime() + ms;
         }
-        Slog.w(TAG, "Enforcement paused for " + minutes + " min");
-        mHandler.post(this::applyFirewall);
-        mHandler.postDelayed(mResumeRunnable, ms);
+        if (ms > 0) {
+            Slog.w(TAG, "Enforcement paused for " + (ms / 60_000L) + " min");
+        }
+        // On the handler, so two pauses (or a pause and the end of the last one) can't race.
+        mHandler.post(this::schedulePauseEnd);
+    }
+
+    /**
+     * Handler thread. Re-arms the end of the pause: an ELAPSED_REALTIME_WAKEUP alarm (the
+     * handler's own delay counts uptime only and overran by hours in deep sleep), with the
+     * handler delay as a backstop.
+     */
+    private void schedulePauseEnd() {
+        mHandler.removeCallbacks(mResumeRunnable);
+        final AlarmManager am = getContext().getSystemService(AlarmManager.class);
+        final long end;
+        synchronized (mLock) {
+            end = mPauseEndElapsed;
+        }
+        final long token = Binder.clearCallingIdentity();
+        try {
+            if (am != null) {
+                am.cancel(mResumeAlarm);
+                if (end != 0) {
+                    am.setExact(AlarmManager.ELAPSED_REALTIME_WAKEUP, end,
+                            "*ichthys_guard_resume*", mResumeAlarm, mHandler);
+                }
+            }
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+        if (end != 0) {
+            mHandler.postDelayed(mResumeRunnable,
+                    Math.max(0, end - SystemClock.elapsedRealtime()));
+        }
+        applyFirewall();
+    }
+
+    @GuardedBy("mLock")
+    private boolean isPausedLocked() {
+        return mPauseEndElapsed != 0 && SystemClock.elapsedRealtime() < mPauseEndElapsed;
     }
 
     private void loadPolicy() {
@@ -939,6 +1089,7 @@ public final class IchthysGuardService extends SystemService {
         final IntentFilter pkg = new IntentFilter();
         pkg.addAction(Intent.ACTION_PACKAGE_ADDED);
         pkg.addAction(Intent.ACTION_PACKAGE_REPLACED);
+        pkg.addAction(Intent.ACTION_PACKAGE_REMOVED);
         pkg.addAction(Intent.ACTION_PACKAGE_FULLY_REMOVED);
         pkg.addDataScheme("package");
         getContext().registerReceiverForAllUsers(mPackageReceiver, pkg, null, mScanHandler);
@@ -946,6 +1097,66 @@ public final class IchthysGuardService extends SystemService {
         // registration with a different one (IllegalStateException, which crash-looped boot).
         getContext().registerReceiverForAllUsers(mPackageReceiver,
                 new IntentFilter(Intent.ACTION_UID_REMOVED), null, mScanHandler);
+        // IchthysOS: install-time work (quarantine, LAN default, restoring a reinstalled app's
+        // rules) on Guard's main thread with its own receiver: behind the dex scans on the scan
+        // thread it came late enough to force-stop an app the user had already opened.
+        final IntentFilter added = new IntentFilter(Intent.ACTION_PACKAGE_ADDED);
+        added.addDataScheme("package");
+        getContext().registerReceiverForAllUsers(mInstallReceiver, added, null, mHandler);
+    }
+
+    private final BroadcastReceiver mInstallReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            try {
+                if (intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)
+                        || intent.getData() == null) {
+                    return;
+                }
+                final String pkgName = intent.getData().getSchemeSpecificPart();
+                if (pkgName == null) return;
+                final int userId = getSendingUserId();
+                restoreRemovedRules(pkgName, userId);
+                quarantineUntilFirstLaunch(pkgName, userId);
+                blockLanByDefault(pkgName, userId);
+                checkInstallAlerts(pkgName, userId);
+            } catch (RuntimeException e) {
+                Slog.wtf(TAG, "install broadcast failed: " + intent, e);
+            }
+        }
+    };
+
+    /**
+     * IchthysOS: an app that comes back after an uninstall gets its old firewall rule and
+     * behaviours again (Settings still shows them). Handler thread.
+     */
+    private void restoreRemovedRules(String pkgName, int userId) {
+        final int uid;
+        try {
+            uid = getContext().getPackageManager().getPackageUidAsUser(pkgName, userId);
+        } catch (PackageManager.NameNotFoundException e) {
+            return;
+        }
+        boolean changed = false;
+        synchronized (mLock) {
+            final Integer oldUid = mRemovedPackageUids.remove(pkgName + "|" + userId);
+            final int[] rules = oldUid != null ? mRemovedUidRules.remove(oldUid) : null;
+            if (rules == null) return;
+            if (rules[0] != IIchthysGuard.ACCESS_ALLOW && mPolicy.indexOfKey(uid) < 0) {
+                mPolicy.put(uid, rules[0]);
+                changed = true;
+            }
+            if (rules[1] != 0 && mBehaviour.indexOfKey(uid) < 0) {
+                mBehaviour.put(uid, rules[1]);
+                changed = true;
+            }
+        }
+        if (changed) {
+            Slog.i(TAG, "Restored the rules of reinstalled " + pkgName + " (uid " + uid + ")");
+            savePolicy();
+            applyFirewall();
+            applyLan();
+        }
     }
 
     private final BroadcastReceiver mPackageReceiver = new BroadcastReceiver() {
@@ -965,6 +1176,12 @@ public final class IchthysGuardService extends SystemService {
                 final int uid = intent.getIntExtra(Intent.EXTRA_UID, -1);
                 boolean changed = false;
                 synchronized (mLock) {
+                    // IchthysOS: kept (in memory) for a reinstall, see restoreRemovedRules().
+                    final int access = mPolicy.get(uid, IIchthysGuard.ACCESS_ALLOW);
+                    final int flags = mBehaviour.get(uid);
+                    if (uid >= 0 && (access != IIchthysGuard.ACCESS_ALLOW || flags != 0)) {
+                        mRemovedUidRules.put(uid, new int[] {access, flags});
+                    }
                     if (uid >= 0 && mPolicy.indexOfKey(uid) >= 0) {
                         mPolicy.delete(uid);
                         changed = true;
@@ -992,6 +1209,16 @@ public final class IchthysGuardService extends SystemService {
             final String pkgName = intent.getData() != null
                     ? intent.getData().getSchemeSpecificPart() : null;
             if (pkgName == null) return;
+            if (Intent.ACTION_PACKAGE_REMOVED.equals(action)) {
+                // IchthysOS: which uid the package had, for restoreRemovedRules().
+                final int uid = intent.getIntExtra(Intent.EXTRA_UID, -1);
+                if (uid >= 0 && !intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)) {
+                    synchronized (mLock) {
+                        mRemovedPackageUids.put(pkgName + "|" + getSendingUserId(), uid);
+                    }
+                }
+                return;
+            }
             if (Intent.ACTION_PACKAGE_FULLY_REMOVED.equals(action)) {
                 boolean removed;
                 synchronized (mLock) {
@@ -1000,13 +1227,7 @@ public final class IchthysGuardService extends SystemService {
                 if (removed) saveScans();
                 return;
             }
-            if (Intent.ACTION_PACKAGE_ADDED.equals(action)
-                    && !intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)) {
-                final int userId = getSendingUserId();
-                quarantineUntilFirstLaunch(pkgName, userId);
-                blockLanByDefault(pkgName, userId);
-                checkInstallAlerts(pkgName, userId);
-            }
+            // Fresh installs: quarantine, LAN default and install alerts are mInstallReceiver's.
             // ADDED (fresh or replacing) and REPLACED: scanPackage dedupes on versionCode.
             scanPackage(pkgName, getSendingUserId(), true);
         }
@@ -1018,12 +1239,36 @@ public final class IchthysGuardService extends SystemService {
      * components are hidden from other apps and it can't run jobs, alarms or services. The first
      * launch goes through the system's suspended-app dialog, whose Review button opens Guard's
      * first-launch sheet in Settings; the sheet lifts the quarantine and starts the app. Updates, system apps, the ROM's bundled preinstalls,
-     * apps installed by Ichthys Apps and setup-time installs are left alone. Identity must be cleared; runs on the scan thread.
+     * apps installed by Ichthys Apps and setup-time installs are left alone, and so are apps
+     * without a launcher activity or already running. Identity must be cleared; runs on the
+     * handler thread.
      */
     private void quarantineUntilFirstLaunch(String pkgName, int userId) {
         if (!android.content.pm.Flags.quarantinedEnabled()) return;
         if (!isNewUserApp(pkgName, userId)) return;
         final Context context = getContext();
+        // IchthysOS: the only way out of the quarantine is launching the app from its icon.
+        // Keyboards, wallpapers, TTS engines, accessibility- or widget-only apps have none and
+        // would stay hidden from their system pickers for good.
+        final PackageManager userPm = context.createContextAsUser(UserHandle.of(userId), 0)
+                .getPackageManager();
+        if (userPm.getLaunchIntentForPackage(pkgName) == null) {
+            Slog.i(TAG, "Not quarantining " + pkgName + " (no launcher activity)");
+            return;
+        }
+        // Already opened (store "Open", adb install && am start): a new app is in the stopped
+        // state until something starts it, so a running process means the user did.
+        try {
+            final int uid = userPm.getPackageUid(pkgName, 0);
+            synchronized (mLock) {
+                if (mProcState.indexOfKey(uid) >= 0) {
+                    Slog.i(TAG, "Not quarantining " + pkgName + " (already running)");
+                    return;
+                }
+            }
+        } catch (PackageManager.NameNotFoundException e) {
+            return;
+        }
         try {
             final SuspendDialogInfo dialog = new SuspendDialogInfo.Builder()
                     .setTitle(context.getString(R.string.ichthys_first_launch_title))
@@ -1041,6 +1286,38 @@ public final class IchthysGuardService extends SystemService {
             }
         } catch (RemoteException | RuntimeException e) {
             Slog.w(TAG, "Could not quarantine " + pkgName, e);
+        }
+    }
+
+    /**
+     * IchthysOS: lifts Guard's quarantine from apps without a launcher activity, quarantined
+     * before that was skipped: launching the app was the only way out. Scan thread, at boot.
+     */
+    private void releaseLauncherlessQuarantines() {
+        if (!android.content.pm.Flags.quarantinedEnabled()) return;
+        final Context context = getContext();
+        for (android.content.pm.UserInfo user
+                : context.getSystemService(android.os.UserManager.class).getAliveUsers()) {
+            final PackageManager pm = context.createContextAsUser(user.getUserHandle(), 0)
+                    .getPackageManager();
+            for (ApplicationInfo ai : pm.getInstalledApplications(0)) {
+                if ((ai.flags & ApplicationInfo.FLAG_SYSTEM) != 0) continue;
+                try {
+                    if (!pm.isPackageQuarantined(ai.packageName)
+                            || pm.getLaunchIntentForPackage(ai.packageName) != null) {
+                        continue;
+                    }
+                    AppGlobals.getPackageManager().setPackagesSuspendedAsUser(
+                            new String[] {ai.packageName}, false, null, null, null,
+                            0 /* flags, as Settings' own release */, GUARD_HOST_PACKAGE, user.id,
+                            user.id);
+                    Slog.i(TAG, "Released " + ai.packageName + " (user " + user.id
+                            + ") from quarantine: no launcher activity");
+                } catch (PackageManager.NameNotFoundException | RemoteException
+                        | RuntimeException e) {
+                    Slog.w(TAG, "Could not check the quarantine of " + ai.packageName, e);
+                }
+            }
         }
     }
 
@@ -1086,7 +1363,7 @@ public final class IchthysGuardService extends SystemService {
         }
     }
 
-    /** W8b decision 13: a new user app starts with its local network blocked. Scan thread. */
+    /** W8b decision 13: a new user app starts with its local network blocked. Handler thread. */
     private void blockLanByDefault(String pkgName, int userId) {
         if (!isNewUserApp(pkgName, userId)) return;
         final int uid;
@@ -1483,9 +1760,10 @@ public final class IchthysGuardService extends SystemService {
         @Override
         public void replaceNetworkPolicies(int[] uids, int[] access) {
             enforce();
+            final int userId = UserHandle.getCallingUserId();
             final long token = Binder.clearCallingIdentity();
             try {
-                replacePoliciesInternal(uids, access);
+                replacePoliciesInternal(uids, access, userId);
             } finally {
                 Binder.restoreCallingIdentity(token);
             }
@@ -1553,16 +1831,17 @@ public final class IchthysGuardService extends SystemService {
         public long getPausedUntil() {
             enforce();
             synchronized (mLock) {
-                return mPausedUntil;
+                return isPausedLocked() ? mPausedUntil : 0;
             }
         }
 
         @Override
         public void replaceBehaviours(int[] uids, int[] flags) {
             enforce();
+            final int userId = UserHandle.getCallingUserId();
             final long token = Binder.clearCallingIdentity();
             try {
-                replaceBehavioursInternal(uids, flags);
+                replaceBehavioursInternal(uids, flags, userId);
             } finally {
                 Binder.restoreCallingIdentity(token);
             }
