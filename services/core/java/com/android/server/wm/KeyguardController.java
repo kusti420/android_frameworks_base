@@ -240,6 +240,14 @@ class KeyguardController {
         state.mAodShowing = aodShowing;
         state.writeEventLog("setKeyguardShown");
 
+        // IchthysOS: the user unlocked: the lock screen calculator shortcut's show-over-keyguard
+        // ends here, or the calculator would show over the keyguard at every later lock.
+        if (keyguardChanged && !keyguardShowing && displayId == DEFAULT_DISPLAY) {
+            dc.forAllActivities(r -> {
+                r.endLockscreenShortcutGrant(false /* notify */);
+            });
+        }
+
         if (keyguardChanged || (Flags.aodTransition() && aodChanged)) {
             if (keyguardChanged) {
                 // Irrelevant to AOD.

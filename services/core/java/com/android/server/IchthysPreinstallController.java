@@ -418,9 +418,9 @@ public final class IchthysPreinstallController {
     }
 
     /**
-     * Whether {@code app} is signed with one of its pinned certificates: one of the APK's signers
-     * or, for a rotated key, a certificate in its signing lineage (the pinned key vouched for
-     * the rotation).
+     * Whether {@code app} is signed with its pinned certificates: every one of the APK's signers
+     * when it has several, else its signer or, for a rotated key, a certificate in its signing
+     * lineage (the pinned key vouched for the rotation).
      */
     private static boolean isSignedByPin(PackageManager pm, CatalogApp app) {
         try {
@@ -429,8 +429,23 @@ public final class IchthysPreinstallController {
             if (signing == null) {
                 return false;
             }
-            final Signature[] certs = signing.hasMultipleSigners()
-                    ? signing.getApkContentsSigners() : signing.getSigningCertificateHistory();
+            if (signing.hasMultipleSigners()) {
+                // IchthysOS: several signers count only when every one is pinned, the rule of
+                // isBundledPreinstall and of Ichthys Apps' CertVerifier. One pinned signer out of
+                // several isn't the developer's build.
+                final Signature[] signers = signing.getApkContentsSigners();
+                if (signers == null || signers.length == 0) {
+                    return false;
+                }
+                for (Signature cert : signers) {
+                    final String digest = PackageUtils.computeSha256Digest(cert.toByteArray());
+                    if (digest == null || !app.certs.contains(digest)) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            final Signature[] certs = signing.getSigningCertificateHistory();
             if (certs == null) {
                 return false;
             }

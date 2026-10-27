@@ -679,6 +679,8 @@ final class ActivityRecord extends WindowToken {
             "org.ichthys.extra.LOCKSCREEN_SHORTCUT";
     /** IchthysOS: this record was made for a start by that shortcut. */
     private boolean mLaunchedByLockscreenShortcut;
+    /** IchthysOS: what the app itself asks for, restored when the shortcut's grant ends. */
+    private boolean mIchthysAppShowWhenLocked;
     private boolean mInheritShowWhenLocked;
     private boolean mTurnScreenOn;
 
@@ -1985,6 +1987,7 @@ final class ActivityRecord extends WindowToken {
                 && _launchedFromPackage != null
                 && _launchedFromPackage.equals(
                         _service.getSysUiServiceComponentLocked().getPackageName())) {
+            mIchthysAppShowWhenLocked = mShowWhenLocked;
             mShowWhenLocked = true;
             mLaunchedByLockscreenShortcut = true;
         }
@@ -4849,17 +4852,44 @@ final class ActivityRecord extends WindowToken {
      * start that reuses a running activity instead of the record the shortcut's start made.
      */
     void showOverKeyguardForLockscreenShortcut() {
+        if (!mLaunchedByLockscreenShortcut) {
+            mIchthysAppShowWhenLocked = mShowWhenLocked;
+        }
         mLaunchedByLockscreenShortcut = true;
         setShowWhenLocked(true);
+    }
+
+    /**
+     * IchthysOS: ends the lock screen shortcut's grant: the keyguard went away (the user
+     * unlocked) or the activity stopped. The activity is back to what the app asks for itself,
+     * so it doesn't keep showing over the keyguard after a later lock.
+     *
+     * @param notify false while the keyguard is going away: occlusion is moot then and is
+     *               worked out again when the keyguard next shows.
+     */
+    void endLockscreenShortcutGrant(boolean notify) {
+        if (!mLaunchedByLockscreenShortcut) {
+            return;
+        }
+        mLaunchedByLockscreenShortcut = false;
+        if (notify) {
+            setShowWhenLocked(mIchthysAppShowWhenLocked);
+        } else {
+            mShowWhenLocked = mIchthysAppShowWhenLocked;
+        }
     }
 
     void setShowWhenLocked(boolean showWhenLocked) {
         // IchthysOS: an app with a "show on lock screen" preference of its own calls this with
         // false on every start while that preference is off (the calculator does, a few
         // milliseconds after it is resumed), which took back what the lock screen shortcut had
-        // just been given and sent the app behind the keyguard again.
-        if (!showWhenLocked && mLaunchedByLockscreenShortcut) {
-            return;
+        // just been given and sent the app behind the keyguard again. What it asks for is kept
+        // for when the grant ends.
+        if (mLaunchedByLockscreenShortcut) {
+            mIchthysAppShowWhenLocked = showWhenLocked;
+            if (!showWhenLocked) {
+                return;
+            }
         }
         if (mShowWhenLocked != showWhenLocked) {
             mShowWhenLocked = showWhenLocked;
@@ -6535,6 +6565,8 @@ final class ActivityRecord extends WindowToken {
             Slog.i(TAG, "Activity reported stop, but no longer stopping: " + this + " " + mState);
             return;
         }
+        // IchthysOS: the lock screen shortcut's show-over-keyguard lasts while it is in use.
+        endLockscreenShortcutGrant(true /* notify */);
         if (newPersistentState != null) {
             if (Flags.enableAppRestartAfterUpdate() && isRootOfTask()
                     && info.persistableMode == PERSIST_ACROSS_REBOOTS) {

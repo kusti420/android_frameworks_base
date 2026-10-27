@@ -5569,6 +5569,17 @@ public class PhoneWindowManager implements WindowManagerPolicy {
             return false; // feature off — let volume behave normally
         }
 
+        // IchthysOS: a ringing or ongoing call owns the volume keys (silence the ringer, in-call
+        // volume): this ran before that handling and swallowed them.
+        if (down && event.getRepeatCount() == 0 && !otherHeld) {
+            final TelecomManager telecom = getTelecommService();
+            if (telecom != null && (telecom.isRinging() || telecom.isInCall())) {
+                cancelPendingVolumeMusicSeek();
+                mVolumeMusicActiveKey = 0;
+                return false;
+            }
+        }
+
         if (down) {
             // Ignore synthesized repeats defensively; we consume the whole hold below.
             if (event.getRepeatCount() != 0) {

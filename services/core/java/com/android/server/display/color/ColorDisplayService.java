@@ -278,6 +278,11 @@ public final class ColorDisplayService extends SystemService {
             mBootCompleted = true;
 
             if (mUdfpsScanningObserver == null) {
+                // IchthysOS: the flag is persisted, so a 1 left behind by a SystemUI that died
+                // mid-scan would survive a reboot. Start from 0; writing the same value again
+                // later does not notify, so a stale 1 would swallow the next scan's lift.
+                android.provider.Settings.Global.putInt(getContext().getContentResolver(),
+                        ICHTHYS_UDFPS_SCANNING, 0);
                 mUdfpsScanningObserver = new ContentObserver(mHandler) {
                     @Override
                     public void onChange(boolean selfChange) {
@@ -916,6 +921,13 @@ public final class ColorDisplayService extends SystemService {
      */
     private void applyTint(TintController tintController, boolean immediate) {
         tintController.cancelAnimator();
+
+        // IchthysOS: these two stay lifted while the fingerprint sensor scans. The new matrix is
+        // already in the controller; onUdfpsScanningChanged puts it back when the scan ends.
+        if (mUdfpsScanning && (tintController == mNightDisplayTintController
+                || tintController == mReduceBrightColorsTintController)) {
+            return;
+        }
 
         final DisplayTransformManager dtm = getLocalService(DisplayTransformManager.class);
         final float[] from = dtm.getColorMatrix(tintController.getLevel());

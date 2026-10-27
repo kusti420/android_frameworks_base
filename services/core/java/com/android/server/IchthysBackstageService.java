@@ -20,12 +20,14 @@ import android.app.ActivityManager;
 import android.app.ActivityOptions;
 import android.app.ActivityTaskManager;
 import android.app.IActivityTaskManager;
+import android.app.KeyguardManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.StatusBarManager;
 import android.app.TaskStackListener;
+import android.app.WindowConfiguration;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
@@ -34,6 +36,7 @@ import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.UserInfo;
+import android.content.res.Configuration;
 import android.database.ContentObserver;
 import android.graphics.PixelFormat;
 import android.hardware.HardwareBuffer;
@@ -71,25 +74,39 @@ import java.util.Map;
  *
  * <p>An app in Backstage stays in Backstage until it is stopped or taken out of the list: it
  * moves to the main screen whenever the user opens it (its icon, recents, its notification) and
- * goes back to the hidden display when the user leaves it (home, recents, another app) or turns
- * the screen off; the app that was on screen at screen-off comes back on unlock.
+ * goes back to a hidden display when the user leaves it (home, recents, another app) or the main
+ * screen turns off; the app that was on screen at screen-off comes back on unlock. Screen-off and
+ * unlock come from the default display's own state and the keyguard, not from the global
+ * SCREEN_OFF / USER_PRESENT broadcasts: a hidden display keeps the device "interactive", so those
+ * never come while an app is hidden.
  *
- * <p>Mechanism: one virtual display owned by system_server, rendering into an {@link ImageReader}
- * that is drained and never shown. Flags: TRUSTED + OWN_DISPLAY_GROUP (its own power group, so the
- * main screen's sleep doesn't stop it) + ALWAYS_UNLOCKED (keyguard doesn't stop its activities;
- * nothing is ever drawn anywhere, so nothing leaks onto the lockscreen) + OWN_FOCUS +
- * STEAL_TOP_FOCUS_DISABLED (never takes input focus from the real screen). It is not PUBLIC or
- * PRESENTATION, so other apps can't place content on it or see it in display lists, and it isn't
- * mirrored or captured anywhere. A display-bound screen wake lock keeps only that display group
- * awake. Keyguard follows the default display group, so locking works as usual. Moved tasks stay
- * RESUMED and visible: their process is TOP.
+ * <p>Mechanism: each hidden app gets its own virtual display (a "stage") owned by system_server,
+ * rendering into an {@link ImageReader} that is drained and never shown, so every hidden app is
+ * the top, RESUMED app of its display (one shared display left only the top one resumed). Flags:
+ * TRUSTED + OWN_DISPLAY_GROUP (its own power group, so the main screen's sleep doesn't stop it) +
+ * ALWAYS_UNLOCKED (keyguard doesn't stop its activities; nothing is ever drawn anywhere, so
+ * nothing leaks onto the lockscreen) + OWN_FOCUS + STEAL_TOP_FOCUS_DISABLED (never takes input
+ * focus from the real screen). It is not PUBLIC or PRESENTATION, so other apps can't place content
+ * on it or see it in display lists, and it isn't mirrored or captured anywhere. A display-bound
+ * screen wake lock keeps only that display group awake. Keyguard follows the default display
+ * group, so locking works as usual. A stage exists only while its app is actually hidden: it is
+ * made when the app is hidden and released when the app comes back to the main screen, goes away
+ * or leaves Backstage.
+ *
+ * <p>Battery: while at least one app is hidden, its awake display group keeps the device in the
+ * global "awake" state: the CPU doesn't suspend, Doze and idle maintenance don't start, other apps
+ * get no SCREEN_OFF, and battery stats count the time as screen-on. That is the price of keeping
+ * an app running in the foreground with the screen off. With no app hidden (all on the main
+ * screen, or none in Backstage) nothing is held. Hiding the first app at screen-off adds an
+ * awake display group right after the main one went to sleep, so the device briefly reports
+ * screen off and then on again (other apps see SCREEN_OFF followed by SCREEN_ON).
  *
  * <p>Control: Settings.Secure {@link #KEY_PACKAGES} (comma-separated packages, per user) is the
  * set of apps in Backstage. The crDroidSettings page and the Backstage tile write it; this service
  * reconciles. While an app is hidden, an ongoing notification offers "Open" and "Stop" (removes
  * the task and takes the app out of Backstage). The list is cleared at boot and on user switch.
- * Releasing the display (when nothing is left, or on any failure) moves remaining tasks back to
- * the main screen.
+ * Releasing a hidden display (its app is back on the main screen or gone, or on any failure)
+ * moves whatever is still on it back to the main screen.
  */
 public final class IchthysBackstageService {
     private static final String TAG = "IchthysBackstage";
@@ -121,26 +138,55 @@ public final class IchthysBackstageService {
     private final Handler mHandler;
     private final IActivityTaskManager mAtm = ActivityTaskManager.getService();
     private final Runnable mCheckLeft = () -> hideLeftApps(false);
+    private final Runnable mRefresh = this::refresh;
 
     // Everything below is only touched on mHandler.
     private int mUserId = UserHandle.USER_SYSTEM;
     /** package -> entry, in the order they were sent to Backstage. */
     private final Map<String, Entry> mEntries = new LinkedHashMap<>();
-    private VirtualDisplay mDisplay;
-    private ImageReader mReader;
-    private PowerManager.WakeLock mDisplayWakeLock;
     /** Last value written/seen for KEY_PACKAGES, so our own writes don't re-trigger reconcile. */
     private String mLastPackagesValue = "";
     /** The Backstage app that was on screen when the screen went off; it returns on unlock. */
     private String mOnScreenAtLock;
+    /** The main screen's top task right after that screen-off; unlocking into another skips it. */
+    private int mTopAfterLock = ActivityTaskManager.INVALID_TASK_ID;
+    /** Whether the default display is on (not off or dozing). */
+    private boolean mDefaultScreenOn = true;
+
+    /** A hidden display and what keeps it alive. */
+    private static final class Stage {
+        final VirtualDisplay display;
+        final ImageReader reader;
+        final PowerManager.WakeLock wakeLock;
+
+        Stage(VirtualDisplay display, ImageReader reader, PowerManager.WakeLock wakeLock) {
+            this.display = display;
+            this.reader = reader;
+            this.wakeLock = wakeLock;
+        }
+
+        int id() {
+            return display.getDisplay().getDisplayId();
+        }
+
+        void release() {
+            wakeLock.release();
+            // Without DESTROY_CONTENT_ON_REMOVAL, anything still on the display moves to the
+            // main screen instead of being killed.
+            display.release();
+            reader.close();
+        }
+    }
 
     private static final class Entry {
         final String pkg;
         final long startedAt = SystemClock.elapsedRealtime();
         /** When we last moved its task (either way); events right after are our own. */
         long movedAt = SystemClock.elapsedRealtime();
-        /** Whether the notification is up (the app is on the hidden display). */
+        /** Whether the notification is up (the app is on its hidden display). */
         boolean notified;
+        /** Its hidden display, only while it is (being) hidden. */
+        Stage stage;
 
         Entry(String pkg) {
             this.pkg = pkg;
@@ -194,7 +240,12 @@ public final class IchthysBackstageService {
                     return;
                 }
                 if (ACTION_BRING_BACK.equals(intent.getAction())) {
-                    show(entry);
+                    if (stageId(entry) == Display.INVALID_DISPLAY
+                            && findTask(entry.pkg, Display.DEFAULT_DISPLAY) == null) {
+                        launchOnMainScreen(entry); // it is gone: "Open" starts it again
+                    } else {
+                        show(entry);
+                    }
                 } else {
                     stop(entry.pkg);
                 }
@@ -205,32 +256,72 @@ public final class IchthysBackstageService {
             @Override
             public void onReceive(Context context, Intent intent) {
                 // Another user's apps must never stay running (or be brought back) under the
-                // new user: return everything to the main screen and forget it.
+                // new user: return everything to the main screen and forget it. Cleared while
+                // mUserId is still the old user, so its notifications really go away.
                 final int oldUser = mUserId;
+                clearAll(oldUser);
                 mUserId = intent.getIntExtra(Intent.EXTRA_USER_HANDLE,
                         ActivityManager.getCurrentUser());
-                clearAll(oldUser);
             }
         }, UserHandle.ALL, new IntentFilter(Intent.ACTION_USER_SWITCHED), null, mHandler);
 
-        // Locking hides the app on screen too (that is when apps stop most), and unlocking
-        // brings that one back where it was.
-        final IntentFilter screen = new IntentFilter();
-        screen.addAction(Intent.ACTION_SCREEN_OFF);
-        screen.addAction(Intent.ACTION_USER_PRESENT);
+        // An uninstalled app leaves Backstage (it would hold a slot and couldn't be unticked).
+        final IntentFilter removed = new IntentFilter(Intent.ACTION_PACKAGE_REMOVED);
+        removed.addDataScheme("package");
         mContext.registerReceiverAsUser(new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
-                if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) {
-                    onScreenOff();
-                } else {
-                    onUnlocked();
+                if (intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)
+                        || getSendingUserId() != mUserId || intent.getData() == null) {
+                    return;
+                }
+                final String pkg = intent.getData().getSchemeSpecificPart();
+                if (pkg != null && mEntries.containsKey(pkg)) {
+                    remove(pkg, false);
+                    writePackages();
                 }
             }
-        }, UserHandle.ALL, screen, null, mHandler);
+        }, UserHandle.ALL, removed, null, mHandler);
+
+        // Locking hides the app on screen too (that is when apps stop most), and unlocking
+        // brings that one back where it was. Driven by the default display's state and the
+        // keyguard: ACTION_SCREEN_OFF / USER_PRESENT follow the global interactive state, which
+        // a hidden display keeps "awake", so they never come while an app is hidden.
+        final DisplayManager dm = mContext.getSystemService(DisplayManager.class);
+        mDefaultScreenOn = isDefaultScreenOn();
+        dm.registerDisplayListener(new DisplayManager.DisplayListener() {
+            @Override
+            public void onDisplayAdded(int displayId) {
+            }
+
+            @Override
+            public void onDisplayRemoved(int displayId) {
+            }
+
+            @Override
+            public void onDisplayChanged(int displayId) {
+                if (displayId == Display.DEFAULT_DISPLAY) {
+                    onDefaultDisplayChanged();
+                }
+            }
+        }, mHandler, DisplayManager.EVENT_TYPE_DISPLAY_CHANGED
+                | DisplayManager.EVENT_TYPE_DISPLAY_STATE);
+        final KeyguardManager km = mContext.getSystemService(KeyguardManager.class);
+        if (km != null) {
+            km.addKeyguardLockedStateListener(mHandler::post, locked -> {
+                if (!locked && mDefaultScreenOn) {
+                    onUnlocked();
+                }
+            });
+        }
 
         try {
             mAtm.registerTaskStackListener(new TaskStackListener() {
+                @Override
+                public void onTaskCreated(int taskId, ComponentName componentName) {
+                    mHandler.post(() -> moveForeignTasksToMain());
+                }
+
                 @Override
                 public void onTaskRemoved(int taskId) {
                     mHandler.post(() -> refresh());
@@ -252,6 +343,7 @@ public final class IchthysBackstageService {
                 @Override
                 public void onTaskMovedToFront(ActivityManager.RunningTaskInfo task) {
                     mHandler.post(() -> {
+                        moveForeignTasksToMain();
                         onOpened(task);
                         scheduleLeftCheck();
                     });
@@ -314,7 +406,6 @@ public final class IchthysBackstageService {
             }
         }
         writePackages();
-        releaseDisplayIfEmpty();
     }
 
     // ---- Entries ----
@@ -328,23 +419,26 @@ public final class IchthysBackstageService {
             Slog.w(TAG, pkg + " has no launcher activity, not sending to Backstage");
             return;
         }
-        if (!ensureDisplay()) {
-            return;
-        }
         final Entry entry = new Entry(pkg);
         mEntries.put(pkg, entry);
         if (findTask(pkg, Display.DEFAULT_DISPLAY) != null) {
             hide(entry);
-        } else if (findTask(pkg, backstageId()) == null) {
+        } else {
+            // Not on the main screen: start it on a hidden display of its own.
+            if (!ensureStage(entry, false)) {
+                mEntries.remove(pkg);
+                return;
+            }
             launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             final ActivityOptions options = ActivityOptions.makeBasic();
-            options.setLaunchDisplayId(backstageId());
+            options.setLaunchDisplayId(stageId(entry));
             try {
                 mContext.startActivityAsUser(launch, options.toBundle(), UserHandle.of(mUserId));
                 entry.movedAt = SystemClock.elapsedRealtime();
                 postNotification(entry);
             } catch (RuntimeException e) {
                 Slog.w(TAG, "launching " + pkg + " in Backstage failed", e);
+                releaseStage(entry);
                 mEntries.remove(pkg);
                 return;
             }
@@ -363,7 +457,7 @@ public final class IchthysBackstageService {
             return;
         }
         cancelNotification(entry);
-        final ActivityManager.RunningTaskInfo task = findTask(pkg, backstageId());
+        final ActivityManager.RunningTaskInfo task = findTask(pkg, stageId(entry));
         if (task != null) {
             try {
                 if (kill) {
@@ -375,40 +469,56 @@ public final class IchthysBackstageService {
                 Slog.w(TAG, "taking " + pkg + " out of Backstage failed: " + e);
             }
         }
+        final Stage stage = entry.stage;
+        entry.stage = null;
+        if (stage != null) {
+            if (kill && task != null) {
+                // Let the task finish where it is instead of flashing on the main screen.
+                mHandler.postDelayed(stage::release, MOVE_SETTLE_MS);
+            } else {
+                stage.release();
+            }
+        }
         Slog.i(TAG, pkg + (kill ? " stopped" : " taken out of Backstage"));
     }
 
     private void stop(String pkg) {
         remove(pkg, true);
         writePackages();
-        releaseDisplayIfEmpty();
     }
 
     /** Returns everything to the main screen and forgets it (user switch). */
     private void clearAll(int userId) {
         for (Entry entry : mEntries.values()) {
             cancelNotification(entry);
+            releaseStage(entry);
         }
         mEntries.clear();
         mLastPackagesValue = "";
         mOnScreenAtLock = null;
+        mTopAfterLock = ActivityTaskManager.INVALID_TASK_ID;
         Settings.Secure.putStringForUser(mContext.getContentResolver(), KEY_PACKAGES, null, userId);
-        releaseDisplayIfEmpty();
     }
 
     // ---- Moving between the screens ----
 
-    /** Main screen -> hidden display. */
+    /** Main screen -> its hidden display. */
     private void hide(Entry entry) {
         final ActivityManager.RunningTaskInfo task = findTask(entry.pkg, Display.DEFAULT_DISPLAY);
-        if (task == null || !ensureDisplay()) {
+        // A display in the app's current orientation, so a landscape app isn't reconfigured
+        // (and, without configChanges, recreated) by the move.
+        if (task == null || !ensureStage(entry, task.configuration.orientation
+                == Configuration.ORIENTATION_LANDSCAPE)) {
             return;
         }
         try {
-            mAtm.moveRootTaskToDisplay(task.taskId, backstageId());
+            mAtm.moveRootTaskToDisplay(task.taskId, stageId(entry));
         } catch (RemoteException | RuntimeException e) {
             // Not a root task (e.g. inside split screen) or refused: leave it where it is.
             Slog.w(TAG, "hiding " + entry.pkg + " failed: " + e);
+            if (findTask(entry.pkg, stageId(entry)) == null) {
+                releaseStage(entry);
+            }
             return;
         }
         entry.movedAt = SystemClock.elapsedRealtime();
@@ -419,7 +529,7 @@ public final class IchthysBackstageService {
     /** Hidden display -> main screen, on top. */
     private void show(Entry entry) {
         cancelNotification(entry);
-        final ActivityManager.RunningTaskInfo task = findTask(entry.pkg, backstageId());
+        final ActivityManager.RunningTaskInfo task = findTask(entry.pkg, stageId(entry));
         if (task != null) {
             try {
                 mAtm.moveRootTaskToDisplay(task.taskId, Display.DEFAULT_DISPLAY);
@@ -428,12 +538,34 @@ public final class IchthysBackstageService {
                 return;
             }
             entry.movedAt = SystemClock.elapsedRealtime();
+            // Nothing of it is hidden any more (anything else still there comes along).
+            releaseStage(entry);
+            final StatusBarManager sbm = mContext.getSystemService(StatusBarManager.class);
+            if (sbm != null) {
+                sbm.collapsePanels();
+            }
+        }
+        Slog.i(TAG, entry.pkg + " is on screen (still in Backstage)");
+    }
+
+    /** The app is gone (died, finished): start it again on the main screen. */
+    private void launchOnMainScreen(Entry entry) {
+        final Intent launch = mContext.createContextAsUser(UserHandle.of(mUserId), 0)
+                .getPackageManager().getLaunchIntentForPackage(entry.pkg);
+        if (launch == null) {
+            return;
+        }
+        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            mContext.startActivityAsUser(launch, UserHandle.of(mUserId));
+            entry.movedAt = SystemClock.elapsedRealtime();
+        } catch (RuntimeException e) {
+            Slog.w(TAG, "starting " + entry.pkg + " failed", e);
         }
         final StatusBarManager sbm = mContext.getSystemService(StatusBarManager.class);
         if (sbm != null) {
             sbm.collapsePanels();
         }
-        Slog.i(TAG, entry.pkg + " is on screen (still in Backstage)");
     }
 
     /**
@@ -441,7 +573,7 @@ public final class IchthysBackstageService {
      * opened a Backstage app, put it on the main screen.
      */
     private void onOpened(ActivityManager.RunningTaskInfo task) {
-        if (mDisplay == null || task == null || task.userId != mUserId) {
+        if (mEntries.isEmpty() || task == null || task.userId != mUserId) {
             return;
         }
         final ComponentName base = task.baseActivity != null ? task.baseActivity
@@ -451,23 +583,26 @@ public final class IchthysBackstageService {
             return; // not ours, or the events of our own move
         }
         if (task.displayId == Display.DEFAULT_DISPLAY) {
-            final ActivityManager.RunningTaskInfo hidden = findTask(entry.pkg, backstageId());
-            if (hidden != null && hidden.taskId != task.taskId) {
-                // The launcher started a fresh copy on the main screen: show the Backstage one
-                // instead, and drop the copy if it is only the plain launcher start.
+            final ActivityManager.RunningTaskInfo hidden = findTask(entry.pkg, stageId(entry));
+            // The launcher started a fresh copy on the main screen: show the Backstage one
+            // instead and drop the copy. A deep link or notification that opened a new task of
+            // the app is what the user wants to see: it stays on top, the hidden one stays.
+            if (hidden != null && hidden.taskId != task.taskId && isPlainLaunch(task)) {
                 show(entry);
-                if (isPlainLaunch(task)) {
-                    try {
-                        mAtm.removeTask(task.taskId);
-                    } catch (RemoteException | RuntimeException e) {
-                        Slog.w(TAG, "removing the duplicate of " + entry.pkg + " failed: " + e);
-                    }
+                try {
+                    mAtm.removeTask(task.taskId);
+                } catch (RemoteException | RuntimeException e) {
+                    Slog.w(TAG, "removing the duplicate of " + entry.pkg + " failed: " + e);
                 }
             }
-        } else if (task.displayId == backstageId()) {
-            // Brought to the front on the hidden display (launcher, recents, a notification of
-            // the app): only the user does that, so it is theirs to see.
-            show(entry);
+        } else if (task.displayId == stageId(entry)) {
+            // Brought to the front on its hidden display (launcher, recents, a notification of
+            // the app): the user wants to see it. With the screen off or locked that can only be
+            // the app itself (restarting its own activity): moving it then would put it behind
+            // the keyguard, where it stops.
+            if (isUserPresent()) {
+                show(entry);
+            }
         }
     }
 
@@ -493,6 +628,35 @@ public final class IchthysBackstageService {
         }
     }
 
+    private void onDefaultDisplayChanged() {
+        final boolean on = isDefaultScreenOn();
+        if (on == mDefaultScreenOn) {
+            return;
+        }
+        mDefaultScreenOn = on;
+        if (!on) {
+            onScreenOff();
+        } else if (!isKeyguardLocked()) {
+            onUnlocked(); // no keyguard, or it hadn't locked yet
+        }
+    }
+
+    private boolean isDefaultScreenOn() {
+        final Display display = mContext.getSystemService(DisplayManager.class)
+                .getDisplay(Display.DEFAULT_DISPLAY);
+        return display == null || Display.isOnState(display.getState());
+    }
+
+    private boolean isKeyguardLocked() {
+        final KeyguardManager km = mContext.getSystemService(KeyguardManager.class);
+        return km != null && km.isKeyguardLocked();
+    }
+
+    /** The main screen is on and unlocked. */
+    private boolean isUserPresent() {
+        return mDefaultScreenOn && !isKeyguardLocked();
+    }
+
     private void onScreenOff() {
         if (mEntries.isEmpty()) {
             return;
@@ -500,37 +664,96 @@ public final class IchthysBackstageService {
         final ActivityManager.RunningTaskInfo top = topTask();
         final ComponentName base = top == null ? null
                 : top.baseActivity != null ? top.baseActivity : top.topActivity;
-        mOnScreenAtLock = base != null && mEntries.containsKey(base.getPackageName())
-                ? base.getPackageName() : null;
+        // Only replaced by another Backstage app: a second screen-off with just the lock screen
+        // up must not forget the one to bring back.
+        if (base != null && mEntries.containsKey(base.getPackageName())) {
+            mOnScreenAtLock = base.getPackageName();
+        }
         mHandler.removeCallbacks(mCheckLeft);
         hideLeftApps(true);
+        if (mOnScreenAtLock != null) {
+            final ActivityManager.RunningTaskInfo after = topTask();
+            mTopAfterLock = after != null ? after.taskId : ActivityTaskManager.INVALID_TASK_ID;
+        }
     }
 
     private void onUnlocked() {
         final Entry entry = mOnScreenAtLock != null ? mEntries.get(mOnScreenAtLock) : null;
+        final int topAfterLock = mTopAfterLock;
         mOnScreenAtLock = null;
-        if (entry != null) {
-            show(entry);
-        }
-    }
-
-    /** Keeps the notifications in step with where each app is, after any task change. */
-    private void refresh() {
-        if (mDisplay == null) {
+        mTopAfterLock = ActivityTaskManager.INVALID_TASK_ID;
+        if (entry == null) {
             return;
         }
+        // Back where it was, but not over what the user unlocked into (a notification's app,
+        // the camera): only if the main screen still shows what was under it, or home.
+        final ActivityManager.RunningTaskInfo top = topTask();
+        if (top != null && top.taskId != topAfterLock
+                && top.topActivityType != WindowConfiguration.ACTIVITY_TYPE_HOME) {
+            return;
+        }
+        show(entry);
+    }
+
+    /**
+     * Keeps the notifications and hidden displays in step with where each app is, after any
+     * task change: a display whose app is no longer on it (it died, finished, or came back to
+     * the main screen) is released.
+     */
+    private void refresh() {
+        if (mEntries.isEmpty()) {
+            return;
+        }
+        boolean settling = false;
         for (Entry entry : mEntries.values()) {
-            final boolean hidden = findTask(entry.pkg, backstageId()) != null;
+            final boolean hidden = findTask(entry.pkg, stageId(entry)) != null;
             if (hidden && !entry.notified) {
                 postNotification(entry);
-            } else if (!hidden && entry.notified && !entry.settling()) {
-                cancelNotification(entry);
+            } else if (!hidden && entry.settling()) {
+                settling = true; // look again once our own move is done
+            } else if (!hidden) {
+                if (entry.notified) {
+                    cancelNotification(entry);
+                }
+                releaseStage(entry);
+            }
+        }
+        mHandler.removeCallbacks(mRefresh);
+        if (settling) {
+            mHandler.postDelayed(mRefresh, MOVE_SETTLE_MS);
+        }
+        moveForeignTasksToMain();
+    }
+
+    /**
+     * Something a hidden app started in a new task (a browser for a login, "open with") lands
+     * on the app's hidden display, where nobody could see it, covering the app. It belongs on
+     * the main screen.
+     */
+    private void moveForeignTasksToMain() {
+        for (Entry entry : mEntries.values()) {
+            final int displayId = stageId(entry);
+            if (displayId == Display.INVALID_DISPLAY) {
+                continue;
+            }
+            try {
+                for (ActivityManager.RunningTaskInfo info
+                        : mAtm.getTasks(Integer.MAX_VALUE, false, false, displayId)) {
+                    final ComponentName base = info.baseActivity != null ? info.baseActivity
+                            : info.topActivity;
+                    if (info.displayId == displayId && base != null
+                            && !entry.pkg.equals(base.getPackageName())) {
+                        mAtm.moveRootTaskToDisplay(info.taskId, Display.DEFAULT_DISPLAY);
+                    }
+                }
+            } catch (RemoteException | RuntimeException e) {
+                Slog.w(TAG, "moving a task off " + entry.pkg + "'s hidden display failed: " + e);
             }
         }
     }
 
-    private int backstageId() {
-        return mDisplay != null ? mDisplay.getDisplay().getDisplayId() : Display.INVALID_DISPLAY;
+    private static int stageId(Entry entry) {
+        return entry.stage != null ? entry.stage.id() : Display.INVALID_DISPLAY;
     }
 
     private ActivityManager.RunningTaskInfo topTask() {
@@ -588,10 +811,11 @@ public final class IchthysBackstageService {
         }, hours * HOUR_MS);
     }
 
-    // ---- The display ----
+    // ---- The hidden displays ----
 
-    private boolean ensureDisplay() {
-        if (mDisplay != null) {
+    /** Gives [entry] its own hidden display, unless it has one. */
+    private boolean ensureStage(Entry entry, boolean landscape) {
+        if (entry.stage != null) {
             return true;
         }
         final DisplayManager dm = mContext.getSystemService(DisplayManager.class);
@@ -599,15 +823,17 @@ public final class IchthysBackstageService {
         dm.getDisplay(Display.DEFAULT_DISPLAY).getRealMetrics(metrics);
         // Same size and density as the real screen, so moving an app only changes the display
         // id, not its layout configuration.
-        final int width = Math.min(metrics.widthPixels, metrics.heightPixels);
-        final int height = Math.max(metrics.widthPixels, metrics.heightPixels);
+        final int shortSide = Math.min(metrics.widthPixels, metrics.heightPixels);
+        final int longSide = Math.max(metrics.widthPixels, metrics.heightPixels);
+        final int width = landscape ? longSide : shortSide;
+        final int height = landscape ? shortSide : longSide;
 
         // GPU-only buffers, drained as soon as they arrive: nothing ever reads the pixels, and a
         // stalled consumer would block the app's rendering.
-        mReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2,
-                HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE);
-        mReader.setOnImageAvailableListener(reader -> {
-            final Image image = reader.acquireLatestImage();
+        final ImageReader reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888,
+                2, HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE);
+        reader.setOnImageAvailableListener(r -> {
+            final Image image = r.acquireLatestImage();
             if (image != null) {
                 image.close();
             }
@@ -621,51 +847,43 @@ public final class IchthysBackstageService {
         final VirtualDisplayConfig config = new VirtualDisplayConfig.Builder(
                 "IchthysBackstage", width, height, metrics.densityDpi)
                 .setFlags(flags)
-                .setSurface(mReader.getSurface())
+                .setSurface(reader.getSurface())
                 .setRequestedRefreshRate(REFRESH_RATE)
                 .build();
+        VirtualDisplay display;
         try {
-            mDisplay = dm.createVirtualDisplay(config);
+            display = dm.createVirtualDisplay(config);
         } catch (RuntimeException e) {
-            Slog.e(TAG, "creating the Backstage display failed", e);
-            mDisplay = null;
+            Slog.e(TAG, "creating a Backstage display failed", e);
+            display = null;
         }
-        if (mDisplay == null) {
-            mReader.close();
-            mReader = null;
+        if (display == null) {
+            reader.close();
             return false;
         }
-        // Keep only the Backstage display group awake. Keyguard and screen-off follow the
-        // default display group, so the phone still locks normally.
+        // Keep only this display group awake. Keyguard and screen-off follow the default
+        // display group, so the phone still locks normally.
         final PowerManager power = mContext.getSystemService(PowerManager.class);
-        mDisplayWakeLock = power.newWakeLock(PowerManager.SCREEN_DIM_WAKE_LOCK
-                        | PowerManager.ACQUIRE_CAUSES_WAKEUP, TAG,
-                mDisplay.getDisplay().getDisplayId());
-        mDisplayWakeLock.setReferenceCounted(false);
-        mDisplayWakeLock.acquire();
-        Slog.i(TAG, "Backstage display " + mDisplay.getDisplay().getDisplayId() + " created");
+        final PowerManager.WakeLock wakeLock = power.newWakeLock(
+                PowerManager.SCREEN_DIM_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP, TAG,
+                display.getDisplay().getDisplayId());
+        wakeLock.setReferenceCounted(false);
+        wakeLock.acquire();
+        entry.stage = new Stage(display, reader, wakeLock);
+        Slog.i(TAG, "Backstage display " + entry.stage.id() + " created for " + entry.pkg);
         return true;
     }
 
-    private void releaseDisplayIfEmpty() {
-        if (!mEntries.isEmpty() || mDisplay == null) {
+    /** Releases [entry]'s hidden display; anything still on it moves to the main screen. */
+    private void releaseStage(Entry entry) {
+        if (entry.stage == null) {
             return;
         }
-        if (mDisplayWakeLock != null) {
-            mDisplayWakeLock.release();
-            mDisplayWakeLock = null;
-        }
-        // Without DESTROY_CONTENT_ON_REMOVAL, anything still on the display moves to the main
-        // screen instead of being killed.
-        mDisplay.release();
-        mDisplay = null;
-        if (mReader != null) {
-            mReader.close();
-            mReader = null;
-        }
-        Slog.i(TAG, "Backstage display released");
+        final int id = entry.stage.id();
+        entry.stage.release();
+        entry.stage = null;
+        Slog.i(TAG, "Backstage display " + id + " of " + entry.pkg + " released");
     }
-
 
     // ---- Notification ----
 

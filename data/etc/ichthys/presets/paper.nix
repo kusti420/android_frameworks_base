@@ -2,7 +2,8 @@
 {
   theme = {
     accent = "#2f6f6a";
-    style = "neutral";
+    # IchthysOS: "neutral" is no Monet style SystemUI applies; it always rendered as tonal spot.
+    style = "tonalSpot";
     neutral = "neutral";
     surfaces = 2;
     shape.radius = 12;

@@ -63,13 +63,19 @@ final class IchthysOptions {
         s.add(Option.color("theme.accent", "#ff6b3d",
                 "Accent color: \"wallpaper\" (Monet picks it) or a seed color \"#rrggbb\".",
                 Binding.themeJson("accent")).orWallpaper());
+        // IchthysOS: only the styles SystemUI's ThemeOverlayController accepts system-wide.
+        // ThemeStyle has no NEUTRAL or FIDELITY and CONTENT is media-player only, so those three
+        // silently rendered as tonal spot; they stay readable as aliases of what they produced.
         s.add(Option.enumeration("theme.style",
                 new String[] {"tonalSpot", "vibrant", "expressive", "spritz", "rainbow",
-                        "fruitSalad", "content", "fidelity", "monochrome", "neutral"},
+                        "fruitSalad", "monochrome"},
                 new String[] {"TONAL_SPOT", "VIBRANT", "EXPRESSIVE", "SPRITZ", "RAINBOW",
-                        "FRUIT_SALAD", "CONTENT", "FIDELITY", "MONOCHROMATIC", "NEUTRAL"},
+                        "FRUIT_SALAD", "MONOCHROMATIC"},
                 "tonalSpot", "How the palette is derived from the accent (Monet style).",
-                Binding.themeJson("style")));
+                Binding.themeJson("style"))
+                .enumAlias("content", "tonalSpot")
+                .enumAlias("fidelity", "tonalSpot")
+                .enumAlias("neutral", "tonalSpot"));
         s.add(Option.bool("theme.pitchBlack", Boolean.FALSE,
                 "Darkest surface is pure #000 (OLED).", setting(SECURE, "custom_pitch_black")));
         s.add(Option.enumeration("theme.neutral", new String[] {"tinted", "neutral"},
@@ -428,6 +434,16 @@ final class IchthysOptions {
                 "Navigation bar look: stock, shoal (outlined circles, accent home), lattice "
                         + "(small discs), mono (text labels) or gestures (accent gesture handle).",
                 setting(SECURE, "ichthys_navbar_style")));
+        // IchthysOS: the icon pack the stock style draws with (NavbarStyles' picker,
+        // IchthysNavIcons) was outside ichthys.nix, so imports, exports and "Reset all" never
+        // covered it.
+        s.add(Option.enumeration("navBar.icons",
+                new String[] {"android", "asus", "dora", "moto", "nexus", "old", "oneplus",
+                        "oneui", "sammy", "tecno"},
+                new String[] {"android", "asus", "dora", "moto", "nexus", "old", "oneplus",
+                        "oneui", "sammy", "tecno"}, null,
+                "Icon pack for navBar.style = \"stock\" (unset: the system glyphs).",
+                setting(SECURE, "ichthys_navbar_icons")));
         s.removed("system.torchLevel", "the last flashlight brightness is runtime state");
         s.add(Option.stringList("system.powerMenu.actions",
                 "Power menu entries, in order (e.g. \"power\" \"restart\" \"screenshot\").",

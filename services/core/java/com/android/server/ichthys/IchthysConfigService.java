@@ -170,7 +170,9 @@ public final class IchthysConfigService extends SystemService {
         final String header = "IchthysOS configuration (ichthys.nix)\n"
                 + "exported " + now() + (all ? ", all options"
                         : ", options changed from the defaults and presets")
-                + "\napply with: adb shell cmd ichthys_config apply <file>, or Settings > Theme Studio";
+                // IchthysOS: import moved from Theme Studio to the System page (tracker#59).
+                + "\napply with: adb shell cmd ichthys_config apply <file>, or Settings > "
+                + "IchthysOS > System > Import config";
         return mSchema.print(liveState(userId, all), header);
     }
 
@@ -238,9 +240,41 @@ public final class IchthysConfigService extends SystemService {
             if (diff.isEmpty()) {
                 return gens.current();
             }
+            // IchthysOS: device-wide (Global) options belong to the system user, as for the
+            // baseline: a secondary user's apply or rollback must not switch the owner's
+            // shields or pm_downgrade_allowed.
+            final List<ConfigDiff.Change> changes = new ArrayList<>();
+            for (ConfigDiff.Change c : diff.changes) {
+                if (userId != UserHandle.USER_SYSTEM && isGlobal(c.path)) {
+                    Slog.w(TAG, "user " + userId + ": skipping device-wide " + c.path);
+                    continue;
+                }
+                changes.add(c);
+            }
+            if (changes.isEmpty()) {
+                return gens.current();
+            }
             final List<ConfigDiff.Change> done = new ArrayList<>();
+            String writing = null;
             try {
-                for (ConfigDiff.Change c : diff.changes) {
+                for (ConfigDiff.Change c : changes) {
+                    writing = c.path;
+                    final Binding.Store store = mSchema.get(c.path).binding.store;
+                    if (mode == ConfigPlanner.Mode.SNAPSHOT
+                            && (store == Binding.Store.ROLE
+                                    || store == Binding.Store.KEYGUARD_SLOT)) {
+                        // IchthysOS: a rollback restores default apps and lock screen shortcuts
+                        // best effort: an app uninstalled since must not make the whole
+                        // rollback fail.
+                        try {
+                            mBackend.write(mSchema.get(c.path), mPlanner.valueToStore(c, mode),
+                                    userId);
+                            done.add(c);
+                        } catch (RuntimeException e) {
+                            Slog.w(TAG, "rollback: skipping " + c.path + ": " + e.getMessage());
+                        }
+                        continue;
+                    }
                     mBackend.write(mSchema.get(c.path), mPlanner.valueToStore(c, mode), userId);
                     done.add(c);
                 }
@@ -253,7 +287,7 @@ public final class IchthysConfigService extends SystemService {
                         Slog.w(TAG, "could not restore " + c.path, ignored);
                     }
                 }
-                final String failed = diff.changes.get(done.size()).path;
+                final String failed = writing;
                 throw new IllegalArgumentException("applying " + failed + " failed: "
                         + e.getMessage() + " (all changes rolled back)");
             }
@@ -291,6 +325,12 @@ public final class IchthysConfigService extends SystemService {
             return applyTarget(mPlanner.target(declared, ConfigPlanner.Mode.SNAPSHOT),
                     ConfigPlanner.Mode.SNAPSHOT, "rollback to " + target, userId);
         }
+    }
+
+    /** IchthysOS: options stored device-wide (Settings.Global, LineageSettings.Global). */
+    private boolean isGlobal(String path) {
+        final Binding.Store store = mSchema.get(path).binding.store;
+        return store == Binding.Store.GLOBAL || store == Binding.Store.LINEAGE_GLOBAL;
     }
 
     /** Options that feed ThemeApplier's token overlays. */

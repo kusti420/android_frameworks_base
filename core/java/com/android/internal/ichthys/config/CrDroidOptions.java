@@ -47,8 +47,8 @@ final class CrDroidOptions {
         s.add(Option.enumeration("lockscreen.fingerprint.animColorMode", new String[] {"accent", "white", "custom", "rainbow"}, new String[] {"0", "1", "2", "3"}, "accent", "Animation color", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_anim_color_mode")));
         s.add(Option.enumeration("lockscreen.fingerprint.animEffect", new String[] {"none", "animationPack", "rippleRings", "radarSweep", "particleBurst", "shoalLattice", "pulse", "auroraArcs", "spinner", "scanlines"}, new String[] {"-1", "0", "1", "2", "3", "4", "5", "6", "7", "8"}, "animationPack", "Animation", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_anim_effect")));
         s.add(Option.bool("lockscreen.fingerprint.animEnroll", Boolean.FALSE, "While enrolling", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_anim_enroll")));
-        s.add(Option.integer("lockscreen.fingerprint.animOffsetX", 0L, 0L, 40L, "Horizontal offset", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_anim_offset_x")));
-        s.add(Option.integer("lockscreen.fingerprint.animOffsetY", 0L, 0L, 40L, "Vertical offset", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_anim_offset_y")));
+        s.add(Option.integer("lockscreen.fingerprint.animOffsetX", 0L, -40L, 40L, "Horizontal offset", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_anim_offset_x")));
+        s.add(Option.integer("lockscreen.fingerprint.animOffsetY", 0L, -40L, 40L, "Vertical offset", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_anim_offset_y")));
         s.add(Option.integer("lockscreen.fingerprint.animScale", 100L, 0L, 250L, "Animation size", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_anim_scale")));
         s.add(Option.integer("lockscreen.fingerprint.animSpeed", 100L, 0L, 300L, "Animation speed", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_anim_speed")));
         s.add(Option.enumeration("lockscreen.fingerprint.failEffect", new String[] {"none", "shake", "redFlash"}, new String[] {"0", "1", "2"}, "redFlash", "On failure", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_fail_effect")));

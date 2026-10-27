@@ -38,6 +38,8 @@ import xml.etree.ElementTree as ET
 
 A = '{http://schemas.android.com/apk/res/android}'
 S = '{http://schemas.android.com/apk/res/com.android.settings}'
+# IchthysOS: some pages declare the settings: prefix as res-auto; read both.
+SA = '{http://schemas.android.com/apk/res-auto}'
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOCK = os.path.join(HERE, 'crdroid_options.lock')
 
@@ -519,7 +521,7 @@ def scan(root, lock, hand_bound, hand_keys, report, notes):
                  'default': resolve(el.get(A + 'defaultValue'), strings, scalars),
                  'min': None, 'max': None, 'enum': None}
             if typ == 'INT':
-                o['min'] = el.get(S + 'min') or el.get(A + 'min') or '0'
+                o['min'] = el.get(S + 'min') or el.get(SA + 'min') or el.get(A + 'min') or '0'
                 o['max'] = el.get(A + 'max') or '100'
             if typ == 'ENUM':
                 ev = el.get(A + 'entryValues')

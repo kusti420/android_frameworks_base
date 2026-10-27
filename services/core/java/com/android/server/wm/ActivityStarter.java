@@ -2576,8 +2576,11 @@ class ActivityStarter {
         // IchthysOS: the lock screen calculator shortcut found the calculator already running.
         // The permission to show over the keyguard was given to the record made for this start,
         // which is dropped here; hand it to the activity that is shown instead, or the
-        // calculator comes to the front behind the keyguard.
-        if (mStartActivity.isLaunchedByLockscreenShortcut() && targetTaskTop != null) {
+        // calculator comes to the front behind the keyguard. Only to the calculator's own
+        // activity: another app's screen on top of its task (a Custom Tab, the share sheet, a
+        // file picker) must not show over the keyguard. Then the task stays behind it.
+        if (mStartActivity.isLaunchedByLockscreenShortcut() && targetTaskTop != null
+                && mStartActivity.packageName.equals(targetTaskTop.packageName)) {
             targetTaskTop.showOverKeyguardForLockscreenShortcut();
         }
 

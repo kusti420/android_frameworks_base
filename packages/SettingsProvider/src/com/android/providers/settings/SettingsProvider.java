@@ -1059,7 +1059,10 @@ public class SettingsProvider extends ContentProvider {
             if (setting.getPackageName() != null) {
                 pw.print(" pkg:"); pw.print(setting.getPackageName());
             }
-            pw.print(" value:"); pw.print(toDumpString(setting.getValue()));
+            // IchthysOS: the keybox holds attestation private keys; dumpsys and bug reports
+            // must not print it (reads of it are gated, the dump wasn't).
+            pw.print(" value:"); pw.print(KEYBOX_SETTING.equals(name) && setting.getValue() != null
+                    ? "<redacted>" : toDumpString(setting.getValue()));
             if (setting.getDefaultValue() != null) {
                 pw.print(" default:"); pw.print(setting.getDefaultValue());
                 pw.print(" defaultSystemSet:"); pw.print(setting.isDefaultFromSystem());
