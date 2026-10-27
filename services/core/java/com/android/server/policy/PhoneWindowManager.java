@@ -5565,7 +5565,10 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                 mVolumeDownHeld = down;
             }
         }
-        if (!mVolBtnMusicControls) {
+        // IchthysOS: "Wake device" (volume_wake_screen) turns "Control playback" off: Settings
+        // greys that switch (and its dependents) out while wake is on, but its stored value stays
+        // 1, so a screen-off hold used to wake the screen AND skip the track.
+        if (!mVolBtnMusicControls || mVolumeWakeScreen) {
             return false; // feature off — let volume behave normally
         }
 
