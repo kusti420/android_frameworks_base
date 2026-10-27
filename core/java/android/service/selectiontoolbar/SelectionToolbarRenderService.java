@@ -27,10 +27,12 @@ import android.util.Log;
 import android.util.SparseArray;
 import android.view.selectiontoolbar.ISelectionToolbarCallback;
 import android.view.selectiontoolbar.ShowInfo;
+import android.view.selectiontoolbar.ToolbarMenuItem;
 import android.view.selectiontoolbar.WidgetInfo;
 
 import com.android.internal.annotations.GuardedBy;
 
+import java.util.List;
 import java.util.concurrent.Executor;
 
 /**
@@ -97,13 +99,15 @@ public abstract class SelectionToolbarRenderService extends Service {
                                 };
                                 callback.asBinder().linkToDeath(deathRecipient, 0);
                                 remoteCallbackWrapper = new RemoteCallbackWrapper(callback,
-                                        deathRecipient);
+                                        deathRecipient, uid,
+                                        SelectionToolbarRenderService.this::onPasteAction);
                                 mCache.put(uid, remoteCallbackWrapper);
                             } catch (RemoteException e) {
                                 Log.e(TAG, "ISelectionToolbarCallback has already died");
                                 return;
                             }
                         }
+                        remoteCallbackWrapper.mMenuItems = showInfo.menuItems;
                         SelectionToolbarRenderService.this.onShow(uid, showInfo,
                                 remoteCallbackWrapper);
                     });
@@ -199,11 +203,21 @@ public abstract class SelectionToolbarRenderService extends Service {
 
         private final IBinder.DeathRecipient mDeathRecipient;
 
+        /** IchthysOS: the toolbar's host app, told about a Paste pick (clipboard lockdown). */
+        private final int mUid;
+        private final OnPasteActionCallback mOnPasteAction;
+        /** IchthysOS: the menu of the latest show, to tell which index is Paste. */
+        @Nullable
+        volatile List<ToolbarMenuItem> mMenuItems;
+
         RemoteCallbackWrapper(ISelectionToolbarCallback remoteCallback,
-                IBinder.DeathRecipient deathRecipient) {
+                IBinder.DeathRecipient deathRecipient, int uid,
+                OnPasteActionCallback onPasteAction) {
             // TODO(b/215497659): handle if the binder dies.
             mRemoteCallback = remoteCallback;
             mDeathRecipient = deathRecipient;
+            mUid = uid;
+            mOnPasteAction = onPasteAction;
         }
 
         private void unlinkToDeath() {
@@ -239,11 +253,33 @@ public abstract class SelectionToolbarRenderService extends Service {
 
         @Override
         public void onMenuItemClicked(int itemIndex) {
+            // IchthysOS: every Paste pick reports the paste before the app hears of the click,
+            // including the overflow panel's, which the renderer doesn't report itself. Under
+            // the clipboard lockdown that report is what lets the app read the clip: the user's
+            // tap landed in SystemUI's toolbar window, not in the app.
+            if (isPasteItem(itemIndex)) {
+                mOnPasteAction.onPasteAction(mUid);
+            }
             try {
                 mRemoteCallback.onMenuItemClicked(itemIndex);
             } catch (RemoteException e) {
                 // no-op
             }
+        }
+
+        private boolean isPasteItem(int itemIndex) {
+            final List<ToolbarMenuItem> items = mMenuItems;
+            if (items == null) {
+                return false;
+            }
+            for (int i = 0; i < items.size(); i++) {
+                final ToolbarMenuItem item = items.get(i);
+                if (item != null && item.itemIndex == itemIndex) {
+                    return item.itemId == android.R.id.paste
+                            || item.itemId == android.R.id.pasteAsPlainText;
+                }
+            }
+            return false;
         }
     }
 

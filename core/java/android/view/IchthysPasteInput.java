@@ -35,7 +35,9 @@ public final class IchthysPasteInput {
             interesting = me.isFromSource(InputDevice.SOURCE_CLASS_POINTER)
                     && me.getActionMasked() == MotionEvent.ACTION_UP;
         } else if (event instanceof KeyEvent) {
-            interesting = ((KeyEvent) event).getAction() == KeyEvent.ACTION_DOWN;
+            // Same keys ClipboardService accepts: typing or Back must not replace a tap.
+            interesting = ((KeyEvent) event).getAction() == KeyEvent.ACTION_DOWN
+                    && isPasteKey((KeyEvent) event);
         } else {
             interesting = false;
         }
@@ -50,6 +52,26 @@ public final class IchthysPasteInput {
         }
         if (old != null) {
             old.recycle();
+        }
+    }
+
+    /**
+     * The key presses that can be a paste (keep in step with ClipboardService): the paste key,
+     * Ctrl/Meta+V, Shift+Insert and the keys that press a focused button.
+     */
+    private static boolean isPasteKey(KeyEvent key) {
+        switch (key.getKeyCode()) {
+            case KeyEvent.KEYCODE_PASTE:
+            case KeyEvent.KEYCODE_DPAD_CENTER:
+            case KeyEvent.KEYCODE_ENTER:
+            case KeyEvent.KEYCODE_NUMPAD_ENTER:
+                return true;
+            case KeyEvent.KEYCODE_V:
+                return key.isCtrlPressed() || key.isMetaPressed();
+            case KeyEvent.KEYCODE_INSERT:
+                return key.isShiftPressed();
+            default:
+                return false;
         }
     }
 

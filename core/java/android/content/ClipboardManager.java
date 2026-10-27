@@ -286,6 +286,21 @@ public class ClipboardManager extends android.text.ClipboardManager {
     }
 
     /**
+     * IchthysOS clipboard lockdown: called in the default IME's process right before it asks the
+     * app it types into to paste (performContextMenuAction(paste), a Ctrl+V or paste key), so
+     * that app may read the clip. Ignored for any other caller.
+     *
+     * @hide
+     */
+    public void notePasteFromIme() {
+        try {
+            mService.notePasteFromIme(mContext.getOpPackageName(), mContext.getUserId());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
      * Returns a description of the current primary clip on the clipboard but not a copy of its
      * data.
      *

@@ -21,6 +21,7 @@ import android.annotation.CallbackExecutor;
 import android.annotation.IntRange;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.content.ClipboardManager;
 import android.graphics.RectF;
 import android.os.Bundle;
 import android.os.CancellationSignal;
@@ -332,7 +333,48 @@ final class RemoteInputConnection implements InputConnection {
 
     @AnyThread
     public boolean performContextMenuAction(int id) {
+        if (id == android.R.id.paste || id == android.R.id.pasteAsPlainText) {
+            ichthysNotePaste();
+        }
         return mInvoker.performContextMenuAction(id);
+    }
+
+    /**
+     * IchthysOS clipboard lockdown: the keyboard is about to make the app paste. Tell
+     * ClipboardService first (it only listens to the default IME), or the app's read of the clip
+     * is refused because the user's tap went to the keyboard, not to the app.
+     */
+    @AnyThread
+    private void ichthysNotePaste() {
+        final InputMethodServiceInternal ims = mImsInternal.mServiceRef.get();
+        if (ims == null) {
+            return;
+        }
+        try {
+            final ClipboardManager cm = ims.getContext().getSystemService(ClipboardManager.class);
+            if (cm != null) {
+                cm.notePasteFromIme();
+            }
+        } catch (RuntimeException e) {
+            Log.w(TAG, "notePasteFromIme failed", e);
+        }
+    }
+
+    /** IchthysOS: Ctrl/Meta+V, Shift+Insert and the paste key paste in a text field. */
+    private static boolean ichthysIsPasteKey(KeyEvent event) {
+        if (event.getAction() != KeyEvent.ACTION_DOWN) {
+            return false;
+        }
+        switch (event.getKeyCode()) {
+            case KeyEvent.KEYCODE_PASTE:
+                return true;
+            case KeyEvent.KEYCODE_V:
+                return event.isCtrlPressed() || event.isMetaPressed();
+            case KeyEvent.KEYCODE_INSERT:
+                return event.isShiftPressed();
+            default:
+                return false;
+        }
     }
 
     @AnyThread
@@ -381,6 +423,9 @@ final class RemoteInputConnection implements InputConnection {
 
     @AnyThread
     public boolean sendKeyEvent(KeyEvent event) {
+        if (event != null && ichthysIsPasteKey(event)) {
+            ichthysNotePaste();
+        }
         final boolean handled = mInvoker.sendKeyEvent(event);
         if (handled) {
             notifyUserActionIfNecessary();

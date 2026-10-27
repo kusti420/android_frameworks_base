@@ -423,8 +423,13 @@ public class ClipDescription implements Parcelable {
      * Sets whether the associated {@link ClipData} contains styled text in its first item. This
      * should be called when this description is associated with clip data or when the first item
      * is added to the associated clip data.
+     *
+     * <p>IchthysOS: public (hidden) so ClipboardService can keep it in the stripped description
+     * it hands to apps under the clipboard lockdown.
+     *
+     * @hide
      */
-    void setIsStyledText(boolean isStyledText) {
+    public void setIsStyledText(boolean isStyledText) {
         mIsStyledText = isStyledText;
     }
 

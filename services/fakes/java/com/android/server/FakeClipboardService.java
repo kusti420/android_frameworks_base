@@ -168,4 +168,9 @@ public class FakeClipboardService extends IClipboard.Stub {
             int deviceId) {
         // Fake clipboard has no read restrictions.
     }
+
+    @Override
+    public void notePasteFromIme(String callingPackage, int userId) {
+        // Fake clipboard has no read restrictions.
+    }
 }

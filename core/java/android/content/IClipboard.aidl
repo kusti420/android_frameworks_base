@@ -61,4 +61,10 @@ interface IClipboard {
      * (a verified pointer-up or key-down its windows just received).
      */
     void notePasteInput(in InputEvent event, String callingPackage, int userId, int deviceId);
+
+    /**
+     * IchthysOS: the default IME is about to ask the app it types into to paste
+     * (InputConnection#performContextMenuAction(paste), Ctrl+V): that app may read the clip.
+     */
+    void notePasteFromIme(String callingPackage, int userId);
 }

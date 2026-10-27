@@ -827,6 +827,14 @@ public abstract class WindowManagerInternal {
     public abstract boolean isUidFocused(int uid);
 
     /**
+     * IchthysOS: like {@link #isUidFocused} but only for the top-focused display, so a display
+     * with its own focus that the user isn't looking at (Backstage) doesn't count.
+     */
+    public boolean isUidFocusedOnTopFocusedDisplay(int uid) {
+        return isUidFocused(uid);
+    }
+
+    /**
      * Checks whether the specified IME client has IME focus or not.
      *
      * @param windowToken The token of the IME client window

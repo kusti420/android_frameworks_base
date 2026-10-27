@@ -108,8 +108,10 @@ import com.android.internal.inputmethod.IRemoteAccessibilityInputConnection;
 import com.android.internal.os.SomeArgs;
 import com.android.internal.util.DumpUtils;
 import com.android.internal.util.function.pooled.PooledLambda;
+import com.android.server.LocalServices;
 import com.android.server.accessibility.AccessibilityWindowManager.RemoteAccessibilityConnection;
 import com.android.server.accessibility.magnification.MagnificationProcessor;
+import com.android.server.clipboard.ClipboardManagerInternal;
 import com.android.server.wm.WindowManagerInternal;
 
 import java.io.FileDescriptor;
@@ -2361,6 +2363,17 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
             }
             if (windowToken != null) {
                 mWindowManagerService.requestWindowFocus(windowToken);
+            }
+            if (action == AccessibilityNodeInfo.ACTION_PASTE) {
+                // IchthysOS clipboard lockdown: the user asked their accessibility service to
+                // paste here (TalkBack, Voice Access, Switch Access). The gesture went to the
+                // service, not the app, so tell ClipboardService that the window's app may read
+                // the clip for this paste.
+                final ClipboardManagerInternal clipboard =
+                        LocalServices.getService(ClipboardManagerInternal.class);
+                if (clipboard != null) {
+                    clipboard.notifyUserAuthorizedClipAccess(connection.getUid());
+                }
             }
             if (intConnTracingEnabled()) {
                 logTraceIntConn("performAccessibilityAction",

@@ -8784,6 +8784,14 @@ public class WindowManagerService extends IWindowManager.Stub
             }
         }
 
+        @Override
+        public boolean isUidFocusedOnTopFocusedDisplay(int uid) {
+            synchronized (mGlobalLock) {
+                final DisplayContent displayContent = mRoot.getTopFocusedDisplayContent();
+                return displayContent != null && displayContent.mCurrentFocus != null
+                        && uid == displayContent.mCurrentFocus.getOwningUid();
+            }
+        }
 
         @Override
         public byte[] backupDisplayWindowSettings(int userId) {

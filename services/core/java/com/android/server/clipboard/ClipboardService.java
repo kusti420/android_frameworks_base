@@ -48,6 +48,7 @@ import android.annotation.UserIdInt;
 import android.annotation.WorkerThread;
 import android.app.ActivityManager;
 import android.app.ActivityManagerInternal;
+import android.app.AlarmManager;
 import android.app.AppOpsManager;
 import android.app.IUriGrantsManager;
 import android.app.KeyguardManager;
@@ -223,12 +224,30 @@ public class ClipboardService extends SystemService {
     /** Settings.Global: auto-clear minutes while locked down; 0 = platform default (1 h). */
     private static final String ICHTHYS_CLEAR_MINUTES = "ichthys_clipboard_clear_minutes";
     private static final int ICHTHYS_DEFAULT_CLEAR_MINUTES = 5;
-    /** Max age of the user input backing a read, and how long the resulting grant lasts. */
+    /**
+     * Max age of the user input backing a read. A grant made from an input ends this long after
+     * the input itself; a grant from a system-attested paste (selection toolbar, accessibility
+     * ACTION_PASTE, the keyboard's paste) lasts this long from the paste.
+     */
     private static final long ICHTHYS_PASTE_INPUT_MAX_AGE_MS = 2000;
     private static final long ICHTHYS_PASTE_GRANT_MS = 2000;
-    /** uid -> SystemClock.uptimeMillis() until which it may read after a verified input. */
+    /**
+     * IchthysOS: once a grant has been used, it only lives on this much longer: enough for a
+     * paste that reads the clip more than once (WebView reads text and HTML), not for polling.
+     */
+    private static final long ICHTHYS_PASTE_AFTER_READ_MS = 500;
+    /** uid -> SystemClock.elapsedRealtime() until which it may read (paste grant). */
     @GuardedBy("mLock")
     private final SparseLongArray mIchthysPasteGrantUntil = new SparseLongArray();
+    /** uid -> event time (uptime ns) of the input its live grant came from; 0 = system paste. */
+    @GuardedBy("mLock")
+    private final SparseLongArray mIchthysPasteGrantEvent = new SparseLongArray();
+    /** uid -> event time (uptime ns) of the newest input whose grant it already used. */
+    @GuardedBy("mLock")
+    private final SparseLongArray mIchthysPasteUsedEvent = new SparseLongArray();
+    /** userId -> elapsedRealtime until which the focused app may read: the keyboard pasted. */
+    @GuardedBy("mLock")
+    private final SparseLongArray mIchthysImePasteUntil = new SparseLongArray();
 
     /**
      * Instantiates the clipboard.
@@ -365,6 +384,15 @@ public class ClipboardService extends SystemService {
 
         /** The text classifier session that is used to annotate the text in the primary clip. */
         TextClassifier mTextClassifier;
+
+        /**
+         * IchthysOS: elapsedRealtime at which {@link #primaryClip} is cleared under the clipboard
+         * lockdown, counted from the copy (not re-armed by reads, and counting deep sleep); 0 =
+         * none.
+         */
+        long mIchthysClearAt;
+        /** IchthysOS: the alarm behind {@link #mIchthysClearAt}; made on first use. */
+        AlarmManager.OnAlarmListener mIchthysClearAlarm;
 
         Clipboard(int userId, int deviceId) {
             this.userId = userId;
@@ -648,6 +676,14 @@ public class ClipboardService extends SystemService {
                 @UserIdInt int userId, int intendingUid, int intendingDeviceId) {
             final long oldIdentity = Binder.clearCallingIdentity();
             try {
+                // IchthysOS: under the lockdown the clip is cleared a fixed time after the copy by
+                // an elapsed-realtime alarm (ichthysArmClearLocked); the uptime handler below
+                // stopped during deep sleep and was re-armed by every read.
+                if (ichthysClearTimeoutMs() > 0) {
+                    mClipboardClearHandler.removeEqualMessages(ClipboardClearHandler.MSG_CLEAR,
+                            new Pair<>(userId, intendingDeviceId));
+                    return;
+                }
                 if (DeviceConfig.getBoolean(DeviceConfig.NAMESPACE_CLIPBOARD,
                         PROPERTY_AUTO_CLEAR_ENABLED, true)) {
                     Pair<Integer, Integer> userIdDeviceId = new Pair<>(userId, intendingDeviceId);
@@ -669,16 +705,10 @@ public class ClipboardService extends SystemService {
         }
 
         private long getTimeoutForAutoClear() {
-            final long platform = DeviceConfig.getLong(DeviceConfig.NAMESPACE_CLIPBOARD,
+            // IchthysOS: the lockdown's own delay is handled by ichthysClearTimeoutMs().
+            return DeviceConfig.getLong(DeviceConfig.NAMESPACE_CLIPBOARD,
                     PROPERTY_AUTO_CLEAR_TIMEOUT,
                     DEFAULT_CLIPBOARD_TIMEOUT_MILLIS);
-            // IchthysOS: under the lockdown clips don't linger for an hour.
-            if (!ichthysLockdownEnabled()) {
-                return platform;
-            }
-            final int minutes = Settings.Global.getInt(getContext().getContentResolver(),
-                    ICHTHYS_CLEAR_MINUTES, ICHTHYS_DEFAULT_CLEAR_MINUTES);
-            return minutes > 0 ? Math.min(platform, TimeUnit.MINUTES.toMillis(minutes)) : platform;
         }
 
         @Override
@@ -740,12 +770,50 @@ public class ClipboardService extends SystemService {
                 return;
             }
             if (verified instanceof VerifiedKeyEvent
-                    && ((VerifiedKeyEvent) verified).getAction() != KeyEvent.ACTION_DOWN) {
+                    && (((VerifiedKeyEvent) verified).getAction() != KeyEvent.ACTION_DOWN
+                            || !ichthysIsPasteKey((VerifiedKeyEvent) verified))) {
                 return;
             }
+            final long eventNanos = verified.getEventTimeNanos();
             synchronized (mLock) {
-                mIchthysPasteGrantUntil.put(intendingUid,
-                        SystemClock.uptimeMillis() + ICHTHYS_PASTE_GRANT_MS);
+                ichthysPruneGrantsLocked();
+                // IchthysOS: one input backs one paste. An app that reads again and again (a
+                // poller) gets nothing more from the same tap or key press.
+                if (eventNanos <= mIchthysPasteUsedEvent.get(intendingUid, 0)) {
+                    return;
+                }
+                // The grant ends when the input gets too old, not 2 s after this call.
+                final long remainingMs = TimeUnit.NANOSECONDS.toMillis(
+                        TimeUnit.MILLISECONDS.toNanos(ICHTHYS_PASTE_INPUT_MAX_AGE_MS) - ageNanos);
+                final long until = SystemClock.elapsedRealtime() + remainingMs;
+                if (until > mIchthysPasteGrantUntil.get(intendingUid, 0)) {
+                    mIchthysPasteGrantUntil.put(intendingUid, until);
+                    mIchthysPasteGrantEvent.put(intendingUid, eventNanos);
+                }
+            }
+        }
+
+        @Override
+        public void notePasteFromIme(String callingPackage, @UserIdInt int userId) {
+            final int intendingUid = getIntendingUid(callingPackage, userId);
+            mAppOps.checkPackage(intendingUid, callingPackage);
+            final int intendingUserId = UserHandle.getUserId(intendingUid);
+            final long ident = Binder.clearCallingIdentity();
+            final boolean isIme;
+            try {
+                isIme = isDefaultIme(intendingUserId, callingPackage);
+            } finally {
+                Binder.restoreCallingIdentity(ident);
+            }
+            if (!isIme) {
+                return;
+            }
+            // IchthysOS: the default keyboard (which may read the clip itself anyway) is about
+            // to ask the app it types into to paste (performContextMenuAction(paste), Ctrl+V).
+            // The read still needs focus, so only that app can use this.
+            synchronized (mLock) {
+                mIchthysImePasteUntil.put(intendingUserId,
+                        SystemClock.elapsedRealtime() + ICHTHYS_PASTE_GRANT_MS);
             }
         }
 
@@ -768,11 +836,15 @@ public class ClipboardService extends SystemService {
             final boolean needsPasteProof =
                     ichthysNeedsPasteProof(pkg, intendingUid, intendingUserId);
             synchronized (mLock) {
-                if (needsPasteProof && !ichthysMayReadLocked(
-                        intendingUid, getClipboardLocked(intendingUserId, intendingDeviceId))) {
-                    Slog.i(TAG, "Clipboard lockdown: " + pkg
-                            + " read the clipboard without a user paste action; returned empty");
-                    return null;
+                final Clipboard current = getClipboardLocked(intendingUserId, intendingDeviceId);
+                ichthysExpireIfDueLocked(current);
+                if (needsPasteProof) {
+                    if (!ichthysMayReadLocked(intendingUid, current)) {
+                        Slog.i(TAG, "Clipboard lockdown: " + pkg + " read the clipboard without"
+                                + " a user paste action; returned empty");
+                        return null;
+                    }
+                    ichthysNoteGrantUsedLocked(intendingUid);
                 }
                 try {
                     addActiveOwnerLocked(intendingUid, intendingDeviceId, pkg);
@@ -820,14 +892,21 @@ public class ClipboardService extends SystemService {
                     ichthysNeedsPasteProof(callingPackage, intendingUid, intendingUserId);
             synchronized (mLock) {
                 Clipboard clipboard = getClipboardLocked(intendingUserId, intendingDeviceId);
+                ichthysExpireIfDueLocked(clipboard);
                 if (clipboard == null || clipboard.primaryClip == null) {
                     return null;
                 }
                 final ClipDescription description = clipboard.primaryClip.getDescription();
                 if (needsPasteProof && !ichthysMayReadLocked(intendingUid, clipboard)) {
-                    // IchthysOS: enough to decide whether to offer Paste (MIME types), but not
-                    // the label/extras the copying app attached.
-                    return new ClipDescription("", description.filterMimeTypes("*/*"));
+                    // IchthysOS: enough to decide whether to offer Paste (MIME types) and
+                    // "Paste as plain text" (styled text), but not the label/extras the copying
+                    // app attached. A clip may have no MIME types at all: filterMimeTypes()
+                    // then returns null, which the constructor would throw on.
+                    final String[] mimeTypes = description.filterMimeTypes("*/*");
+                    final ClipDescription stripped = new ClipDescription("",
+                            mimeTypes != null ? mimeTypes : new String[0]);
+                    stripped.setIsStyledText(description.isStyledText());
+                    return stripped;
                 }
                 return description;
             }
@@ -852,6 +931,7 @@ public class ClipboardService extends SystemService {
             }
             synchronized (mLock) {
                 Clipboard clipboard = getClipboardLocked(intendingUserId, intendingDeviceId);
+                ichthysExpireIfDueLocked(clipboard);
                 return clipboard != null && clipboard.primaryClip != null;
             }
         }
@@ -927,6 +1007,7 @@ public class ClipboardService extends SystemService {
             }
             synchronized (mLock) {
                 Clipboard clipboard = getClipboardLocked(intendingUserId, intendingDeviceId);
+                ichthysExpireIfDueLocked(clipboard);
                 if (clipboard != null && clipboard.primaryClip != null) {
                     CharSequence text = clipboard.primaryClip.getItemAt(0).getText();
                     return text != null && text.length() > 0;
@@ -1003,6 +1084,11 @@ public class ClipboardService extends SystemService {
             synchronized (mLock) {
                 mUserAuthorizedClipAccesses.put(uid,
                         elapsedRealtime + ACCESS_NOTIFICATION_SUPPRESSION_TIMEOUT_MILLIS);
+                // IchthysOS: a trusted component saw the user pick Paste (the system-drawn text
+                // selection toolbar, whose tap never reaches the app, or accessibility
+                // ACTION_PASTE): that is a paste grant under the clipboard lockdown too.
+                mIchthysPasteGrantUntil.put(uid, elapsedRealtime + ICHTHYS_PASTE_GRANT_MS);
+                mIchthysPasteGrantEvent.put(uid, 0);
             }
             mWorkerHandler.postDelayed(PooledLambda.obtainRunnable(
                             ClipboardInternalImpl::pruneUserAuthorizedClipAccesses, this),
@@ -1181,6 +1267,7 @@ public class ClipboardService extends SystemService {
                 description.setTimestamp(System.currentTimeMillis());
             }
         }
+        ichthysArmClearLocked(clipboard);
         sendClipChangedBroadcast(clipboard);
     }
 
@@ -1546,7 +1633,12 @@ public class ClipboardService extends SystemService {
     }
 
     private boolean isDefaultDeviceAndUidFocused(int intendingDeviceId, int uid) {
-        return intendingDeviceId == DEVICE_ID_DEFAULT && mWm.isUidFocused(uid);
+        // IchthysOS: focus on the top-focused display only. A display with its own focus (the
+        // Backstage displays, which the user never sees) must not make its app count as the
+        // app the user is in: it would get clip change callbacks and, with the lockdown off,
+        // background reads.
+        return intendingDeviceId == DEVICE_ID_DEFAULT
+                && mWm.isUidFocusedOnTopFocusedDisplay(uid);
     }
 
     private boolean isVirtualDeviceAndUidFocused(int intendingDeviceId, int uid) {
@@ -1595,14 +1687,19 @@ public class ClipboardService extends SystemService {
             if (isDefaultIme(userId, callingPackage)) {
                 return false;
             }
-            final String allowed = Settings.Secure.getStringForUser(
-                    getContext().getContentResolver(), ICHTHYS_ALLOWED_PKGS, userId);
-            if (!TextUtils.isEmpty(allowed)) {
-                for (String pkg : allowed.split(",")) {
-                    if (pkg.trim().equals(callingPackage)) {
-                        return false;
-                    }
+            if (ichthysIsAllowlisted(callingPackage, userId)) {
+                return false;
+            }
+            // IchthysOS: Guard writes the list for the user running Settings; a work profile or
+            // clone copy of an allowed app follows its parent user's list.
+            try {
+                final UserInfo parent = mUm.getProfileParent(userId);
+                if (parent != null && parent.id != userId
+                        && ichthysIsAllowlisted(callingPackage, parent.id)) {
+                    return false;
                 }
+            } catch (RemoteException e) {
+                // Same process; no parent then.
             }
         } finally {
             Binder.restoreCallingIdentity(ident);
@@ -1610,7 +1707,24 @@ public class ClipboardService extends SystemService {
         return true;
     }
 
-    /** An app may read its own clip, or while a verified paste grant is live. */
+    /** IchthysOS: [pkg] is on [userId]'s clipboard lockdown allowlist. Identity cleared. */
+    private boolean ichthysIsAllowlisted(String pkg, @UserIdInt int userId) {
+        final String allowed = Settings.Secure.getStringForUser(
+                getContext().getContentResolver(), ICHTHYS_ALLOWED_PKGS, userId);
+        if (!TextUtils.isEmpty(allowed)) {
+            for (String p : allowed.split(",")) {
+                if (p.trim().equals(pkg)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * An app may read its own clip, or while a paste grant is live: from a verified input, a
+     * system-attested paste (notifyUserAuthorizedClipAccess) or the keyboard's paste.
+     */
     @GuardedBy("mLock")
     private boolean ichthysMayReadLocked(int uid, @Nullable Clipboard clipboard) {
         if (clipboard != null && clipboard.primaryClip != null
@@ -1618,7 +1732,139 @@ public class ClipboardService extends SystemService {
                         getPccAwareUid(clipboard.primaryClipUid))) {
             return true;
         }
-        return SystemClock.uptimeMillis() <= mIchthysPasteGrantUntil.get(uid, 0);
+        final long now = SystemClock.elapsedRealtime();
+        return now <= mIchthysPasteGrantUntil.get(uid, 0)
+                || now <= mIchthysImePasteUntil.get(UserHandle.getUserId(uid), 0);
+    }
+
+    /**
+     * IchthysOS: a read used the grant. It lives on only briefly (one paste may read twice), and
+     * the input it came from can't make another one.
+     */
+    @GuardedBy("mLock")
+    private void ichthysNoteGrantUsedLocked(int uid) {
+        final long soon = SystemClock.elapsedRealtime() + ICHTHYS_PASTE_AFTER_READ_MS;
+        final long until = mIchthysPasteGrantUntil.get(uid, 0);
+        if (until > soon) {
+            mIchthysPasteGrantUntil.put(uid, soon);
+        }
+        final long event = mIchthysPasteGrantEvent.get(uid, 0);
+        if (event > mIchthysPasteUsedEvent.get(uid, 0)) {
+            mIchthysPasteUsedEvent.put(uid, event);
+        }
+        final int userId = UserHandle.getUserId(uid);
+        if (mIchthysImePasteUntil.get(userId, 0) > soon) {
+            mIchthysImePasteUntil.put(userId, soon);
+        }
+    }
+
+    /** IchthysOS: drops grants and used inputs too old to matter, so the maps don't grow. */
+    @GuardedBy("mLock")
+    private void ichthysPruneGrantsLocked() {
+        final long now = SystemClock.elapsedRealtime();
+        for (int i = mIchthysPasteGrantUntil.size() - 1; i >= 0; i--) {
+            if (mIchthysPasteGrantUntil.valueAt(i) < now) {
+                mIchthysPasteGrantEvent.delete(mIchthysPasteGrantUntil.keyAt(i));
+                mIchthysPasteGrantUntil.removeAt(i);
+            }
+        }
+        // An input older than the max age can't back a grant anyway.
+        final long oldest = SystemClock.uptimeNanos()
+                - TimeUnit.MILLISECONDS.toNanos(ICHTHYS_PASTE_INPUT_MAX_AGE_MS);
+        for (int i = mIchthysPasteUsedEvent.size() - 1; i >= 0; i--) {
+            if (mIchthysPasteUsedEvent.valueAt(i) < oldest) {
+                mIchthysPasteUsedEvent.removeAt(i);
+            }
+        }
+    }
+
+    /**
+     * IchthysOS: the key presses that can be a paste: the paste key, Ctrl/Meta+V, Shift+Insert,
+     * and the keys that press a focused button (an in-app Paste button). Typing, Back and other
+     * system keys don't unlock the clipboard.
+     */
+    private static boolean ichthysIsPasteKey(VerifiedKeyEvent key) {
+        final int meta = key.getMetaState();
+        switch (key.getKeyCode()) {
+            case KeyEvent.KEYCODE_PASTE:
+            case KeyEvent.KEYCODE_DPAD_CENTER:
+            case KeyEvent.KEYCODE_ENTER:
+            case KeyEvent.KEYCODE_NUMPAD_ENTER:
+                return true;
+            case KeyEvent.KEYCODE_V:
+                return (meta & (KeyEvent.META_CTRL_ON | KeyEvent.META_META_ON)) != 0;
+            case KeyEvent.KEYCODE_INSERT:
+                return (meta & KeyEvent.META_SHIFT_ON) != 0;
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * IchthysOS: how long after the copy a clip is cleared under the lockdown, or -1 when the
+     * stock auto-clear applies (lockdown off, or 0 minutes = platform default).
+     */
+    private long ichthysClearTimeoutMs() {
+        final long ident = Binder.clearCallingIdentity();
+        try {
+            if (!ichthysLockdownEnabled()) {
+                return -1;
+            }
+            final int minutes = Settings.Global.getInt(getContext().getContentResolver(),
+                    ICHTHYS_CLEAR_MINUTES, ICHTHYS_DEFAULT_CLEAR_MINUTES);
+            return minutes > 0 ? TimeUnit.MINUTES.toMillis(minutes) : -1;
+        } finally {
+            Binder.restoreCallingIdentity(ident);
+        }
+    }
+
+    /**
+     * IchthysOS: a clip was just set (or cleared) on [clipboard]: (re)arm its lockdown clear
+     * deadline. Reads never move it. A non-wakeup ELAPSED_REALTIME alarm clears it as soon as the
+     * phone is awake past the deadline; every read path also checks the deadline itself.
+     */
+    @GuardedBy("mLock")
+    private void ichthysArmClearLocked(Clipboard clipboard) {
+        final long timeout = clipboard.primaryClip != null ? ichthysClearTimeoutMs() : -1;
+        clipboard.mIchthysClearAt = timeout > 0 ? SystemClock.elapsedRealtime() + timeout : 0;
+        if (clipboard.mIchthysClearAlarm == null) {
+            if (clipboard.mIchthysClearAt == 0) {
+                return;
+            }
+            clipboard.mIchthysClearAlarm = () -> {
+                synchronized (mLock) {
+                    ichthysExpireIfDueLocked(clipboard);
+                }
+            };
+        }
+        final long clearAt = clipboard.mIchthysClearAt;
+        final AlarmManager.OnAlarmListener listener = clipboard.mIchthysClearAlarm;
+        // Off mLock and in order on the worker thread.
+        mWorkerHandler.post(() -> {
+            final AlarmManager am = getContext().getSystemService(AlarmManager.class);
+            if (am == null) {
+                return;
+            }
+            if (clearAt == 0) {
+                am.cancel(listener);
+            } else {
+                am.set(AlarmManager.ELAPSED_REALTIME, clearAt, "*clipboard_clear*", listener,
+                        mWorkerHandler);
+            }
+        });
+    }
+
+    /** IchthysOS: clears [clipboard] if its lockdown clear deadline has passed. */
+    @GuardedBy("mLock")
+    private void ichthysExpireIfDueLocked(@Nullable Clipboard clipboard) {
+        if (clipboard == null || clipboard.primaryClip == null || clipboard.mIchthysClearAt == 0
+                || SystemClock.elapsedRealtime() < clipboard.mIchthysClearAt) {
+            return;
+        }
+        FrameworkStatsLog.write(FrameworkStatsLog.CLIPBOARD_CLEARED,
+                FrameworkStatsLog.CLIPBOARD_CLEARED__SOURCE__AUTO_CLEAR);
+        // Only this clipboard: a related profile's copy has its own (same) deadline.
+        setPrimaryClipInternalNoClassifyLocked(clipboard, null, clipboard.primaryClipUid, null);
     }
 
     private boolean isDefaultIme(int userId, String packageName) {
