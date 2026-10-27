@@ -101,23 +101,52 @@ constructor(
         addBgImageView()
         addIconImageView()
         addTouchHandlingView()
+    }
 
+    /** IchthysOS: [UdfpsIconDrawable.destroy]ed by a detach, so resumed on the next attach. */
+    private var fingerprintDrawableDestroyed = false
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        // IchthysOS: only while attached. TunerService holds its tunables strongly and the
+        // alternate bouncer inflates a new view each time it shows, so registering for the view's
+        // whole life leaked every one of them.
         runCatching {
             val keys = ichthysIconKeys.toMutableList()
             if (udfpsIconPackageInstalled) keys += udfpsIconKey
             Dependency.get(TunerService::class.java).addTunable(this, *keys.toTypedArray())
         }
+        if (fingerprintDrawableDestroyed) {
+            fingerprintDrawable.resume()
+            fingerprintDrawableDestroyed = false
+        }
+    }
+
+    override fun onDetachedFromWindow() {
+        removeCallbacks(rebuildIconStates)
+        runCatching { Dependency.get(TunerService::class.java).removeTunable(this) }
+        fingerprintDrawable.destroy()
+        fingerprintDrawableDestroyed = true
+        super.onDetachedFromWindow()
+    }
+
+    /**
+     * Rebuilds the animated state-list drawable so the FINGERPRINT state picks up the new custom
+     * icon (or reverts to the stock fingerprint icon).
+     */
+    private val rebuildIconStates = Runnable {
+        iconView.setImageDrawable(null)
+        animatedIconDrawable = AnimatedStateListDrawable()
+        setupIconStates()
+        setupIconTransitions()
+        iconView.setImageDrawable(animatedIconDrawable)
     }
 
     override fun onTuningChanged(key: String?, newValue: String?) {
         if (key == udfpsIconKey || (key != null && key in ichthysIconKeys)) {
-            // Rebuild the animated state-list drawable so the FINGERPRINT state picks up the new
-            // custom icon (or reverts to the stock fingerprint icon).
-            iconView.setImageDrawable(null)
-            animatedIconDrawable = AnimatedStateListDrawable()
-            setupIconStates()
-            setupIconTransitions()
-            iconView.setImageDrawable(animatedIconDrawable)
+            // IchthysOS: addTunable reports every key at once; rebuild once for all of them.
+            removeCallbacks(rebuildIconStates)
+            post(rebuildIconStates)
         }
     }
 

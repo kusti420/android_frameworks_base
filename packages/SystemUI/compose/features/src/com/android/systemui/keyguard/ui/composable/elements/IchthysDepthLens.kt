@@ -28,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.geometry.CornerRadius
@@ -51,12 +52,15 @@ import kotlin.math.sin
 /**
  * IchthysOS depth lock screen, X-ray (kusti420/ichthysos-tracker#58): a finger put down on the
  * wallpaper's subject sees through it. Watches touches on the initial pass and never consumes them,
- * so swipes, taps and long presses still do what they always do.
+ * so swipes, taps and long presses still do what they always do. The one exception: a finger held
+ * on the Depth face's touch heat ([IchthysDepthRepository.clockPaintable]) paints into it.
  */
 fun Modifier.ichthysDepthLens(repository: IchthysDepthRepository): Modifier = composed {
     // Lens positions are in window coordinates, like the depth pictures.
     var origin by remember { mutableStateOf(Offset.Zero) }
     val haptics = LocalHapticFeedback.current
+    // Read per gesture (a State, not its value), so the running pointerInput sees changes.
+    val paintable = repository.clockPaintable.collectAsStateWithLifecycle()
     onGloballyPositioned { origin = it.positionInWindow() }
         .pointerInput(repository) {
             awaitEachGesture {
@@ -70,8 +74,9 @@ fun Modifier.ichthysDepthLens(repository: IchthysDepthRepository): Modifier = co
                 val lens = repository.hitsSubject(at.x, at.y)
                 if (lens) repository.setLens(IchthysDepthRepository.Lens(at, down.pressure))
                 // Press and hold on the clock, then draw: from then on the touch is the clock's,
-                // so the shade and unlock swipes don't take it. A quick swipe still swipes.
-                val onClock = repository.clockBounds.contains(at)
+                // so the shade and unlock swipes don't take it. A quick swipe still swipes. Only
+                // where there is something to draw into; elsewhere a held finger stays a swipe.
+                val canPaint = paintable.value && repository.clockBounds.contains(at)
                 var drawing = false
                 try {
                     while (true) {
@@ -85,14 +90,16 @@ fun Modifier.ichthysDepthLens(repository: IchthysDepthRepository): Modifier = co
                             if (moved > viewConfiguration.touchSlop) {
                                 // A swipe: leave it to the scene.
                                 return@awaitEachGesture finish(lens, repository)
-                            } else if (change.uptimeMillis - down.uptimeMillis >= HOLD_MS) {
+                            } else if (
+                                canPaint && change.uptimeMillis - down.uptimeMillis >= HOLD_MS
+                            ) {
                                 // Held: from now on the finger paints light into the digits.
                                 drawing = true
                                 haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             }
                         }
                         // On the clock the held finger is the lens's, not a swipe's.
-                        if (drawing && onClock) change.consume()
+                        if (drawing) change.consume()
                         val p = change.position + origin
                         pulse(p)
                         repository.ripple(p)

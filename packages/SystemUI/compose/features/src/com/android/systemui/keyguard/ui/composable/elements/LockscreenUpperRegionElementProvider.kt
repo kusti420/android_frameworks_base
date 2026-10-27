@@ -18,9 +18,22 @@ package com.android.systemui.keyguard.ui.composable.elements
 
 import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -38,6 +51,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeContent
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -84,8 +98,12 @@ import com.android.systemui.plugins.keyguard.ui.composable.elements.LockscreenSc
 import com.android.systemui.res.R
 import com.android.systemui.shade.ShadeDisplayAware
 import com.android.systemui.shade.shared.model.ShadeMode
+import com.android.settingslib.ichthys.clock.LockWeather
+import com.android.settingslib.ichthys.clock.LockWeatherView
+import com.android.settingslib.ichthys.clock.SubjectOutline
 import com.google.errorprone.annotations.CompileTimeConstant
 import javax.inject.Inject
+import kotlin.math.roundToInt
 
 @SysUISingleton
 /** Provides a combined element for all lockscreen ui above the lock icon. */
@@ -219,22 +237,143 @@ constructor(
     @Composable
     private fun DepthClock() {
         val dozeAmount by keyguardInteractor.dozeAmount.collectAsStateWithLifecycle(0f)
-        Box(
+        // IchthysOS: back on the stock clock, no stale rectangle may keep taking held touches.
+        // Only this clock's own: in a large/small clock switch the other one may own it by now.
+        val placed = remember { arrayOf(androidx.compose.ui.geometry.Rect.Zero) }
+        DisposableEffect(Unit) {
+            onDispose {
+                if (depthRepository.clockBounds == placed[0]) {
+                    depthRepository.clockBounds = androidx.compose.ui.geometry.Rect.Zero
+                }
+            }
+        }
+        // IchthysOS lock screen weather (LockWeatherView, SettingsLib): under the clock or in a
+        // top corner, in front of the subject's cut-out (the Depth face draws the date-line place
+        // itself). Each view takes no height unless the weather is placed in its slot.
+        var clockHeight by remember { mutableIntStateOf(0) }
+        var underShift by remember { mutableIntStateOf(0) }
+        var underHeight by remember { mutableIntStateOf(0) }
+        val weatherDozing = dozeAmount > 0.5f
+        // IchthysOS polish: this column ends where the notifications start. That is under the
+        // clock as you see it (scaled, Shape-fitted, with the weather line), not under its
+        // unscaled box; and with a subject in front (depth on, a mask) never higher than under
+        // the subject's face (SubjectOutline.faceSafe, the same line the editor's preview uses).
+        // Changes ease in (a spring), so notifications never jump.
+        val outline = rememberSubjectOutline()
+        var columnTop by remember { mutableFloatStateOf(Float.NaN) }
+        val visibleBottom = clockHeight + underShift + underHeight
+        val faceSafe = outline?.faceSafe ?: 0f
+        val floor =
+            if (outline == null || faceSafe <= 0f || columnTop.isNaN()) 0
+            else (faceSafe * outline.height - columnTop).roundToInt()
+        val target = maxOf(visibleBottom, floor).toFloat()
+        val reserve = remember { Animatable(-1f) }
+        // Placed once before anything eases: the first frame shows the line where it belongs.
+        val measured = clockHeight > 0 && !columnTop.isNaN()
+        LaunchedEffect(target, measured) {
+            if (!measured) return@LaunchedEffect
+            if (reserve.value < 0f) {
+                reserve.snapTo(target)
+            } else {
+                reserve.animateTo(
+                    target,
+                    spring(dampingRatio = Spring.DampingRatioNoBouncy,
+                        stiffness = Spring.StiffnessMediumLow),
+                )
+            }
+        }
+        Column(
             Modifier.fillMaxWidth()
-                .onGloballyPositioned { depthRepository.clockBounds = it.boundsInWindow() }
-                .ichthysDepthPlane(depthRepository, IchthysDepthPlane.MIDDLE)
+                .onGloballyPositioned {
+                    // Coarse: transitions and nudges don't move the line.
+                    val y = it.positionInWindow().y
+                    if (columnTop.isNaN() || kotlin.math.abs(y - columnTop) >= 16f) columnTop = y
+                }
+                .layout { measurable, constraints ->
+                    val placeable = measurable.measure(constraints)
+                    val r = reserve.value
+                    val h =
+                        if (r < 0f) placeable.height
+                        else r.roundToInt().coerceIn(constraints.minHeight, constraints.maxHeight)
+                    layout(placeable.width, h) { placeable.place(0, 0) }
+                }
         ) {
+            Box(
+                Modifier.fillMaxWidth()
+                    .onGloballyPositioned {
+                        placed[0] = it.boundsInWindow()
+                        depthRepository.clockBounds = placed[0]
+                    }
+                    .onSizeChanged { clockHeight = it.height }
+                    .ichthysDepthPlane(depthRepository, IchthysDepthPlane.MIDDLE)
+            ) {
+                AndroidView(
+                    factory = { KeyguardCustomClockView(it) },
+                    // IchthysOS polish: the Depth face cross-fades into its AOD look with this.
+                    update = { it.setDozeAmount(dozeAmount) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                IchthysDepthCutout(
+                    depthRepository,
+                    dozeAmount,
+                    Modifier.matchParentSize()
+                        .ichthysDepthPlane(depthRepository, IchthysDepthPlane.FRONT),
+                )
+                AndroidView(
+                    factory = {
+                        LockWeatherView(it).apply {
+                            slot = LockWeatherView.SLOT_TOP
+                            followClock = true
+                        }
+                    },
+                    update = {
+                        it.dozing = weatherDozing
+                        it.dozeAmount = dozeAmount
+                    },
+                    modifier =
+                        Modifier.fillMaxWidth()
+                            .align(Alignment.TopStart)
+                            .padding(top = WEATHER_TOP_DP.dp)
+                            .graphicsLayer { alpha = 1f - WEATHER_DOZE_DIM * dozeAmount },
+                )
+            }
             AndroidView(
-                factory = { KeyguardCustomClockView(it) },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            IchthysDepthCutout(
-                depthRepository,
-                dozeAmount,
-                Modifier.matchParentSize()
-                    .ichthysDepthPlane(depthRepository, IchthysDepthPlane.FRONT),
+                factory = {
+                    LockWeatherView(it).apply {
+                        slot = LockWeather.POS_UNDER
+                        followClock = true
+                        onShift = { s -> underShift = s }
+                    }
+                },
+                update = {
+                    it.clockHeight = clockHeight
+                    it.dozing = weatherDozing
+                    it.dozeAmount = dozeAmount
+                },
+                // The face is scaled about its top: the line follows its scaled bottom (or, on the
+                // Depth face, the place the face gives it: DepthFaceAnchor).
+                modifier =
+                    Modifier.fillMaxWidth()
+                        .onSizeChanged { underHeight = it.height }
+                        .offset { IntOffset(0, underShift) }
+                        .ichthysDepthPlane(depthRepository, IchthysDepthPlane.MIDDLE)
+                        .graphicsLayer { alpha = 1f - WEATHER_DOZE_DIM * dozeAmount },
             )
         }
+    }
+
+    /** IchthysOS polish: [SubjectOutline.current] as state (SystemUI publishes it per mask). */
+    @Composable
+    private fun rememberSubjectOutline(): SubjectOutline.Profile? {
+        var profile by remember { mutableStateOf(SubjectOutline.current) }
+        DisposableEffect(Unit) {
+            val main = android.os.Handler(android.os.Looper.getMainLooper())
+            val listener: () -> Unit = { main.post { profile = SubjectOutline.current } }
+            SubjectOutline.addListener(listener)
+            profile = SubjectOutline.current
+            onDispose { SubjectOutline.removeListener(listener) }
+        }
+        return profile
     }
 
     /** The Narrow Layouts are intended for phones */
@@ -603,6 +742,11 @@ constructor(
 
     companion object {
         const val CLOCK_CENTERING_DURATION_MILLIS = 1000
+
+        /** IchthysOS: the top-corner weather's distance under the status bar. */
+        const val WEATHER_TOP_DP = 10
+        /** IchthysOS: how much dimmer the weather is on AOD (eased with the doze amount). */
+        const val WEATHER_DOZE_DIM = 0.35f
 
         enum class LayoutType {
             WIDE,

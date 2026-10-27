@@ -39,6 +39,7 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
+import android.view.View.OnLayoutChangeListener
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -48,6 +49,7 @@ import android.widget.TextView
 import com.airbnb.lottie.LottieAnimationView
 import com.airbnb.lottie.LottieDrawable
 import com.android.systemui.Dependency
+import com.android.settingslib.ichthys.clock.DepthClockView
 import com.android.settingslib.ichthys.clock.IchthysClockFace
 import com.android.systemui.plugins.statusbar.StatusBarStateController
 import java.util.Calendar
@@ -81,9 +83,50 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
     private val observer =
         object : ContentObserver(handler) {
             override fun onChange(selfChange: Boolean, uri: Uri?) {
-                rebuild()
+                // IchthysOS: the lock screen editor's Apply writes several keys in a row; one
+                // rebuild (a cross-package inflate) for all of them, not one per key. The writes
+                // arrive as separate notifications, so wait a moment for the rest.
+                changedKeys.add(uri?.lastPathSegment ?: "")
+                handler.removeCallbacks(rebuildRunnable)
+                handler.postDelayed(rebuildRunnable, 50L)
             }
         }
+
+    private val rebuildRunnable = Runnable { onSettingsChanged() }
+
+    /** IchthysOS polish: the keys changed since the last [onSettingsChanged] (main thread). */
+    private val changedKeys = HashSet<String>()
+    private var currentStyle = -1
+
+    /** IchthysOS polish: SystemUI's doze amount, handed to the Depth face (also when rebuilt). */
+    private var dozeAmount = 0f
+
+    /**
+     * IchthysOS polish: only size, place, turn or opacity changed (the editor's Apply, a slider):
+     * the face stays and glides there, its Shape refits as it goes. Anything else builds it again.
+     */
+    private fun onSettingsChanged() {
+        val keys = HashSet(changedKeys)
+        changedKeys.clear()
+        val clock = currentClock
+        val style = secureInt(Settings.Secure.LOCK_SCREEN_CUSTOM_CLOCK_STYLE, STYLE_DEFAULT)
+        if (clock != null && style == currentStyle && keys.isNotEmpty() &&
+            GEOMETRY_KEYS.containsAll(keys)) {
+            applyContainerAttributes(clock, animate = true)
+        } else {
+            rebuild()
+        }
+    }
+
+    /**
+     * IchthysOS polish: the Depth face cross-fades between its awake and AOD looks with SystemUI's
+     * doze amount (0 awake .. 1 dozing) instead of switching at the start of the animation.
+     */
+    fun setDozeAmount(amount: Float) {
+        if (amount == dozeAmount) return
+        dozeAmount = amount
+        currentClock?.let { forEachFace(it) { f -> (f as? DepthClockView)?.setDozeAmount(amount) } }
+    }
 
     private var currentClock: View? = null
 
@@ -148,6 +191,7 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
+        handler.removeCallbacks(rebuildRunnable)
         stopWordTicker()
         statusBarStateController?.removeCallback(dozeListener)
         context.contentResolver.unregisterContentObserver(observer)
@@ -167,6 +211,7 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
 
         val style =
             secureInt(Settings.Secure.LOCK_SCREEN_CUSTOM_CLOCK_STYLE, STYLE_DEFAULT)
+        currentStyle = style
         if (style == STYLE_DEFAULT) {
             visibility = GONE
             return
@@ -234,6 +279,7 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
         forEachFace(clock) { face ->
             face.setClockOptions(showDate, dotShape, showUnlit)
             face.setDozing(isDozing)
+            (face as? DepthClockView)?.setDozeAmount(dozeAmount)
         }
     }
 
@@ -251,7 +297,7 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
         }
     }
 
-    private fun applyContainerAttributes(clock: View) {
+    private fun applyContainerAttributes(clock: View, animate: Boolean = false) {
         val opacity = secureInt(KEY_OPACITY, 100).coerceIn(0, 100)
         val scale = secureInt(KEY_SIZE_SCALE, 100).coerceIn(50, 150) / 100f
         val marginTopPx = secureInt(KEY_MARGIN_TOP, DEFAULT_MARGIN_TOP)
@@ -259,19 +305,69 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
         // IchthysOS lock screen editor (tracker#58): moved sideways and turned freely too.
         val offsetX = secureInt(KEY_OFFSET_X, 0)
         val rotation = secureInt(KEY_ROTATION, 0).toFloat()
-        clock.alpha = opacity / 100f
-        clock.scaleX = scale
-        clock.scaleY = scale
-        clock.translationX = offsetX.toFloat()
-        clock.rotation = rotation
-        clock.pivotY = 0f
-        if (rotation != 0f) clock.post { clock.pivotY = clock.height / 2f }
-        // Inflated roots are usually match_parent wide, so scaling has to pivot on the edge the face
-        // is actually aligned to, otherwise a start-aligned face grows off the padding at >100%.
-        clock.post { clock.pivotX = scalePivotX(clock) }
-
+        val oldTop = paddingTop
         setPadding(dp(24), dp(BASE_TOP_DP) + marginTopPx, dp(24), 0)
+        target = floatArrayOf(scale, offsetX.toFloat(), rotation, opacity / 100f)
+        // IchthysOS polish: scaled about its top (as the editor and the weather line expect) and
+        // turned about its middle, for every angle: the pivot is always the middle and a
+        // translation puts the scaled top back. So turning a scaled clock never makes it jump (it
+        // did at 0°, where the pivot used to switch between the top and the middle).
+        if (animate && clock.isLaidOut && isAttachedToWindow && !isDozing) {
+            // A new margin moves the box at once: start from where the face was.
+            clock.translationY += (oldTop - paddingTop).toFloat()
+            clock.pivotX = scalePivotX(clock)
+            clock.pivotY = clock.height / 2f
+            gliding = true
+            clock.animate()
+                .scaleX(scale)
+                .scaleY(scale)
+                .translationX(offsetX.toFloat())
+                .translationY(topCompensation(clock, scale))
+                .rotation(rotation)
+                .alpha(opacity / 100f)
+                .setDuration(GLIDE_MS)
+                .setInterpolator(GLIDE)
+                .withEndAction { gliding = false }
+                .start()
+        } else {
+            clock.animate().cancel()
+            gliding = false
+            clock.alpha = opacity / 100f
+            clock.scaleX = scale
+            clock.scaleY = scale
+            clock.translationX = offsetX.toFloat()
+            clock.rotation = rotation
+            placePivot(clock)
+            // Inflated roots are usually match_parent wide, so scaling has to pivot on the edge
+            // the face is actually aligned to, otherwise a start-aligned face grows off the
+            // padding at >100%.
+            clock.post { placePivot(clock) }
+        }
+        if (pivotListenerOn !== clock) {
+            // The face's height changes (Shape's stretch): keep the top where it is.
+            pivotListenerOn = clock
+            clock.addOnLayoutChangeListener(
+                OnLayoutChangeListener { v, _, top, _, bottom, _, oldTop2, _, oldBottom ->
+                    if (bottom - top != oldBottom - oldTop2 && !gliding) placePivot(v)
+                })
+        }
     }
+
+    /** The face the height listener is on (each rebuild makes a new one). */
+    private var pivotListenerOn: View? = null
+
+    /** The scale / offset / turn / opacity last applied (what a glide ends at). */
+    private var target = floatArrayOf(1f, 0f, 0f, 1f)
+    private var gliding = false
+
+    private fun placePivot(clock: View) {
+        clock.pivotX = scalePivotX(clock)
+        clock.pivotY = clock.height / 2f
+        clock.translationY = topCompensation(clock, target[0])
+    }
+
+    /** Scaled about the middle, the top moves by (1 - scale) x half the height: back up by that. */
+    private fun topCompensation(clock: View, scale: Float): Float = -(1f - scale) * clock.height / 2f
 
     private fun scalePivotX(clock: View): Float {
         val g = (clock as? LinearLayout)?.gravity ?: return clock.width / 2f
@@ -1283,6 +1379,10 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
         private const val BASE_TOP_DP = 72
         private const val DEFAULT_MARGIN_TOP = 15
 
+        /** IchthysOS polish: how a changed size / place / turn glides in. */
+        private const val GLIDE_MS = 500L
+        private val GLIDE = android.view.animation.PathInterpolator(0.2f, 0f, 0f, 1f)
+
         // Auxiliary secure setting keys (raw keys written by crDroidSettings, not Settings.java
         // constants).
         private const val KEY_COLOR_MODE = "lock_screen_custom_clock_color_mode"
@@ -1301,6 +1401,10 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
         private const val MODE_DEFAULT = "default"
         private const val MODE_ACCENT = "accent"
         private const val MODE_CUSTOM = "custom"
+
+        /** IchthysOS polish: what [onSettingsChanged] can apply without building the face again. */
+        private val GEOMETRY_KEYS =
+            setOf(KEY_SIZE_SCALE, KEY_OPACITY, KEY_MARGIN_TOP, KEY_OFFSET_X, KEY_ROTATION)
 
         private val WATCHED_KEYS =
             listOf(

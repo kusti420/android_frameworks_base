@@ -118,6 +118,8 @@ constructor(
                     )
 
                 val dozeAmount by keyguardInteractor.dozeAmount.collectAsStateWithLifecycle(0f)
+                // IchthysOS: with depth off, no ripples, no lens and no painting on the clock.
+                val depthOn by depthRepository.enabled.collectAsStateWithLifecycle()
                 // IchthysOS depth (tracker#58): the layers come apart while unlocking.
                 val layoutState = contentScope.layoutState
                 depthRepository.unlockProgress = {
@@ -126,6 +128,7 @@ constructor(
                         ?.progress
                         ?.coerceIn(0f, 1f) ?: 0f
                 }
+                depthRepository.burnInShift = { viewModel.burnIn.translation }
                 with(scopeFactory.create(contentScope, innerContext)) {
                     LockscreenSceneLayout(
                         viewModel.isUdfpsSupported,
@@ -136,8 +139,9 @@ constructor(
                                 Modifier.ichthysDepthPlane(depthRepository, IchthysDepthPlane.BACK),
                             )
                         },
-                        depthCutout = { IchthysDepthLensOverlay(depthRepository) },
-                        depthTouch = Modifier.ichthysDepthLens(depthRepository),
+                        depthCutout = { if (depthOn) IchthysDepthLensOverlay(depthRepository) },
+                        depthTouch =
+                            if (depthOn) Modifier.ichthysDepthLens(depthRepository) else Modifier,
                     )
                 }
             }

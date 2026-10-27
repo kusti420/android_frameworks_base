@@ -61,6 +61,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 
@@ -99,6 +100,11 @@ constructor(
         val gridWidth: Int = 0,
         /** For AOD: a faint glow along the subject's edge, nothing else. Null without a cut-out. */
         val night: Bitmap? = null,
+        /**
+         * IchthysOS editor v2: the subject's top outline, made once with the layers, for the Depth
+         * face's "Shape" mode (published as SubjectOutline.current). Null without a cut-out.
+         */
+        val outline: com.android.settingslib.ichthys.clock.SubjectOutline.Profile? = null,
     )
 
     /** A finger on the subject (the X-ray lens), in lock screen pixels. */
@@ -115,6 +121,8 @@ constructor(
 
     /** A finger at [at]: a new ripple where it lands, and every so far as it moves. */
     fun ripple(at: androidx.compose.ui.geometry.Offset) {
+        // IchthysOS editor v2: the pond's ripples belong to X-ray; Overlap and Shape stay still.
+        if (mode != DEPTH_XRAY) return
         val now = android.os.SystemClock.uptimeMillis()
         val live = _ripples.value.filter { now - it.start < RIPPLE_MS }
         val last = live.lastOrNull()
@@ -149,6 +157,15 @@ constructor(
      */
     @Volatile var unlockProgress: () -> Float = { 0f }
 
+    /**
+     * The AOD burn-in shift (window pixels, zero while awake), read at draw time: the AOD layers
+     * move with it like the rest of the AOD. Set by the lock screen root.
+     */
+    @Volatile
+    var burnInShift: () -> androidx.compose.ui.geometry.Offset = {
+        androidx.compose.ui.geometry.Offset.Zero
+    }
+
     /** The depth look's own accent (pond light), for its strokes, whatever the theme's is. */
     val accent: Int
         get() = 0xFF9FE7DD.toInt()
@@ -159,8 +176,12 @@ constructor(
      */
     @Volatile var clockBounds: androidx.compose.ui.geometry.Rect = androidx.compose.ui.geometry.Rect.Zero
 
-    /** Whether ([x], [y]) on the lock screen is on the wallpaper's subject. */
+    /**
+     * Whether ([x], [y]) on the lock screen is on the wallpaper's subject, for the X-ray lens: only
+     * in the X-ray depth mode (editor v2: Overlap and Shape have no lens).
+     */
     fun hitsSubject(x: Float, y: Float): Boolean {
+        if (mode != DEPTH_XRAY) return false
         val l = layers.value ?: return false
         val grid = l.subject ?: return false
         if (l.gridWidth == 0) return false
@@ -171,12 +192,30 @@ constructor(
         return (grid[i].toInt() and 0xff) > SUBJECT_HIT_ALPHA
     }
 
-    /** Settings.Secure [KEY_DEPTH] != 0. */
+    /**
+     * The last layers and what they were made from. [layers] stops when the lock screen leaves
+     * composition and starts again on the next lock; without this every lock would decode the
+     * wallpaper and build the layers again.
+     */
+    private class Cached(val key: String, val layers: DepthLayers?, val hadMask: Boolean)
+
+    @Volatile private var cached: Cached? = null
+
+    /** The last [KEY_DEPTH] value read (0 off, 1 X-ray, 2 overlap, 3 shape). */
+    @Volatile private var mode = 0
+
+    /** Settings.Secure [KEY_DEPTH] != 0, for the current user (re-read on a user switch). */
     val enabled: StateFlow<Boolean> =
-        secureSettings
-            .observerFlow(names = arrayOf(KEY_DEPTH), userId = UserHandle.USER_ALL)
+        merge(
+                secureSettings.observerFlow(
+                    names = arrayOf(KEY_DEPTH),
+                    userId = UserHandle.USER_ALL,
+                ),
+                userChanges(),
+            )
             .onStart { emit(Unit) }
-            .map { isEnabled() }
+            .map { readMode().also { mode = it } != 0 }
+            .onEach { enabledNow = it }
             .flowOn(bgDispatcher)
             .stateIn(scope, SharingStarted.WhileSubscribed(), false)
 
@@ -184,17 +223,56 @@ constructor(
     val layers: StateFlow<DepthLayers?> =
         enabled
             .flatMapLatest { on ->
-                if (!on) flowOf(null)
-                else
-                    merge(wallpaperChanges(), maskChanges(), userChanges())
-                        .onStart { emit(Unit) }
-                        .map { load() }
+                if (!on) {
+                    cached = null
+                    flowOf(null)
+                } else {
+                    // true: something changed, load again; false: the lock screen is back (or
+                    // the user changed, which the cache key covers), the cached layers may do.
+                    merge(
+                            wallpaperChanges().map { true },
+                            maskChanges().map { true },
+                            userChanges().map { false },
+                        )
+                        .onStart { emit(false) }
+                        .map { force -> load(force) }
+                }
             }
             .flowOn(bgDispatcher)
+            // IchthysOS editor v2: the Depth face's Shape mode reads the outline from SettingsLib.
+            .onEach { com.android.settingslib.ichthys.clock.SubjectOutline.set(it?.outline) }
             .stateIn(scope, SharingStarted.WhileSubscribed(), null)
 
-    private fun isEnabled(): Boolean =
-        secureSettings.getIntForUser(KEY_DEPTH, 0, UserHandle.USER_CURRENT) != 0
+    private fun readMode(): Int =
+        secureSettings.getIntForUser(KEY_DEPTH, 0, UserHandle.USER_CURRENT)
+
+    /**
+     * The Depth face with the touch heat fill is the lock screen clock: only then does holding a
+     * finger on the clock paint into it (and take the touch from the swipes).
+     */
+    val clockPaintable: StateFlow<Boolean> =
+        merge(
+                secureSettings.observerFlow(
+                    names = arrayOf(Settings.Secure.LOCK_SCREEN_CUSTOM_CLOCK_STYLE, KEY_FILL),
+                    userId = UserHandle.USER_ALL,
+                ),
+                userChanges(),
+            )
+            .onStart { emit(Unit) }
+            .map {
+                secureSettings.getIntForUser(
+                    Settings.Secure.LOCK_SCREEN_CUSTOM_CLOCK_STYLE,
+                    0,
+                    UserHandle.USER_CURRENT,
+                ) == DEPTH_CLOCK_STYLE &&
+                    secureSettings.getIntForUser(
+                        KEY_FILL,
+                        com.android.settingslib.ichthys.clock.DepthClockView.FILL_SOLID,
+                        UserHandle.USER_CURRENT,
+                    ) == com.android.settingslib.ichthys.clock.DepthClockView.FILL_HEAT
+            }
+            .flowOn(bgDispatcher)
+            .stateIn(scope, SharingStarted.WhileSubscribed(), false)
 
     private fun wallpaperChanges(): Flow<Unit> =
         broadcastDispatcher.broadcastFlow(
@@ -237,9 +315,9 @@ constructor(
             awaitClose { context.contentResolver.unregisterContentObserver(observer) }
         }
 
-    private fun load(): DepthLayers? =
+    private fun load(force: Boolean): DepthLayers? =
         try {
-            loadInternal()
+            loadInternal(force)
         } catch (e: Exception) {
             // A wallpaper or mask that can't be read leaves the plain lock screen.
             Log.w(TAG, "depth layers not loaded", e)
@@ -249,17 +327,33 @@ constructor(
             null
         }
 
-    private fun loadInternal(): DepthLayers? {
+    private fun loadInternal(force: Boolean): DepthLayers? {
         val user = userTracker.userId
         val wm = context.getSystemService(WallpaperManager::class.java) ?: return null
         val lockId = wm.getWallpaperIdForUser(WallpaperManager.FLAG_LOCK, user)
         val key = "L" + lockId + "S" + wm.getWallpaperIdForUser(WallpaperManager.FLAG_SYSTEM, user)
-        // The same picture IchthysDepth's LockWallpaper.bitmap() cuts the mask out of.
+        val screen = screenSize()
+        val cacheKey = "$user/$key/${screen.x}x${screen.y}"
+        cached?.let {
+            // Without a mask last time, only a mask that has turned up since needs a new load.
+            if (!force && it.key == cacheKey && (it.hadMask || !maskExists(user, key))) {
+                return it.layers
+            }
+        }
+        // IchthysOS: a live wallpaper has no picture to copy. getBitmapAsUser would hand back the
+        // stock default image instead, drawn over the live one; no depth then.
+        val shown = if (lockId > 0) WallpaperManager.FLAG_LOCK else WallpaperManager.FLAG_SYSTEM
+        if (wm.getWallpaperInfo(shown, user) != null) {
+            cached = Cached(cacheKey, null, hadMask = true)
+            return null
+        }
+        // The same picture IchthysDepth's LockWallpaper.bitmap() cuts the mask out of. Not
+        // recycled: it can be WallpaperManager's process-wide cached bitmap, which ImageWallpaper
+        // (same process) draws too.
         val picture =
             wm.getBitmapAsUser(user, false, WallpaperManager.FLAG_LOCK, false)
                 ?: wm.getBitmapAsUser(user, false, WallpaperManager.FLAG_SYSTEM, true)
                 ?: return null
-        val screen = screenSize()
         val region = region(wm, picture, screen, if (lockId > 0) WallpaperManager.FLAG_LOCK
             else WallpaperManager.FLAG_SYSTEM)
         val dst = Rect(0, 0, screen.x, screen.y)
@@ -310,9 +404,17 @@ constructor(
             }
         }
         val night = keep?.let { night(it) }
-        picture.recycle()
+        // IchthysOS editor v2: the subject's top outline, once per mask (Shape mode).
+        val outline =
+            subject?.let {
+                com.android.settingslib.ichthys.clock.SubjectOutline.fromCoverage(
+                    it, gridW, screen.y / SUBJECT_GRID, screen.x, screen.y, SUBJECT_HIT_ALPHA)
+            }
         Log.i(TAG, "depth layers for $key: ${screen.x}x${screen.y}, cut-out ${keep != null}")
-        return DepthLayers(backdrop.toHardware(), keep?.toHardware(), subject, gridW, night)
+        val layers =
+            DepthLayers(backdrop.toHardware(), keep?.toHardware(), subject, gridW, night, outline)
+        cached = Cached(cacheKey, layers, hadMask = mask != null)
+        return layers
     }
 
     /** See [DepthLayers.night]. */
@@ -375,6 +477,20 @@ constructor(
             null
         }
 
+    /** Whether IchthysDepth has the mask ready, without decoding it. */
+    private fun maskExists(user: Int, key: String): Boolean =
+        try {
+            context.contentResolver
+                .openFileDescriptor(Uri.parse("content://$AUTHORITY/mask/$user/$key"), "r")
+                ?.use { true } ?: false
+        } catch (e: FileNotFoundException) {
+            false
+        } catch (e: SecurityException) {
+            false
+        } catch (e: IllegalArgumentException) {
+            false
+        }
+
     /** The screen in its natural (portrait) orientation, which is how the lock screen is drawn. */
     private fun screenSize(): Point {
         val b = context.getSystemService(WindowManager::class.java)!!.maximumWindowMetrics.bounds
@@ -394,6 +510,12 @@ constructor(
          */
         @JvmField val fingerOnSensor = MutableStateFlow(false)
 
+        /**
+         * The last [enabled] value, for code without the repository (the unlock transition's
+         * easings). Current while the lock screen shows, which collects [enabled].
+         */
+        @Volatile var enabledNow = false
+
         private const val TAG = "IchthysDepth"
         private const val AUTHORITY = "org.ichthys.depth"
 
@@ -411,8 +533,17 @@ constructor(
         /** Coverage above which a touch counts as on the subject. */
         private const val SUBJECT_HIT_ALPHA = 128
 
-        /** 0 off, 1 on: the subject of the lock wallpaper is drawn over the large clock. */
+        /**
+         * 0 off; otherwise the subject of the lock wallpaper is drawn over the large clock:
+         * 1 X-ray (with the touch lens; the old "on"), 2 overlap, 3 shape (editor v2: the Depth
+         * face fits its digits around the subject, DepthClockView.DEPTH_*).
+         */
         const val KEY_DEPTH = "ichthys_lockscreen_depth"
+        private const val DEPTH_XRAY = com.android.settingslib.ichthys.clock.DepthClockView.DEPTH_XRAY
+
+        private const val KEY_FILL = com.android.settingslib.ichthys.clock.DepthClockView.KEY_FILL
+        /** The Depth face's index in KeyguardCustomClockView's LAYOUT_NAMES. */
+        private const val DEPTH_CLOCK_STYLE = 80
     }
 }
 
@@ -421,10 +552,11 @@ constructor(
  * is touched into [com.android.settingslib.ichthys.clock.TouchHeat], which the Depth face draws.
  * - Only touch-downs (where a finger lands), on the default display, while the device is unlocked:
  *   nothing on the lock screen or the bouncer is counted, so the map can't give a PIN or pattern
- *   away.
+ *   away. Neither on the other credential screens: BiometricPrompt (and its PIN view) and the
+ *   ConfirmLock / ChooseLock / ConfirmDeviceCredential activities.
  * - Watches through an input monitor and never takes the touches: apps get them as always.
  * - Saved in SystemUI's device-protected files every few minutes, so a SystemUI restart keeps the
- *   day; starts over at local midnight.
+ *   day; starts over at local midnight. Each user has their own day.
  */
 @SysUISingleton
 class IchthysTouchHeatCollector
@@ -435,13 +567,22 @@ constructor(
     private val bgLooper: Looper,
     private val keyguardStateController:
         com.android.systemui.statusbar.policy.KeyguardStateController,
+    private val authController: com.android.systemui.biometrics.AuthController,
+    private val taskStackChangeListeners:
+        com.android.systemui.shared.system.TaskStackChangeListeners,
+    private val userTracker: UserTracker,
 ) : com.android.systemui.CoreStartable {
 
     private val handler by lazy { Handler(bgLooper) }
-    private val file by lazy {
-        java.io.File(context.createDeviceProtectedStorageContext().filesDir, "touch_heat.bin")
-    }
+    private val dir by lazy { context.createDeviceProtectedStorageContext().filesDir }
+    /** Whose day [TouchHeat] holds. Only touched on [bgLooper]. */
+    private var user = 0
+    /** User 0 keeps the file name from before days were per user. */
+    private val file: java.io.File
+        get() = java.io.File(dir, if (user == 0) "touch_heat.bin" else "touch_heat_$user.bin")
     private var dirty = false
+    /** A credential screen is on top (see [isCredentialActivity]); set off the main thread. */
+    @Volatile private var credentialOnTop = false
     private var receiver: android.view.InputEventReceiver? = null
 
     private val saver =
@@ -454,6 +595,7 @@ constructor(
 
     override fun start() {
         handler.post {
+            user = userTracker.userId
             load()
             val monitor =
                 context.getSystemService(android.hardware.input.InputManager::class.java)
@@ -471,6 +613,26 @@ constructor(
                 }
             handler.postDelayed(saver, SAVE_MS)
         }
+        userTracker.addCallback(
+            object : UserTracker.Callback {
+                override fun onUserChanged(newUser: Int, userContext: Context) {
+                    if (newUser == user) return
+                    if (dirty) save()
+                    user = newUser
+                    com.android.settingslib.ichthys.clock.TouchHeat.reset(today())
+                    dirty = false
+                    load()
+                }
+            }
+        ) { handler.post(it) }
+        taskStackChangeListeners.registerTaskStackListener(
+            object : com.android.systemui.shared.system.TaskStackChangeListener {
+                override fun onTaskStackChangedBackground() {
+                    updateCredentialOnTop()
+                }
+            }
+        )
+        handler.post { updateCredentialOnTop() }
         // Saved the moment the phone locks, so a restart never loses the touches before it.
         keyguardStateController.addCallback(
             object : com.android.systemui.statusbar.policy.KeyguardStateController.Callback {
@@ -490,6 +652,8 @@ constructor(
             }
         // The lock screen and the bouncer: never.
         if (keyguardStateController.isShowing) return
+        // IchthysOS: nor any other place a PIN, password or pattern is typed.
+        if (authController.isShowing || credentialOnTop) return
         val b = context.getSystemService(WindowManager::class.java)!!.maximumWindowMetrics.bounds
         val w = b.width().toFloat()
         val h = b.height().toFloat()
@@ -507,6 +671,28 @@ constructor(
         dirty = true
         val n = com.android.settingslib.ichthys.clock.TouchHeat.touches
         if (n == 1 || n % 100 == 0) Log.i(TAG, "$n touches today")
+    }
+
+    private fun updateCredentialOnTop() {
+        credentialOnTop =
+            try {
+                com.android.systemui.shared.system.ActivityManagerWrapper.getInstance()
+                    .runningTask
+                    ?.topActivity
+                    ?.let { isCredentialActivity(it.className) } ?: false
+            } catch (e: RuntimeException) {
+                false
+            }
+    }
+
+    /**
+     * Settings' screens that take a PIN, password or pattern: confirming the current one (opening
+     * security settings, work profile and other challenges) and choosing a new one.
+     */
+    private fun isCredentialActivity(className: String): Boolean {
+        val name = className.substringAfterLast('.')
+        return name.startsWith("ConfirmLock") || name.startsWith("ChooseLock") ||
+            name.startsWith("SetupChooseLock") || name.startsWith("ConfirmDeviceCredential")
     }
 
     private fun today(): Int {

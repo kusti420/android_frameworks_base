@@ -17,6 +17,8 @@
 package com.android.systemui.keyguard.ui.composable.elements
 
 import android.graphics.Bitmap
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -49,6 +51,12 @@ import com.android.systemui.keyguard.data.repository.IchthysDepthRepository
 /** Radius of the X-ray lens. */
 private const val LENS_RADIUS_DP = 70f
 
+/**
+ * IchthysOS polish: depth turned on or off, a new wallpaper or a new mask: the layers cross-fade
+ * (the backdrop over the same wallpaper, the subject over the clock) instead of popping.
+ */
+private const val LAYERS_FADE_MS = 420
+
 /*
  * IchthysOS depth lock screen (kusti420/ichthysos-tracker#58). Both pictures are the size of the
  * screen and are drawn in window coordinates, wherever their composable sits, so they always lie
@@ -68,16 +76,28 @@ fun IchthysDepthBackdrop(
 ) {
     val layers by repository.layers.collectAsStateWithLifecycle()
     val finger by IchthysDepthRepository.fingerOnSensor.collectAsStateWithLifecycle()
-    val current = layers ?: return
     if (finger) return
-    Box(modifier.fillMaxSize()) {
-        if (dozeAmount < 1f) {
-            WindowImage(current.backdrop, alpha = 1f - dozeAmount, Modifier.matchParentSize())
-        }
-        // AOD keeps the depth as the subject's faint outline.
-        val night = current.night
-        if (night != null && dozeAmount > 0f) {
-            WindowImage(night, alpha = dozeAmount, Modifier.matchParentSize())
+    Crossfade(
+        targetState = layers,
+        animationSpec = tween(LAYERS_FADE_MS),
+        label = "IchthysDepthBackdrop",
+        modifier = modifier.fillMaxSize(),
+    ) { shown ->
+        val current = shown ?: return@Crossfade
+        Box(Modifier.fillMaxSize()) {
+            if (dozeAmount < 1f) {
+                WindowImage(current.backdrop, alpha = 1f - dozeAmount, Modifier.matchParentSize())
+            }
+            // AOD keeps the depth as the subject's faint outline, moved against burn-in.
+            val night = current.night
+            if (night != null && dozeAmount > 0f) {
+                WindowImage(
+                    night,
+                    alpha = dozeAmount,
+                    Modifier.matchParentSize(),
+                    shift = { repository.burnInShift() },
+                )
+            }
         }
     }
 }
@@ -95,26 +115,34 @@ fun IchthysDepthCutout(
     val layers by repository.layers.collectAsStateWithLifecycle()
     val lens by repository.lens.collectAsStateWithLifecycle()
     val finger by IchthysDepthRepository.fingerOnSensor.collectAsStateWithLifecycle()
-    val current = layers ?: return
-    val bitmap = current.cutout ?: return
     if (finger) return
     // Awake: the subject in colour. On AOD: the subject in black, so the clock's outlines stop
     // behind it (its glowing edge is drawn with the backdrop). They cross-fade with the doze.
-    Box(modifier) {
-        if (dozeAmount < 1f) {
-            WindowImage(bitmap, alpha = 1f - dozeAmount, Modifier.matchParentSize()) { origin ->
-                lens?.let {
-                    Path().apply { addOval(Rect(it.position - origin, LENS_RADIUS_DP * density)) }
+    Crossfade(
+        targetState = layers,
+        animationSpec = tween(LAYERS_FADE_MS),
+        label = "IchthysDepthCutout",
+        modifier = modifier,
+    ) { shown ->
+        val current = shown ?: return@Crossfade
+        val bitmap = current.cutout ?: return@Crossfade
+        Box(Modifier.fillMaxSize()) {
+            if (dozeAmount < 1f) {
+                WindowImage(bitmap, alpha = 1f - dozeAmount, Modifier.matchParentSize()) { origin ->
+                    lens?.let {
+                        Path().apply { addOval(Rect(it.position - origin, LENS_RADIUS_DP * density)) }
+                    }
                 }
             }
-        }
-        if (current.night != null && dozeAmount > 0f) {
-            WindowImage(
-                bitmap,
-                alpha = dozeAmount,
-                Modifier.matchParentSize(),
-                colorFilter = ColorFilter.tint(Color.Black),
-            )
+            if (current.night != null && dozeAmount > 0f) {
+                WindowImage(
+                    bitmap,
+                    alpha = dozeAmount,
+                    Modifier.matchParentSize(),
+                    colorFilter = ColorFilter.tint(Color.Black),
+                    shift = { repository.burnInShift() },
+                )
+            }
         }
     }
 }
@@ -182,6 +210,7 @@ fun IchthysDepthLensOverlay(repository: IchthysDepthRepository, modifier: Modifi
 /**
  * Draws [bitmap] (screen-sized) at the window's origin, clipped to this composable's bounds, minus
  * the [hole] (given this composable's window origin, returns a path in its own coordinates).
+ * [shift] moves the picture off the window's origin (read while drawing: the AOD burn-in).
  */
 @Composable
 private fun WindowImage(
@@ -189,6 +218,7 @@ private fun WindowImage(
     alpha: Float,
     modifier: Modifier,
     colorFilter: ColorFilter? = null,
+    shift: () -> Offset = { Offset.Zero },
     hole: DrawScope.(origin: Offset) -> Path? = { null },
 ) {
     val image = remember(bitmap) { bitmap.asImageBitmap() }
@@ -202,10 +232,11 @@ private fun WindowImage(
         // picture may spill, where it is the backdrop's own pixels anyway.
         clipRect(left = -origin.x, top = 0f, right = -origin.x + 100_000f, bottom = 100_000f) {
             val path = hole(origin)
+            val at = origin - shift()
             if (path != null) {
-                clipPath(path, ClipOp.Difference) { drawAtWindowOrigin(image, origin, colorFilter) }
+                clipPath(path, ClipOp.Difference) { drawAtWindowOrigin(image, at, colorFilter) }
             } else {
-                drawAtWindowOrigin(image, origin, colorFilter)
+                drawAtWindowOrigin(image, at, colorFilter)
             }
         }
     }
