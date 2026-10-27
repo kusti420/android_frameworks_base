@@ -489,9 +489,26 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
     private val squareFont: Boolean
         get() = font == FONT_SQUARE
 
-    /** "00"'s width at [paint]'s text size, as the digits are laid out. */
+    /** A pair's width at [paint]'s text size, as the digits are laid out (two [digitCell]s). */
     private fun pairWidth(paint: Paint): Float =
-        if (squareFont) SquareDigits.advance(paint.textSize) * 2f else paint.measureText("00")
+        if (squareFont) SquareDigits.advance(paint.textSize) * 2f else digitCell(paint) * 2f
+
+    private val digitStrings = Array(10) { it.toString() }
+
+    /**
+     * IchthysOS: tabular figures, as the flagships set their clocks. Every digit gets the widest
+     * digit's advance and sits centred in it, so the two rows line up as one grid and nothing
+     * shifts sideways as the time changes (a proportional 1 left "19" over "00" misaligned).
+     */
+    private fun digitCell(paint: Paint): Float {
+        var w = 0f
+        for (d in digitStrings) w = max(w, paint.measureText(d))
+        return w
+    }
+
+    /** Where digit [i] of [text] starts with LEFT alignment: centred in its cell from [left]. */
+    private fun cellLeft(paint: Paint, text: String, i: Int, left: Float, cell: Float): Float =
+        left + i * cell + (cell - paint.measureText(text, i, i + 1)) / 2f
 
     /** The digits' ink height ("00"'s bounds) at [paint]'s text size. */
     private fun capHeight(paint: Paint): Float {
@@ -821,11 +838,18 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
                 return digits
             }
             val p = Path()
-            digitPaint.getTextPath(hh, 0, 2, width / 2f, line1Base, p)
-            digits.addPath(p)
-            p.reset()
-            digitPaint.getTextPath(mm, 0, 2, width / 2f, line2Base, p)
-            digits.addPath(p)
+            glyphPaint.set(digitPaint)
+            glyphPaint.textAlign = Paint.Align.LEFT
+            val cell = digitCell(glyphPaint)
+            val left = width / 2f - cell
+            for ((text, base) in arrayOf(hh to line1Base, mm to line2Base)) {
+                for (i in 0..1) {
+                    p.reset()
+                    glyphPaint.getTextPath(text, i, i + 1, cellLeft(glyphPaint, text, i, left, cell),
+                        base, p)
+                    digits.addPath(p)
+                }
+            }
         }
         return digits
     }
@@ -877,7 +901,9 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         val blockH = line2Base + digitSize * 0.02f - digitTop
         // Coarse position: the AOD's burn-in nudges don't redo it.
         val moved =
-            inputsChanged(shapeInputs, shownTime, (left / 8).toInt(), (top / 8).toInt(),
+            // IchthysOS: not the time: the fit is worked out for the widest digits ([fitColumns]),
+            // so the clock keeps its place while the minutes change.
+            inputsChanged(shapeInputs, 0, (left / 8).toInt(), (top / 8).toInt(),
                 (scale * 100).toInt(), shapeStyle, width, digitSize.toInt(), datePos,
                 underLineH.toInt(), font, 0)
         val changed = moved || shapeDirty || profile !== shapeProfile
@@ -900,8 +926,9 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
             // The largest even size that sits above the outline, at the clock's own place or
             // moved sideways as little as it takes (One UI moves the clock beside the subject).
             val tuck = if (skyline) 0f else AdaptiveShape.TUCK * blockH
-            val midX = (columns[0] + columns[3]) / 2f
-            val half = (columns[3] - columns[0]) / 2f
+            fitColumns()
+            val midX = (fitCols[0] + fitCols[3]) / 2f
+            val half = (fitCols[3] - fitCols[0]) / 2f
             val margin = dp(4f)
             fun evenShift(k: Float): Float {
                 val hw = half * k
@@ -1014,6 +1041,22 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         return r
     }
 
+    /**
+     * IchthysOS: the columns the depth fit plans with: those of the widest pair ("00"), centred,
+     * the same whatever the time shows. Fitting the digits actually shown moved the clock each
+     * time the minute changed (07:45 and 12:00 differ in width).
+     */
+    private val fitCols = FloatArray(4)
+
+    private fun fitColumns() {
+        val w = pairWidth(digitPaint)
+        val mid = width / 2f
+        fitCols[0] = mid - w / 2f
+        fitCols[1] = mid
+        fitCols[2] = mid
+        fitCols[3] = mid + w / 2f
+    }
+
     /** The minutes' ink top in the natural face (the hours' and the gap above it unscaled). */
     private fun minuteTop(): Float = line2Base - capH
 
@@ -1065,11 +1108,11 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
                 fun x(c: Float) = midX + (c - midX) * k + shift
                 // The hours whole above the subject.
                 val hoursBottom = digitTop + (line1Base + digitSize * 0.02f - digitTop) * k
-                if (hoursBottom > limit(x(columns[0]), x(columns[3]))) continue
+                if (hoursBottom > limit(x(fitCols[0]), x(fitCols[3]))) continue
                 val top = minuteTopAt(k, 1f)
                 val capK = capH * k
-                val vl = (limit(x(columns[0]), x(columns[1])) - top - digitSize * 0.02f * k) / capK
-                val vr = (limit(x(columns[2]), x(columns[3])) - top - digitSize * 0.02f * k) / capK
+                val vl = (limit(x(fitCols[0]), x(fitCols[1])) - top - digitSize * 0.02f * k) / capK
+                val vr = (limit(x(fitCols[2]), x(fitCols[3])) - top - digitSize * 0.02f * k) / capK
                 if (vl < SIDE_MIN_V || vr < SIDE_MIN_V) continue
                 val plan = floatArrayOf(k, shift, side.toFloat(), 1f, 1f,
                     min(vl, SIDE_MAX_V), min(vr, SIDE_MAX_V))
@@ -1159,9 +1202,9 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         glyphVersion++
         for ((row, pair) in listOf(hh to line1Base, mm to line2Base).withIndex()) {
             val text = pair.first
-            val w = if (squareFont) pairWidth(glyphPaint) else glyphPaint.measureText(text)
-            val a =
-                if (squareFont) SquareDigits.advance(digitSize) else glyphPaint.measureText(text, 0, 1)
+            // Tabular: both rows are the same two cells wide, so they line up as one grid.
+            val w = pairWidth(glyphPaint)
+            val a = if (squareFont) SquareDigits.advance(digitSize) else w / 2f
             val x = width / 2f - w / 2f
             glyphs[row * 2].reset()
             glyphs[row * 2 + 1].reset()
@@ -1176,8 +1219,10 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
                 SquareDigits.glyph(glyphDigit[row * 2 + 1], x + a, pair.second - capH,
                     pair.second, digitSize, glyphs[row * 2 + 1])
             } else {
-                glyphPaint.getTextPath(text, 0, 1, x, pair.second, glyphs[row * 2])
-                glyphPaint.getTextPath(text, 1, 2, x + a, pair.second, glyphs[row * 2 + 1])
+                glyphPaint.getTextPath(text, 0, 1, cellLeft(glyphPaint, text, 0, x, a),
+                    pair.second, glyphs[row * 2])
+                glyphPaint.getTextPath(text, 1, 2, cellLeft(glyphPaint, text, 1, x, a),
+                    pair.second, glyphs[row * 2 + 1])
             }
             x0Left = min(x0Left, x)
             x1Left = max(x1Left, x + a)
@@ -1269,8 +1314,9 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
                 buildGlyphs()
                 val scale = place[2]
                 val pw = profile.width.toFloat()
-                val subject = (profile.minTop((place[0] + columns[0] * scale) / pw,
-                    (place[0] + columns[3] * scale) / pw) * profile.height - place[1]) / scale
+                fitColumns()
+                val subject = (profile.minTop((place[0] + fitCols[0] * scale) / pw,
+                    (place[0] + fitCols[3] * scale) / pw) * profile.height - place[1]) / scale
                 val need = (underLineH + dp(UNDER_CLEAR_DP)) / scale
                 if (bottom + need > subject) {
                     val underHours = line1Base + digitSize * 0.02f
