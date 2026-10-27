@@ -84,7 +84,7 @@ class RemoteSelectionToolbar(
     showInfo: ShowInfo,
     private val callbackWrapper: RemoteCallbackWrapper,
     transferTouchListener: TransferTouchListener,
-    onPasteActionCallback: OnPasteActionCallback,
+    private val onPasteActionCallback: OnPasteActionCallback,
 ) {
     private val context = wrapContext(baseContext, showInfo)
 
@@ -1182,7 +1182,15 @@ class RemoteSelectionToolbar(
         overflowPanel.adapter = adapter
         overflowPanel.setOnItemClickListener { _, _, position: Int, _ ->
             val menuItem = overflowPanel.adapter.getItem(position) as ToolbarMenuItem
-            callbackWrapper.onMenuItemClicked(menuItem.itemIndex)
+            // IchthysOS (tracker#31): a Paste picked from the overflow panel is a real paste
+            // too; reported like the toolbar's own buttons do (the clipboard lockdown grants the
+            // read from it), on the same thread, before the app is told.
+            handler.post {
+                if (menuItem.itemId == R.id.paste || menuItem.itemId == R.id.pasteAsPlainText) {
+                    onPasteActionCallback.onPasteAction(hostUid)
+                }
+                callbackWrapper.onMenuItemClicked(menuItem.itemIndex)
+            }
         }
         return overflowPanel
     }
