@@ -52,6 +52,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
@@ -84,6 +85,8 @@ import com.android.compose.modifiers.height
 import com.android.compose.modifiers.padding
 import com.android.compose.modifiers.thenIf
 import com.android.internal.jank.InteractionJankMonitor
+import com.android.systemui.brightness.ui.compose.BrightnessSliderContainer
+import com.android.systemui.brightness.ui.compose.ContainerColors
 import com.android.systemui.common.ui.compose.windowinsets.CutoutLocation
 import com.android.systemui.common.ui.compose.windowinsets.LocalDisplayCutout
 import com.android.systemui.compose.modifiers.sysuiResTag
@@ -103,9 +106,11 @@ import com.android.systemui.qs.panels.ui.compose.QuickQuickSettings
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalQsEnabled
 import com.android.systemui.qs.shared.ui.QuickSettings
 import com.android.systemui.qs.shared.ui.QuickSettings.Elements.SplitShadeQuickSettings
+import com.android.systemui.qs.ui.composable.IchthysQsSettings
 import com.android.systemui.qs.ui.composable.QuickSettingsContent
 import com.android.systemui.qs.ui.composable.QuickSettingsShade
 import com.android.systemui.qs.ui.composable.ShoalMediaDockHost
+import com.android.systemui.qs.ui.composable.rememberIchthysLineageSecureInt
 import com.android.systemui.res.R
 import com.android.systemui.scene.session.ui.composable.SaveableSession
 import com.android.systemui.scene.shared.model.Scenes
@@ -403,17 +408,42 @@ private fun ContentScope.SingleShade(
 
                                 onStopOrDispose { listening = false }
                             }
-                            Box {
-                                val qqsViewModel =
-                                    rememberViewModel(traceName = "shade_scene_qqs") {
-                                        viewModel.quickQuickSettingsViewModel.create()
+                            // IchthysOS: crDroid brightness slider "Show always" (2) also shows
+                            // it with the collapsed tiles, above them or, with "Position: Bottom",
+                            // below them. "Show when expanded" (1) keeps it in Quick Settings only.
+                            val brightnessMode =
+                                rememberIchthysLineageSecureInt(
+                                    IchthysQsSettings.SHOW_BRIGHTNESS_SLIDER,
+                                    1,
+                                )
+                            val brightnessAlways =
+                                brightnessMode == 2 &&
+                                    viewModel.isQsEnabled &&
+                                    isAlwaysComposedContentVisible()
+                            val brightnessAtBottom =
+                                rememberIchthysLineageSecureInt(
+                                    IchthysQsSettings.BRIGHTNESS_SLIDER_POSITION,
+                                    0,
+                                ) == 1
+                            Column {
+                                if (brightnessAlways && !brightnessAtBottom) {
+                                    ShadeBrightnessSlider(viewModel)
+                                }
+                                Box {
+                                    val qqsViewModel =
+                                        rememberViewModel(traceName = "shade_scene_qqs") {
+                                            viewModel.quickQuickSettingsViewModel.create()
+                                        }
+                                    if (viewModel.isQsEnabled) {
+                                        QuickQuickSettings(
+                                            qqsViewModel,
+                                            listening = { listening },
+                                            modifier = Modifier.sysuiResTag("quick_qs_panel"),
+                                        )
                                     }
-                                if (viewModel.isQsEnabled) {
-                                    QuickQuickSettings(
-                                        qqsViewModel,
-                                        listening = { listening },
-                                        modifier = Modifier.sysuiResTag("quick_qs_panel"),
-                                    )
+                                }
+                                if (brightnessAlways && brightnessAtBottom) {
+                                    ShadeBrightnessSlider(viewModel)
                                 }
                             }
                         },
@@ -483,6 +513,25 @@ private fun ContentScope.SingleShade(
                     .semantics { hideFromAccessibility() }
         )
     }
+}
+
+/**
+ * IchthysOS: the brightness slider under the collapsed tiles, for crDroid "Show always". Its own
+ * view-model (no brightness mirror: the shade stays visible while dragging) lives only while it is
+ * composed, so nothing is collected while the option is off.
+ */
+@Composable
+private fun ShadeBrightnessSlider(viewModel: ShadeSceneContentViewModel) {
+    val sliderViewModel =
+        rememberViewModel(traceName = "shade_scene_brightness") {
+            viewModel.brightnessSliderViewModelFactory.create(false)
+        }
+    BrightnessSliderContainer(
+        sliderViewModel,
+        containerColors = ContainerColors(Color.Transparent, ContainerColors.defaultContainerColor),
+        modifier =
+            Modifier.padding(vertical = dimensionResource(id = R.dimen.qs_brightness_margin_top)),
+    )
 }
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)

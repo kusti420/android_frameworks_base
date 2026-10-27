@@ -294,6 +294,14 @@ private constructor(
     }
 
     /**
+     * IchthysOS: feeds a notification shade window touch to the status bar brightness slide; true
+     * while the slide owns the gesture. See [PhoneStatusBarView.handleShadeWindowBrightnessTouch].
+     */
+    fun handleShadeWindowBrightnessTouch(ev: MotionEvent): Boolean {
+        return mView.handleShadeWindowBrightnessTouch(ev)
+    }
+
+    /**
      * Returns true if the given (x, y) point (in screen coordinates) is within the status bar
      * view's range and false otherwise.
      */

@@ -188,21 +188,18 @@ constructor(
     }
 
     private suspend fun computeTimeout(): Duration {
-        // IchthysOS: while the One UI panel is expanded, force the longer timeout regardless
-        // of the persisted Settings.Secure value (which would otherwise override it).
+        // IchthysOS: while the One UI panel is expanded it stays at least the longer One UI
+        // timeout, but never less than the user's "Volume panel timeout" (up to 10 s).
         val isExpanded = OneUiExpandState.expanded.value
+        val settingVal =
+            secureSettingsRepository
+                .getInt(
+                    Settings.Secure.VOLUME_DIALOG_DISMISS_TIMEOUT,
+                    defaultTimeout.toInt(DurationUnit.MILLISECONDS),
+                )
+                .milliseconds
         val defaultDialogTimeoutMillis =
-            if (isExpanded) {
-                expandedTimeout
-            } else {
-                val settingVal = secureSettingsRepository
-                    .getInt(
-                        Settings.Secure.VOLUME_DIALOG_DISMISS_TIMEOUT,
-                        defaultTimeout.toInt(DurationUnit.MILLISECONDS),
-                    )
-                    .milliseconds
-                settingVal
-            }
+            if (isExpanded) maxOf(expandedTimeout, settingVal) else settingVal
         val currentDialogState = stateInteractor.volumeDialogState.first()
         return when {
             currentDialogState.isHovering ->

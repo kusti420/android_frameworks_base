@@ -901,6 +901,14 @@ public class CentralSurfacesImpl implements CoreStartable, CentralSurfaces {
 
     private android.view.ViewGroup getMediaArtOverlayContainer() {
         View rootView = getNotificationShadeWindowView();
+        // IchthysOS: with the scene container the NotificationShadeWindowView is the legacy
+        // root, which SceneWindowRootViewBinder hides (GONE), so the art was never drawn. Use the
+        // scene window root instead and stay behind the scene container (index 0).
+        final boolean sceneContainer = SceneContainerFlag.isEnabled()
+                && rootView != null && rootView.getParent() instanceof android.view.ViewGroup;
+        if (sceneContainer) {
+            rootView = (View) rootView.getParent();
+        }
         if (!(rootView instanceof android.view.ViewGroup)) {
             return null;
         }
@@ -916,7 +924,7 @@ public class CentralSurfacesImpl implements CoreStartable, CentralSurfaces {
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT));
         View scrimInFront = root.findViewById(R.id.scrim_in_front);
-        int scrimIndex = Math.max(root.indexOfChild(scrimInFront) - 3, 0);
+        int scrimIndex = sceneContainer ? 0 : Math.max(root.indexOfChild(scrimInFront) - 3, 0);
         root.addView(container, scrimIndex);
         return container;
     }

@@ -46,6 +46,7 @@ import com.android.systemui.securelockdevice.domain.interactor.SecureLockDeviceI
 import com.android.systemui.shade.PulsingGestureListener
 import com.android.systemui.shade.ShadeDisplayAware
 import com.android.systemui.shared.settings.data.repository.SecureSettingsRepository
+import com.android.systemui.shared.settings.data.repository.SystemSettingsRepository
 import com.android.systemui.statusbar.phone.StatusBarKeyguardViewManager
 import com.android.systemui.statusbar.policy.AccessibilityManagerWrapper
 import com.android.systemui.util.time.SystemClock
@@ -86,6 +87,7 @@ constructor(
     private val deviceEntryInteractor: DeviceEntryInteractor,
     private val powerInteractor: PowerInteractor,
     private val secureSettingsRepository: SecureSettingsRepository,
+    private val systemSettingsRepository: SystemSettingsRepository,
     private val powerManager: PowerManager,
     private val systemClock: SystemClock,
     private val pointerDeviceRepository: PointerDeviceRepository,
@@ -273,8 +275,14 @@ constructor(
         }
     }
 
+    // IchthysOS: Lock screen > "Double tap to sleep" (System double_tap_sleep_lockscreen,
+    // default on). The legacy shade window's detector that read it never sees a touch under the
+    // scene container, and AOSP's Secure double_tap_to_sleep has no switch on this ROM.
     private fun isDoubleTapSettingEnabled(): Flow<Boolean> {
-        return secureSettingsRepository.boolSetting(Settings.Secure.DOUBLE_TAP_TO_SLEEP)
+        return systemSettingsRepository.boolSetting(
+            Settings.System.DOUBLE_TAP_SLEEP_LOCKSCREEN,
+            defaultValue = true,
+        )
     }
 
     private fun showSettings() {
@@ -285,9 +293,10 @@ constructor(
         return context.resources.getBoolean(R.bool.long_press_keyguard_customize_lockscreen_enabled)
     }
 
+    // IchthysOS: not gated on config_supportDoubleTapSleep (false on most devices): the
+    // crDroid switch above is the opt-out.
     private fun isDoubleTapFeatureEnabled(): Boolean {
-        return doubleTapToSleep() &&
-            context.resources.getBoolean(com.android.internal.R.bool.config_supportDoubleTapSleep)
+        return doubleTapToSleep()
     }
 
     /** Updates application state to ask to show the menu. */

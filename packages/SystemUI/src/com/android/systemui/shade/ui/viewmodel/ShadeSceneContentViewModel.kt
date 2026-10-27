@@ -21,6 +21,7 @@ import androidx.lifecycle.LifecycleOwner
 import com.android.app.tracing.coroutines.launchTraced as launch
 import com.android.compose.animation.scene.content.state.TransitionState
 import com.android.systemui.Flags
+import com.android.systemui.brightness.ui.viewmodel.BrightnessSliderViewModel
 import com.android.systemui.dagger.qualifiers.Main
 import com.android.systemui.deviceentry.domain.interactor.DeviceEntryInteractor
 import com.android.systemui.keyguard.ui.transitions.BlurConfig
@@ -80,6 +81,11 @@ constructor(
     windowRootViewBlurInteractor: WindowRootViewBlurInteractor,
     mediaInRowInLandscapeViewModelFactory: MediaInRowInLandscapeViewModel.Factory,
     shadeStatusBarComponentsInteractor: ShadeStatusBarComponentsInteractor,
+    /**
+     * IchthysOS: crDroid brightness slider "Show always" also puts the slider under the collapsed
+     * tiles. Created and activated by the shade scene only while that option is on.
+     */
+    val brightnessSliderViewModelFactory: BrightnessSliderViewModel.Factory,
 ) : HydratedActivatable() {
 
     /**

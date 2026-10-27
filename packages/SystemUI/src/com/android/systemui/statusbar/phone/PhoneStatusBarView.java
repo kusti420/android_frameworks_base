@@ -337,6 +337,27 @@ public class PhoneStatusBarView extends FrameLayout {
         return mBrightnessControlActive;
     }
 
+    /**
+     * IchthysOS: the brightness slide for touches that the notification shade window gets over
+     * the status bar strip. Under the scene container the lock screen's status bar is drawn in
+     * that window, so this view never sees those touches ("Brightness control on lockscreen").
+     * Returns true while the slide owns the gesture.
+     */
+    public boolean handleShadeWindowBrightnessTouch(MotionEvent event) {
+        final int action = event.getActionMasked();
+        if (action == MotionEvent.ACTION_DOWN) {
+            mBrightnessConsuming = false;
+        }
+        if (brightnessControl(event)) {
+            mBrightnessConsuming = true;
+        }
+        final boolean consuming = mBrightnessConsuming;
+        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+            mBrightnessConsuming = false;
+        }
+        return consuming;
+    }
+
     // IchthysOS: the value the slide last applied as a temporary brightness, persisted once when
     // the finger lifts instead of a settings write on every move.
     private boolean mBrightnessPending;

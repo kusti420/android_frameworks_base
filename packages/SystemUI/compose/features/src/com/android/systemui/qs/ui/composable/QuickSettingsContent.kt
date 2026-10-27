@@ -61,7 +61,8 @@ fun ContentScope.QuickSettingsContent(
     // style keeps it where it was.
     val isMediaDocked = rememberShoalQsEnabled()
     // IchthysOS: crDroid brightness slider "When to show" (0 = never, 1 = expanded, 2 = always;
-    // the collapsed shade has no slider, so 1 and 2 both show it here) and "Position" (1 = bottom).
+    // 1 and 2 both show it here, and 2 also in the collapsed shade, see ShadeScene) and "Position"
+    // (1 = bottom).
     val showBrightnessSlider =
         rememberIchthysLineageSecureInt(IchthysQsSettings.SHOW_BRIGHTNESS_SLIDER, 1) != 0
     val brightnessAtBottom =

@@ -290,6 +290,10 @@ sealed class BatteryViewModel(
     /**
      * BatteryViewModel that shows percentage when the device is charging, or when the setting is
      * enabled
+     *
+     * IchthysOS: "while charging" follows Status bar > Battery > "Battery percentage when
+     * charging" (status_bar_battery_text_charging, default on), like [BasedOnUserSetting]; the
+     * switch used to have no effect on the lock screen.
      */
     class ShowPercentWhenChargingOrSetting
     @AssistedInject
@@ -297,10 +301,12 @@ sealed class BatteryViewModel(
         BatteryViewModel(
             interactor = interactor,
             shouldShowPercent =
-                combine(interactor.isCharging, interactor.isBatteryPercentSettingEnabled) {
-                    charging,
-                    settingEnabled ->
-                    charging || settingEnabled
+                combine(
+                    interactor.isCharging,
+                    interactor.isBatteryPercentSettingEnabled,
+                    interactor.isBatteryTextChargingEnabled,
+                ) { charging, settingEnabled, textCharging ->
+                    (charging && textCharging) || settingEnabled
                 },
             showPercentNextToIconFlow = interactor.isBatteryPercentNextToIconEnabled,
             context = context,

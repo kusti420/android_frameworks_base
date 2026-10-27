@@ -20,6 +20,7 @@ import android.content.Context
 import android.database.ContentObserver
 import android.os.Handler
 import android.os.Looper
+import android.os.UserHandle
 import android.provider.Settings
 import com.android.settingslib.SignalIcon.MobileIconGroup
 import com.android.settingslib.graph.SignalDrawable
@@ -188,10 +189,13 @@ class MobileIconInteractorImpl(
                             trySend(readSystemSettingAsBoolean(name, default))
                         }
                     }
+                // IchthysOS: the current user's value, not the system user's (SystemUI runs as
+                // user 0), so observe every user.
                 context.contentResolver.registerContentObserver(
                     Settings.System.getUriFor(name),
                     /* notifyForDescendants= */ false,
                     observer,
+                    UserHandle.USER_ALL,
                 )
                 awaitClose { context.contentResolver.unregisterContentObserver(observer) }
             }
@@ -200,7 +204,12 @@ class MobileIconInteractorImpl(
             .stateIn(scope, SharingStarted.WhileSubscribed(), default)
 
     private fun readSystemSettingAsBoolean(name: String, default: Boolean): Boolean =
-        Settings.System.getInt(context.contentResolver, name, if (default) 1 else 0) != 0
+        Settings.System.getIntForUser(
+            context.contentResolver,
+            name,
+            if (default) 1 else 0,
+            UserHandle.USER_CURRENT,
+        ) != 0
 
     /** IchthysOS: "show 4G instead of LTE" toggle (Settings.System.show_fourg_icon). */
     private val showFourgIcon: StateFlow<Boolean> =

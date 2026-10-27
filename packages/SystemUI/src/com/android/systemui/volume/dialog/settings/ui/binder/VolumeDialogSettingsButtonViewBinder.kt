@@ -47,7 +47,12 @@ constructor(
         // Custom Options: in the horizontal (8.1-style) slider, replace the settings button with a
         // live volume step number (fits up to 3 digits in the button-sized slot).
         if (
-            Settings.Secure.getInt(view.context.contentResolver, "custom_volume_horizontal", 0) == 1
+            Settings.Secure.getIntForUser(
+                view.context.contentResolver,
+                "custom_volume_horizontal",
+                0,
+                UserHandle.USER_CURRENT,
+            ) == 1
         ) {
             val stepNumber = view.requireViewById<TextView>(R.id.volume_dialog_step_number)
             button.visibility = View.GONE

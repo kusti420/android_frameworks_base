@@ -312,10 +312,12 @@ constructor(
                             trySend(current())
                         }
                     }
+                // IchthysOS: read for the current user above, so observe every user.
                 resolver.registerContentObserver(
                     LineageSettings.System.getUriFor(name),
                     /* notifyForDescendants = */ false,
                     observer,
+                    UserHandle.USER_ALL,
                 )
                 trySend(current())
                 awaitClose { resolver.unregisterContentObserver(observer) }

@@ -58,6 +58,7 @@ import com.android.systemui.keyguard.shared.model.TransitionState;
 import com.android.systemui.keyguard.shared.model.TransitionStep;
 import com.android.systemui.res.R;
 import com.android.systemui.scene.shared.flag.SceneContainerFlag;
+import com.android.systemui.scene.ui.view.SceneWindowRootView;
 import com.android.systemui.scene.ui.view.WindowRootViewKeyEventHandler;
 import com.android.systemui.shade.domain.interactor.PanelExpansionInteractor;
 import com.android.systemui.shade.domain.interactor.ShadeAnimationInteractor;
@@ -177,6 +178,8 @@ public class NotificationShadeWindowViewController implements Dumpable {
     private StateFlow<Boolean> mAodInterceptingTouches = StateFlowKt.MutableStateFlow(false);
 
     private boolean mIsTrackingBarGesture = false;
+    // IchthysOS: the current gesture may be a status bar brightness slide on the lock screen.
+    private boolean mKeyguardBrightnessTouch = false;
     private boolean mIsOcclusionTransitionRunning = false;
     private DisableSubpixelTextTransitionListener mDisableSubpixelTextTransitionListener;
     private final Consumer<TransitionStep> mLockscreenToDreamingTransition =
@@ -411,6 +414,23 @@ public class NotificationShadeWindowViewController implements Dumpable {
                         return false;
                     }
                 });
+        // IchthysOS: Status bar > "Brightness control on lockscreen". Under the scene container
+        // the lock screen and its status bar are drawn in this window, above the status bar
+        // window, and this legacy root is hidden, so the slide never got a touch there. The scene
+        // window root hands it each gesture first.
+        if (SceneContainerFlag.isEnabled() && mView.getParent() instanceof SceneWindowRootView) {
+            ((SceneWindowRootView) mView.getParent()).setTouchInterceptor(ev -> {
+                if (ev.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                    mKeyguardBrightnessTouch = mStatusBarStateController.getState() == KEYGUARD
+                            && !mStatusBarStateController.isDozing();
+                }
+                if (!mKeyguardBrightnessTouch) {
+                    return false;
+                }
+                PhoneStatusBarViewController controller = statusBarViewController();
+                return controller != null && controller.handleShadeWindowBrightnessTouch(ev);
+            });
+        }
         mView.setLayoutInsetsController(mNotificationInsetsController);
         mView.setWindowRootViewKeyEventHandler(mWindowRootViewKeyEventHandler);
         mView.setInteractionEventHandler(new NotificationShadeWindowView.InteractionEventHandler() {

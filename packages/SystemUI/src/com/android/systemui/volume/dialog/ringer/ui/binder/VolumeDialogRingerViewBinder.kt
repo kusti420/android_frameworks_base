@@ -135,7 +135,12 @@ constructor(
         // ringer/mute drawer to the left of the slider entirely, and force the plain pitch-black
         // accent-bordered dialog background (no blur surface tint).
         if (
-            Settings.Secure.getInt(view.context.contentResolver, "custom_volume_horizontal", 0) == 1
+            Settings.Secure.getIntForUser(
+                view.context.contentResolver,
+                "custom_volume_horizontal",
+                0,
+                UserHandle.USER_CURRENT,
+            ) == 1
         ) {
             drawerContainer.visibility = View.GONE
             volumeDialogBackgroundView.setBackgroundResource(

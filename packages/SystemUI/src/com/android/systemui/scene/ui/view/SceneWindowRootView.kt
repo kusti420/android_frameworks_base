@@ -22,6 +22,18 @@ import com.android.systemui.statusbar.phone.ui.TintedIconManager
 class SceneWindowRootView(context: Context, attrs: AttributeSet?) : WindowRootView(context, attrs) {
 
     private var motionEventHandler: SceneContainerViewModel.MotionEventHandler? = null
+
+    /**
+     * IchthysOS: a gesture that may take a touch stream over from the scenes (the status bar
+     * brightness slide on the lock screen). It sees every event first and returns true while it
+     * owns the stream; the scenes then get one ACTION_CANCEL and nothing more of that stream.
+     */
+    fun interface TouchInterceptor {
+        fun onTouch(ev: MotionEvent): Boolean
+    }
+
+    var touchInterceptor: TouchInterceptor? = null
+    private var intercepting = false
     // TODO(b/298525212): remove once Compose exposes window inset bounds.
     private val windowInsets: MutableState<WindowInsets?> = mutableStateOf(null)
 
@@ -78,6 +90,22 @@ class SceneWindowRootView(context: Context, attrs: AttributeSet?) : WindowRootVi
     }
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
+            intercepting = false
+        }
+        if (touchInterceptor?.onTouch(ev) == true || intercepting) {
+            if (!intercepting) {
+                intercepting = true
+                // The scenes saw the start of this gesture: end it there.
+                val cancel = MotionEvent.obtain(ev)
+                cancel.action = MotionEvent.ACTION_CANCEL
+                motionEventHandler?.onMotionEvent(cancel)
+                super.dispatchTouchEvent(cancel)
+                motionEventHandler?.onMotionEventComplete()
+                cancel.recycle()
+            }
+            return true
+        }
         motionEventHandler?.onMotionEvent(ev)
         return super.dispatchTouchEvent(ev).also {
             TouchLogger.logDispatchTouch(TAG, ev, it)

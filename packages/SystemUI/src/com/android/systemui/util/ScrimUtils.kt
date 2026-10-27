@@ -227,7 +227,10 @@ class ScrimUtils private constructor() {
 
     fun isPanelFullyCollapsed(): Boolean =
         if (mStateIsKeyguard) {
-            !mQsVisible.get()
+            // IchthysOS: the scene container never reports QS visibility here (only the legacy
+            // QuickSettingsControllerImpl did), but SHADE_LOCKED already means the shade is open
+            // over the lock screen.
+            mBarState != SHADE_LOCKED && !mQsVisible.get()
         } else {
             (mExpandedFraction ?: 0.0f) <= 0.0f
         }

@@ -17,6 +17,7 @@
 package com.android.systemui.volume.dialog.domain.interactor
 
 import android.content.Context
+import android.os.UserHandle
 import android.provider.Settings
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
@@ -33,6 +34,11 @@ constructor(@Application private val context: Context) {
     fun isEnabled(): Boolean {
         // Custom Options: also use the horizontal (Android 8.1-style) volume dialog on request.
         return isFlagEnabled ||
-            Settings.Secure.getInt(context.contentResolver, "custom_volume_horizontal", 0) == 1
+            Settings.Secure.getIntForUser(
+                context.contentResolver,
+                "custom_volume_horizontal",
+                0,
+                UserHandle.USER_CURRENT,
+            ) == 1
     }
 }
