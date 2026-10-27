@@ -98,9 +98,11 @@ fun rememberStatusIconContext(
             override fun iconContainer(contentKey: ContentKey): StatusIconContainer {
                 return iconContainerByContentKey.getOrPut(contentKey) {
                     StatusIconContainer(
-                        ContextThemeWrapper(context, R.style.Theme_SystemUI_QuickSettings_Header),
-                        null,
-                    )
+                            ContextThemeWrapper(context, R.style.Theme_SystemUI_QuickSettings_Header),
+                            null,
+                        )
+                        // IchthysOS: the QS header's Bluetooth battery pill stands in for its disc.
+                        .apply { setUsesQsBtPill(true) }
                 }
             }
 

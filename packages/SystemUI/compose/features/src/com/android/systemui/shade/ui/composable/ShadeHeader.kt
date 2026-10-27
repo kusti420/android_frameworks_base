@@ -124,6 +124,7 @@ import com.android.systemui.statusbar.pipeline.mobile.ui.viewmodel.ShadeCarrierG
 import com.android.systemui.statusbar.pipeline.mobile.ui.viewmodel.ShadeCarrierGroupMobileIconViewModelKairos
 import com.android.systemui.statusbar.pipeline.mobile.ui.viewmodel.composeWrapper
 import com.android.systemui.shade.ui.ShoalShade
+import com.android.systemui.statusbar.IchthysBtBatteryView
 import com.android.systemui.statusbar.IchthysShoalBatteryView
 import com.android.systemui.statusbar.policy.IchthysHeaderClock
 import com.android.systemui.statusbar.systemstatusicons.SystemStatusIconsInCompose
@@ -860,14 +861,25 @@ private fun BatteryInfo(
     if (rememberIchthysZigzag()) {
         if (showIcon) {
             val tint = (chipHighlightModel?.foregroundColor ?: textColor).toArgb()
-            AndroidView(
-                // IchthysOS: the QS header battery style / percent overrides apply here.
-                factory = { context ->
-                    IchthysShoalBatteryView(context).apply { setQsHeader(true) }
-                },
-                update = { view -> view.onDarkChanged(ArrayList(), 0f, tint) },
-                modifier = modifier.sysuiResTag(ShadeHeader.TestTags.BatteryTestTag),
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // IchthysOS: the connected Bluetooth device's charge as the same pill as on the
+                // status bar (the lattice's small disc steps aside for it).
+                AndroidView(
+                    factory = { context ->
+                        IchthysBtBatteryView(context).apply { setQsHeader(true) }
+                    },
+                    update = { view -> view.onDarkChanged(ArrayList(), 0f, tint) },
+                    modifier = Modifier.padding(end = 4.dp),
+                )
+                AndroidView(
+                    // IchthysOS: the QS header battery style / percent overrides apply here.
+                    factory = { context ->
+                        IchthysShoalBatteryView(context).apply { setQsHeader(true) }
+                    },
+                    update = { view -> view.onDarkChanged(ArrayList(), 0f, tint) },
+                    modifier = modifier.sysuiResTag(ShadeHeader.TestTags.BatteryTestTag),
+                )
+            }
         }
         return
     }

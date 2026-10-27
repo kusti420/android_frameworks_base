@@ -140,13 +140,25 @@ public class StatusIconContainer extends AlphaOptimizedLinearLayout {
         getContext().getContentResolver().registerContentObserver(
                 Settings.Secure.getUriFor(LAYOUT_SETTING), false, mLayoutObserver,
                 UserHandle.USER_ALL);
+        if (mUsesQsBtPill) {
+            com.android.systemui.statusbar.IchthysBtBatteryView.addQsListener(mQsPillListener);
+        }
         updateZigzag();
     }
 
     @Override
     protected void onDetachedFromWindow() {
         getContext().getContentResolver().unregisterContentObserver(mLayoutObserver);
+        com.android.systemui.statusbar.IchthysBtBatteryView.removeQsListener(mQsPillListener);
         super.onDetachedFromWindow();
+    }
+
+    /** IchthysOS: this is the shade header's lattice; the QS header's BT pill stands in for it. */
+    private boolean mUsesQsBtPill;
+    private final Runnable mQsPillListener = this::requestLayout;
+
+    public void setUsesQsBtPill(boolean uses) {
+        mUsesQsBtPill = uses;
     }
 
     private boolean readZigzag() {
@@ -380,7 +392,14 @@ public class StatusIconContainer extends AlphaOptimizedLinearLayout {
      * and the shade header have none and keep their Bluetooth icon.
      */
     private boolean isBtReplacedByPill(StatusIconDisplayable icon) {
-        if (!"bluetooth".equals(icon.getSlot()) || !(getParent() instanceof ViewGroup)) {
+        if (!"bluetooth".equals(icon.getSlot())) {
+            return false;
+        }
+        // IchthysOS: the shade header's lattice and the QS header's pill don't share a parent.
+        if (mUsesQsBtPill) {
+            return com.android.systemui.statusbar.IchthysBtBatteryView.isQsPillShowing();
+        }
+        if (!(getParent() instanceof ViewGroup)) {
             return false;
         }
         final ViewGroup parent = (ViewGroup) getParent();

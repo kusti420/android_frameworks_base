@@ -37,6 +37,7 @@ import com.android.settingslib.bluetooth.CachedBluetoothDevice;
 import com.android.settingslib.utils.ThreadUtils;
 import com.android.systemui.Dependency;
 import com.android.systemui.plugins.DarkIconDispatcher.DarkReceiver;
+import com.android.systemui.statusbar.phone.ui.StatusBarIconController;
 import com.android.systemui.statusbar.policy.BluetoothController;
 
 import java.util.ArrayList;
@@ -80,6 +81,9 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
     private boolean mZigzag;
     // IchthysOS: Status bar > "Bluetooth battery" (bluetooth_show_battery, default on).
     private boolean mShowBatterySetting = true;
+    // IchthysOS: Status bar icons > Bluetooth off ("bluetooth" in icon_blacklist) hides the pill
+    // as well as the stock icon it stands in for.
+    private boolean mHiddenByIconList;
     private Levels mLevels = Levels.NONE;
     private int mLevelRequest;
     private String mText = "";
@@ -144,6 +148,9 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
         getContext().getContentResolver().registerContentObserver(
                 Settings.System.getUriFor(Settings.System.BLUETOOTH_SHOW_BATTERY), false,
                 mSettingsObserver, UserHandle.USER_ALL);
+        getContext().getContentResolver().registerContentObserver(
+                Settings.Secure.getUriFor(StatusBarIconController.ICON_HIDE_LIST), false,
+                mSettingsObserver, UserHandle.USER_ALL);
         mBluetoothController = Dependency.get(BluetoothController.class);
         mBluetoothController.addCallback(this);
         readSettings();
@@ -173,6 +180,11 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
         mTextPaint.setTypeface(face);
         mShowBatterySetting = Settings.System.getIntForUser(getContext().getContentResolver(),
                 Settings.System.BLUETOOTH_SHOW_BATTERY, 1, UserHandle.USER_CURRENT) == 1;
+        mHiddenByIconList = StatusBarIconController.getIconHideList(getContext(),
+                Settings.Secure.getStringForUser(getContext().getContentResolver(),
+                        StatusBarIconController.ICON_HIDE_LIST, UserHandle.USER_CURRENT))
+                .contains(getContext().getString(
+                        com.android.internal.R.string.status_bar_bluetooth));
         updateLevel();
     }
 
@@ -216,7 +228,8 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
     }
 
     private void applyLevels(Levels levels) {
-        final boolean show = mZigzag && mShowBatterySetting && levels.overall >= 0;
+        final boolean show = mZigzag && mShowBatterySetting && !mHiddenByIconList
+                && levels.overall >= 0;
         if (!levels.sameAs(mLevels)) {
             mLevels = levels;
             if (levels.hasBothBuds()) {
@@ -241,6 +254,12 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
         // The pill replaces the stock Bluetooth-with-battery icon in the lattice next to it.
         if (mShowing != show) {
             mShowing = show;
+            if (mQsHeader) {
+                // IchthysOS: the shade header's lattice lives elsewhere (StatusIconContainer
+                // with setUsesQsBtPill), so it hears of the QS pill through this.
+                sQsShowing = show;
+                for (Runnable r : QS_LISTENERS) r.run();
+            }
             if (getParent() instanceof android.view.ViewGroup) {
                 final android.view.ViewGroup parent = (android.view.ViewGroup) getParent();
                 for (int i = 0; i < parent.getChildCount(); i++) {
@@ -259,6 +278,32 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
 
     public boolean isShowingLevel() {
         return mShowing;
+    }
+
+    /**
+     * IchthysOS: this pill sits in the QS header (beside the zig-zag battery, as on the status
+     * bar), so the header's lattice drops its small Bluetooth-level disc while it shows.
+     */
+    private boolean mQsHeader;
+    private static volatile boolean sQsShowing;
+    private static final java.util.concurrent.CopyOnWriteArraySet<Runnable> QS_LISTENERS =
+            new java.util.concurrent.CopyOnWriteArraySet<>();
+
+    public void setQsHeader(boolean qsHeader) {
+        mQsHeader = qsHeader;
+    }
+
+    /** Whether the QS header's pill shows a level. */
+    public static boolean isQsPillShowing() {
+        return sQsShowing;
+    }
+
+    public static void addQsListener(Runnable r) {
+        QS_LISTENERS.add(r);
+    }
+
+    public static void removeQsListener(Runnable r) {
+        QS_LISTENERS.remove(r);
     }
 
     /** Glyph + level follow the bar's icon tint (white on dark, dark on light); the ring is accent. */
