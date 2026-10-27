@@ -159,11 +159,19 @@ public class GraceCascadeStyle implements RecentsStyle {
         final int bandHeight = lm.getMarginPx() + lm.getTopPeekPx();
         final int h = clearAll.getHeight() > 0 ? clearAll.getHeight() : clearAll.getMeasuredHeight();
         final int top = bandTop + Math.max(0, (bandHeight - h) / 2);
+        // IchthysOS: keep the button clear of a side navigation bar / cutout in landscape, where
+        // it otherwise sat under the 3-button bar and could not be tapped.
+        final boolean rtl = clearAll.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL;
+        final int end = Math.round(16 * mDensity)
+                + (rtl ? lm.getInsetLeft() : lm.getInsetRight());
         final ViewGroup.LayoutParams lp = clearAll.getLayoutParams();
-        if (lp instanceof ViewGroup.MarginLayoutParams
-                && ((ViewGroup.MarginLayoutParams) lp).topMargin != top) {
-            ((ViewGroup.MarginLayoutParams) lp).topMargin = top;
-            clearAll.setLayoutParams(lp);
+        if (lp instanceof ViewGroup.MarginLayoutParams) {
+            final ViewGroup.MarginLayoutParams mlp = (ViewGroup.MarginLayoutParams) lp;
+            if (mlp.topMargin != top || mlp.getMarginEnd() != end) {
+                mlp.topMargin = top;
+                mlp.setMarginEnd(end);
+                clearAll.setLayoutParams(mlp);
+            }
         }
         final boolean show = lm.getScrollFromBack() < CLEAR_ALL_SHOW_SCROLL;
         if (show == mClearAllShown) {

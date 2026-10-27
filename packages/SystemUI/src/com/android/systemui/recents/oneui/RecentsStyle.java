@@ -93,6 +93,14 @@ public interface RecentsStyle {
         return 0;
     }
 
+    /**
+     * IchthysOS: whether the card layout shows task snapshots. A style without a thumbnail view
+     * returns false, so the host does not fetch up to twenty full-screen snapshots it never draws.
+     */
+    default boolean showsSnapshots() {
+        return true;
+    }
+
     /** Whether tapping the scrim behind the cards should close recents. */
     default boolean dismissOnScrimTap() {
         return true;

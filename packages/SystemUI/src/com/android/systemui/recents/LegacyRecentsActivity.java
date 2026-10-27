@@ -23,6 +23,7 @@ import android.app.ActivityTaskManager;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.Matrix;
@@ -32,9 +33,12 @@ import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.SystemClock;
+import android.os.UserHandle;
+import android.provider.Settings;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.GestureDetector;
+import android.view.Display;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
@@ -54,7 +58,9 @@ import com.android.systemui.shared.system.ActivityManagerWrapper;
 
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -76,6 +82,18 @@ public class LegacyRecentsActivity extends Activity {
     /** IchthysOS: size of the "Close all" button, matching the card-list styles' pill (dp). */
     private static final int CLEAR_ALL_HEIGHT_DP = 34;
     private static final int CLEAR_ALL_GAP_DP = 8;
+
+    /**
+     * IchthysOS: the card snapshot is 420dp tall (legacy_recents_card.xml), capped here to this
+     * fraction of the screen height. In landscape the screen is only ~410dp tall, so a full
+     * 420dp snapshot plus its header was taller than the list: the newest card sat bottom-aligned
+     * with its header (icon, name, close) cut off above the screen.
+     */
+    private static final int THUMBNAIL_MAX_HEIGHT_DP = 420;
+    private static final float THUMBNAIL_MAX_SCREEN_FRACTION = 0.5f;
+
+    /** IchthysOS: Settings.Secure key of IchthysBackstageService (comma-separated packages). */
+    private static final String BACKSTAGE_PACKAGES = "ichthys_backstage_pkgs";
 
     /**
      * IchthysOS: how long an Alt release that arrived before recents came up still applies to it.
@@ -100,8 +118,12 @@ public class LegacyRecentsActivity extends Activity {
      * them used to run inline before recents could draw.
      */
     private ExecutorService mThumbnailExecutor;
-    /** Bumped on every load/clear so snapshots from a superseded list are dropped. Main thread. */
-    private int mThumbnailGeneration;
+    /**
+     * Bumped on every load/clear so snapshots from a superseded list are dropped. Written on the
+     * main thread; volatile because the snapshot loop also reads it to stop early, so a Close all
+     * queued behind it does not wait for up to 20 stale snapshot fetches.
+     */
+    private volatile int mThumbnailGeneration;
     private volatile boolean mDestroyed;
 
     /**
@@ -166,18 +188,27 @@ public class LegacyRecentsActivity extends Activity {
         // the live insets handles both 3-button and gesture navigation.
         final int baseListPadding = mRecyclerView.getPaddingTop();
         // IchthysOS: the top also clears the "Close all" button, which floats top-end as in
-        // 7.1.1, so the oldest card can scroll out from under it.
+        // 7.1.1, so the oldest card can scroll out from under it. The list clips to this padding
+        // (with a soft fading edge): a card scrolled up used to draw under the status bar and
+        // behind the button, its header gone off the top.
         final int clearAllSpace = dp(CLEAR_ALL_HEIGHT_DP + CLEAR_ALL_GAP_DP);
+        // IchthysOS: also the side insets and the display cutout. In landscape the 3-button nav
+        // bar and the camera cutout sit at the sides, and the cards (and the button) used to run
+        // under them.
         mRecyclerView.setOnApplyWindowInsetsListener((v, insets) -> {
-            final android.graphics.Insets bars =
-                    insets.getInsets(android.view.WindowInsets.Type.systemBars());
-            v.setPadding(v.getPaddingLeft(), baseListPadding + bars.top + clearAllSpace,
-                    v.getPaddingRight(), baseListPadding + bars.bottom);
+            final android.graphics.Insets bars = insets.getInsets(
+                    android.view.WindowInsets.Type.systemBars()
+                            | android.view.WindowInsets.Type.displayCutout());
+            v.setPadding(bars.left, baseListPadding + bars.top + clearAllSpace,
+                    bars.right, baseListPadding + bars.bottom);
             final ViewGroup.MarginLayoutParams lp =
                     (ViewGroup.MarginLayoutParams) mClearAll.getLayoutParams();
             final int wantedTop = bars.top + dp(CLEAR_ALL_GAP_DP);
-            if (lp.topMargin != wantedTop) {
+            final boolean rtl = v.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL;
+            final int wantedEnd = dp(16) + (rtl ? bars.left : bars.right);
+            if (lp.topMargin != wantedTop || lp.getMarginEnd() != wantedEnd) {
                 lp.topMargin = wantedTop;
+                lp.setMarginEnd(wantedEnd);
                 mClearAll.setLayoutParams(lp);
             }
             return insets;
@@ -283,6 +314,7 @@ public class LegacyRecentsActivity extends Activity {
         ++mThumbnailGeneration;
         mAdapter.notifyDataSetChanged();
         final String ownPackage = getPackageName();
+        final Set<String> backstage = readBackstagePackages();
         mThumbnailExecutor.execute(() -> {
             try {
                 final List<ActivityManager.RecentTaskInfo> infos =
@@ -291,7 +323,8 @@ public class LegacyRecentsActivity extends Activity {
                                 ActivityManager.RECENT_IGNORE_UNAVAILABLE,
                                 ActivityManager.getCurrentUser());
                 for (ActivityManager.RecentTaskInfo info : infos) {
-                    if (info.taskId < 0 || isExcluded(info, ownPackage)) {
+                    if (info.taskId < 0 || isExcluded(info, ownPackage)
+                            || isBackstage(info, backstage)) {
                         continue;
                     }
                     ActivityManagerWrapper.getInstance().removeTask(info.taskId);
@@ -301,6 +334,41 @@ public class LegacyRecentsActivity extends Activity {
             }
         });
         finish();
+    }
+
+    /**
+     * IchthysOS: Close all keeps the apps the user parked in Backstage running, as Slim's does
+     * (slimrecent RecentPanelView.getBackstageTaskIds): any task on a display other than the main
+     * screen (Backstage's private virtual display), plus tasks of a package in the Backstage list.
+     * A swipe or the card's close button still removes them one by one.
+     */
+    private Set<String> readBackstagePackages() {
+        final Set<String> packages = new HashSet<>();
+        try {
+            final String list = Settings.Secure.getStringForUser(getContentResolver(),
+                    BACKSTAGE_PACKAGES, UserHandle.USER_CURRENT);
+            if (list != null) {
+                for (String pkg : list.split(",")) {
+                    if (!pkg.trim().isEmpty()) {
+                        packages.add(pkg.trim());
+                    }
+                }
+            }
+        } catch (RuntimeException e) {
+            Log.w(TAG, "Could not read the Backstage list", e);
+        }
+        return packages;
+    }
+
+    private static boolean isBackstage(ActivityManager.RecentTaskInfo info,
+            Set<String> backstagePackages) {
+        if (info.displayId != Display.DEFAULT_DISPLAY
+                && info.displayId != Display.INVALID_DISPLAY) {
+            return true;
+        }
+        final ComponentName base = info.baseIntent != null
+                ? info.baseIntent.getComponent() : null;
+        return base != null && backstagePackages.contains(base.getPackageName());
     }
 
     /**
@@ -365,6 +433,19 @@ public class LegacyRecentsActivity extends Activity {
             Log.d(TAG, "onNewIntent: not consumed as double-tap, refresh in onResume");
         }
         // IchthysOS: no loadTasks() here; onResume always follows a new intent and reloads.
+    }
+
+    /**
+     * IchthysOS: rotation is handled in place (configChanges), but each card's snapshot height and
+     * scale matrix were only computed at bind time, so after a rotation the cards kept the old
+     * orientation's size and the snapshots their old zoom until recents was reopened. Rebind.
+     */
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        if (mAdapter != null) {
+            mAdapter.notifyDataSetChanged();
+        }
     }
 
     @Override
@@ -533,8 +614,8 @@ public class LegacyRecentsActivity extends Activity {
         final Handler main = new Handler(getMainLooper());
         mThumbnailExecutor.execute(() -> {
             for (TaskItem item : items) {
-                if (mDestroyed) {
-                    return;
+                if (mDestroyed || generation != mThumbnailGeneration) {
+                    return; // destroyed, or superseded by a newer load, a clear or onStop
                 }
                 Bitmap bitmap = null;
                 try {
@@ -684,11 +765,48 @@ public class LegacyRecentsActivity extends Activity {
 
             itemView.setOnClickListener(v -> launchTask(getBindingAdapterPosition()));
             dismiss.setOnClickListener(v -> dismissTask(getBindingAdapterPosition()));
+            // IchthysOS: re-fit the snapshot whenever the card's width changes (rotation). A
+            // post() from bind() alone can run before the new layout and keep the old zoom.
+            thumbnail.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
+                if (r - l != or - ol) {
+                    fitThumbnail();
+                }
+            });
+        }
+
+        /** Scales a MATRIX-mode snapshot to the card width, aligned to the top (7.1.1 style). */
+        private void fitThumbnail() {
+            final Drawable d = thumbnail.getDrawable();
+            final int vw = thumbnail.getWidth();
+            if (thumbnail.getScaleType() != ImageView.ScaleType.MATRIX || d == null || vw <= 0
+                    || d.getIntrinsicWidth() <= 0) {
+                return;
+            }
+            final float scale = (float) vw / d.getIntrinsicWidth();
+            final Matrix m = new Matrix();
+            m.setScale(scale, scale);
+            thumbnail.setImageMatrix(m);
         }
 
         void bind(TaskItem item) {
             title.setText(item.label);
             icon.setImageDrawable(item.icon);
+            // IchthysOS: TalkBack read the close glyph as "multiplication x"; name the action and
+            // the app instead (reusing SystemUI's "Close" string: no new resource).
+            dismiss.setContentDescription(
+                    getString(R.string.accessibility_desc_close) + ", " + item.label);
+            itemView.setContentDescription(item.label);
+
+            // IchthysOS: fit the card to the screen in landscape (see THUMBNAIL_MAX_HEIGHT_DP).
+            final int thumbnailHeight = Math.min(dp(THUMBNAIL_MAX_HEIGHT_DP),
+                    Math.round(getResources().getConfiguration().screenHeightDp
+                            * THUMBNAIL_MAX_SCREEN_FRACTION
+                            * getResources().getDisplayMetrics().density));
+            final ViewGroup.LayoutParams thumbnailLp = thumbnail.getLayoutParams();
+            if (thumbnailLp.height != thumbnailHeight) {
+                thumbnailLp.height = thumbnailHeight;
+                thumbnail.setLayoutParams(thumbnailLp);
+            }
 
             // Colour the header bar with the app's primary colour; pick a legible foreground.
             GradientDrawable bg = new GradientDrawable();
@@ -704,14 +822,8 @@ public class LegacyRecentsActivity extends Activity {
                 thumbnail.setVisibility(View.VISIBLE);
                 thumbnail.setScaleType(ImageView.ScaleType.MATRIX);
                 thumbnail.setImageBitmap(bmp);
-                thumbnail.post(() -> {
-                    int vw = thumbnail.getWidth();
-                    if (vw <= 0) return;
-                    float scale = (float) vw / bmp.getWidth();
-                    Matrix m = new Matrix();
-                    m.setScale(scale, scale);
-                    thumbnail.setImageMatrix(m);
-                });
+                fitThumbnail();
+                thumbnail.post(this::fitThumbnail);
             } else {
                 // No snapshot for this task (secure window, snapshot evicted, or the just-left
                 // app whose snapshot isn't ready). Keep the thumbnail area at full height with

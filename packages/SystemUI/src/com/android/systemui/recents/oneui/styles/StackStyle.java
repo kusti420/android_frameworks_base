@@ -18,6 +18,7 @@ package com.android.systemui.recents.oneui.styles;
 
 import android.content.Context;
 import android.graphics.Rect;
+import android.graphics.RectF;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
@@ -159,6 +160,12 @@ public class StackStyle implements RecentsStyle {
         recyclerView.setClipChildren(false);
         recyclerView.setClipToPadding(false);
 
+        // IchthysOS: the fan's geometry is left-to-right by construction (older tasks recede to
+        // the LEFT, applyFan's depth is measured that way). A horizontal LinearLayoutManager
+        // flips its reverseLayout under RTL, which put every older card "in front" of the focus
+        // line where it fades out: in an RTL locale only the front card was ever visible.
+        recyclerView.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
+
         recyclerView.addItemDecoration(new FanDecoration());
 
         // Snapping on the viewport centre is exactly right here without any customisation:
@@ -201,6 +208,11 @@ public class StackStyle implements RecentsStyle {
         mSwipeHelper = new ItemTouchHelper(new FanSwipeCallback());
         mSwipeHelper.attachToRecyclerView(recyclerView);
         recyclerView.addOnItemTouchListener(new DepthAwareSwipeStarter(recyclerView.getContext()));
+        // IchthysOS: every item view is a whole list tall, so a tap above or below the deck (or
+        // beside it) landed on some card's item view and launched that task. Close instead, as
+        // a tap on the backdrop does in every other style. Added last so a swipe owns its
+        // gesture first.
+        recyclerView.addOnItemTouchListener(new BackdropTapCloser(recyclerView.getContext()));
     }
 
     @Override
@@ -214,6 +226,8 @@ public class StackStyle implements RecentsStyle {
         card.setAlpha(1f);
         card.setElevation(0f);
         card.setVisibility(View.VISIBLE);
+        // IchthysOS: the card shows no title, so without this TalkBack has no name to announce.
+        card.setContentDescription(item != null ? item.label : null);
 
         // Seed from the adapter position, which is the depth at rest, so a freshly bound card is
         // never drawn full size for a frame. The pre-draw pass takes over with the real geometry.
@@ -254,6 +268,7 @@ public class StackStyle implements RecentsStyle {
         final float clamped = Math.max(-LEAD_FADE, Math.min(depth, MAX_DEPTH));
 
         final View group = card.findViewById(R.id.oneui_recents_stack_group);
+        final float fit = fitScale(card, group);
         if (group != null && group.getHeight() > 0) {
             // Shrink about the card FACE's centre, which is the group's centre by construction.
             // Not the item view's centre: the item view is a whole list tall so the fan can be
@@ -266,7 +281,7 @@ public class StackStyle implements RecentsStyle {
             card.setPivotY(group.getTop() + group.getHeight() * 0.5f);
         }
 
-        final float scale = (float) Math.pow(DEPTH_SCALE, clamped);
+        final float scale = (float) Math.pow(DEPTH_SCALE, clamped) * fit;
         card.setScaleX(scale);
         card.setScaleY(scale);
 
@@ -329,6 +344,20 @@ public class StackStyle implements RecentsStyle {
 
     private static float clamp01(float value) {
         return value < 0f ? 0f : (value > 1f ? 1f : value);
+    }
+
+    /**
+     * IchthysOS: how much the whole card (face plus overhanging icon) must shrink to fit the list
+     * height. The face is a fixed 528dp; in landscape the list is about 250dp tall, so without
+     * this the deck ran off the top and bottom of the screen, icon and all, and sat under the
+     * Close all pill. 1 whenever it fits, i.e. always in portrait.
+     */
+    private static float fitScale(View card, View group) {
+        if (group == null || group.getHeight() <= 0 || card.getHeight() <= 0
+                || card.getHeight() >= group.getHeight()) {
+            return 1f;
+        }
+        return (float) card.getHeight() / group.getHeight();
     }
 
     /**
@@ -432,7 +461,9 @@ public class StackStyle implements RecentsStyle {
         @Override
         public float getSwipeThreshold(RecyclerView.ViewHolder viewHolder) {
             final View item = viewHolder.itemView;
-            final float faceHeight = FACE_HEIGHT_DP * item.getResources().getDisplayMetrics().density;
+            // IchthysOS: scaled like the card, so a landscape deck does not need a full-height drag.
+            final float faceHeight = FACE_HEIGHT_DP * item.getResources().getDisplayMetrics().density
+                    * fitScale(item, item.findViewById(R.id.oneui_recents_stack_group));
             if (item.getHeight() <= 0) {
                 return SWIPE_THRESHOLD;
             }
@@ -562,6 +593,90 @@ public class StackStyle implements RecentsStyle {
                 }
             }
             return front == null ? null : rv.getChildViewHolder(front);
+        }
+    }
+
+    /**
+     * IchthysOS: closes recents on a tap that lands on no card face. The item views are a list
+     * tall and 260dp wide, so a tap above, below or beside the deck still lands on one of them; the
+     * hit test here uses the visible part, the group of face and icon, with the card's depth scale
+     * applied. Closing goes through the host's backdrop click (the root's click listener), so it
+     * plays the same exit as Back and does nothing if the host has none.
+     */
+    private static final class BackdropTapCloser implements RecyclerView.OnItemTouchListener {
+
+        private final int mTouchSlop;
+        private final RectF mRect = new RectF();
+        private float mDownX;
+        private float mDownY;
+        private boolean mTap;
+
+        BackdropTapCloser(Context context) {
+            mTouchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
+        }
+
+        @Override
+        public boolean onInterceptTouchEvent(RecyclerView rv, MotionEvent e) {
+            switch (e.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    mDownX = e.getX();
+                    mDownY = e.getY();
+                    // A tap that only stops a fling or a snap is not a request to close.
+                    mTap = rv.getScrollState() == RecyclerView.SCROLL_STATE_IDLE;
+                    break;
+                case MotionEvent.ACTION_MOVE:
+                    if (Math.abs(e.getX() - mDownX) > mTouchSlop
+                            || Math.abs(e.getY() - mDownY) > mTouchSlop) {
+                        mTap = false;
+                    }
+                    break;
+                case MotionEvent.ACTION_UP:
+                    final boolean tap = mTap;
+                    mTap = false;
+                    if (tap && !isOnCard(rv, e.getX(), e.getY())) {
+                        final View root = RecentsMotion.root(rv);
+                        if (root != null && root.hasOnClickListeners()) {
+                            // Intercepting the UP cancels the item view's press, so it does not
+                            // also launch; the close itself runs after this dispatch.
+                            rv.post(root::performClick);
+                            return true;
+                        }
+                    }
+                    break;
+                default:
+                    mTap = false;
+                    break;
+            }
+            return false;
+        }
+
+        @Override
+        public void onTouchEvent(RecyclerView rv, MotionEvent e) {}
+
+        @Override
+        public void onRequestDisallowInterceptTouchEvent(boolean disallowIntercept) {
+            mTap = false;
+        }
+
+        private boolean isOnCard(RecyclerView rv, float x, float y) {
+            for (int i = 0, n = rv.getChildCount(); i < n; i++) {
+                final View child = rv.getChildAt(i);
+                if (rv.getChildAdapterPosition(child) == RecyclerView.NO_POSITION
+                        || child.getVisibility() != View.VISIBLE) {
+                    continue;
+                }
+                final View group = child.findViewById(R.id.oneui_recents_stack_group);
+                if (group == null) {
+                    return true; // Unknown layout: never close over something tappable.
+                }
+                mRect.set(group.getLeft(), group.getTop(), group.getRight(), group.getBottom());
+                child.getMatrix().mapRect(mRect);
+                mRect.offset(child.getLeft(), child.getTop());
+                if (mRect.contains(x, y)) {
+                    return true;
+                }
+            }
+            return false;
         }
     }
 

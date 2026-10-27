@@ -48,6 +48,12 @@ final class RecentsCardBinder {
         if (title != null) {
             title.setText(item.label);
         }
+        // IchthysOS: the ✕ is a bare glyph, which TalkBack reads as "multiplication x". Name the
+        // action and the app instead (existing SystemUI string, no new resource).
+        if (dismiss != null) {
+            dismiss.setContentDescription(card.getResources().getString(
+                    R.string.notification_inline_dismiss) + " " + item.label);
+        }
 
         // Tint the header with the app's primary colour. Styles without a coloured header simply
         // omit the header view.

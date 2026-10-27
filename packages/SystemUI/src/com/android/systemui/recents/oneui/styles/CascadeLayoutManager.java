@@ -151,6 +151,12 @@ class CascadeLayoutManager extends RecyclerView.LayoutManager {
     private int mInitialTopOffset;
     private int mCardLeft;
     private int mCardWidth;
+    /**
+     * IchthysOS: side insets (navigation bar and display cutout). In landscape the 3-button bar
+     * and the cutout sit at the sides, and the cards and their ✕ used to run underneath them.
+     */
+    private int mInsetLeft;
+    private int mInsetRight;
     private int mCardHeight;
     private int mMinTranslationZ;
     private int mMaxTranslationZ;
@@ -214,6 +220,16 @@ class CascadeLayoutManager extends RecyclerView.LayoutManager {
 
     int getTopPeekPx() {
         return Math.round(TOP_PEEK_DP * mDensity);
+    }
+
+    /** IchthysOS: the system-bar / cutout inset on the left edge of the list, in px. */
+    int getInsetLeft() {
+        return mInsetLeft;
+    }
+
+    /** IchthysOS: the system-bar / cutout inset on the right edge of the list, in px. */
+    int getInsetRight() {
+        return mInsetRight;
     }
 
     CascadeLayoutManager(Context context) {
@@ -497,14 +513,22 @@ class CascadeLayoutManager extends RecyclerView.LayoutManager {
         // host also sets clipToPadding=false.
         int statusBarInset = 0;
         int navBarInset = 0;
+        int insetLeft = 0;
+        int insetRight = 0;
         if (mRecyclerView != null) {
             final WindowInsets insets = mRecyclerView.getRootWindowInsets();
             if (insets != null) {
                 final Insets bars = insets.getInsets(WindowInsets.Type.systemBars());
                 statusBarInset = bars.top;
                 navBarInset = bars.bottom;
+                final Insets sides = insets.getInsets(
+                        WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+                insetLeft = sides.left;
+                insetRight = sides.right;
             }
         }
+        mInsetLeft = insetLeft;
+        mInsetRight = insetRight;
 
         final boolean landscape = mContext.getResources().getConfiguration().orientation
                 == Configuration.ORIENTATION_LANDSCAPE;
@@ -518,8 +542,8 @@ class CascadeLayoutManager extends RecyclerView.LayoutManager {
         mInitialTopOffset = Math.round(
                 (landscape ? INITIAL_TOP_OFFSET_LAND_DP : INITIAL_TOP_OFFSET_PORT_DP) * mDensity);
 
-        mCardLeft = margin;
-        mCardWidth = Math.max(1, getWidth() - 2 * margin);
+        mCardLeft = insetLeft + margin;
+        mCardWidth = Math.max(1, getWidth() - insetLeft - insetRight - 2 * margin);
 
         // mTaskRect: top-aligned to the stack rect, tall enough that when the front card is
         // scrolled all the way down its bottom clears the nav bar by the bottom margin. On a screen

@@ -28,12 +28,17 @@ import android.graphics.Color;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.os.Handler;
+import android.os.UserHandle;
+import android.provider.Settings;
 import android.util.Log;
+import android.view.Display;
 
 import com.android.systemui.shared.system.ActivityManagerWrapper;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.IntConsumer;
@@ -55,13 +60,24 @@ public final class RecentsTaskSource {
     private static final int MAX_TASKS = 20;
 
     /**
+     * IchthysOS: Settings.Secure list (comma separated) of the packages Backstage manages. Their
+     * tasks, and any task on a non-default display, survive "Close all", as in Slim recents.
+     */
+    private static final String BACKSTAGE_PACKAGES = "ichthys_backstage_pkgs";
+
+    /**
      * Single background thread for task snapshots. One thread keeps them arriving in list order —
      * the top cards, which are the ones on screen, resolve first.
      */
     private final ExecutorService mThumbnailExecutor = Executors.newSingleThreadExecutor();
 
-    /** Bumped on every reload so results from a superseded load are discarded. Main thread only. */
-    private int mThumbnailGeneration;
+    /**
+     * Bumped on every reload so results from a superseded load are discarded. Written on the main
+     * thread only; IchthysOS: volatile because the snapshot loop also reads it, to stop a
+     * superseded pass early instead of fetching every remaining snapshot first (a Close all queued
+     * behind such a pass used to wait for it).
+     */
+    private volatile int mThumbnailGeneration;
 
     /** IchthysOS: set by {@link #destroy}; stops a snapshot pass still running for a dead host. */
     private volatile boolean mDestroyed;
@@ -75,6 +91,10 @@ public final class RecentsTaskSource {
         public int color;
         /** The app's last-frame snapshot, or {@code null} (secure window / snapshot evicted). */
         public Bitmap thumbnail;
+        /** IchthysOS: where the task lives; Backstage parks its apps on a virtual display. */
+        public int displayId = Display.INVALID_DISPLAY;
+        /** IchthysOS: the task's base package, or {@code null}. */
+        public String packageName;
     }
 
     private final Context mContext;
@@ -139,6 +159,8 @@ public final class RecentsTaskSource {
     private TaskItem toItem(ActivityManager.RecentTaskInfo info, PackageManager pm) {
         TaskItem item = new TaskItem();
         item.taskId = info.taskId;
+        item.displayId = info.displayId;
+        item.packageName = basePackage(info);
         ComponentName cn = info.topActivity != null ? info.topActivity : info.baseActivity;
 
         ActivityManager.TaskDescription td = info.taskDescription;
@@ -195,7 +217,7 @@ public final class RecentsTaskSource {
         final List<TaskItem> snapshot = new ArrayList<>(mTasks);
         mThumbnailExecutor.execute(() -> {
             for (int i = 0; i < snapshot.size(); i++) {
-                if (mDestroyed) {
+                if (mDestroyed || generation != mThumbnailGeneration) {
                     return;
                 }
                 final TaskItem item = snapshot.get(i);
@@ -242,8 +264,17 @@ public final class RecentsTaskSource {
         if (item == null) {
             return false;
         }
-        ActivityManagerWrapper.getInstance().startActivityFromRecents(item.taskId, options);
-        return true;
+        // IchthysOS: report whether the start actually succeeded (the task may have died since
+        // the list was loaded), so the host can refresh instead of closing over nothing.
+        return ActivityManagerWrapper.getInstance().startActivityFromRecents(item.taskId, options);
+    }
+
+    /** IchthysOS: drops every loaded snapshot, so a backgrounded host does not pin them. */
+    public void releaseThumbnails() {
+        ++mThumbnailGeneration;
+        for (TaskItem item : mTasks) {
+            item.thumbnail = null;
+        }
     }
 
     /** Removes the task at {@code position} from both the system and this list. */
@@ -262,10 +293,17 @@ public final class RecentsTaskSource {
      *
      * <p>IchthysOS: the loaded list is capped at {@link #MAX_TASKS} and skips tasks without a
      * label, so clearing just that list left older tasks behind. The removals run on the snapshot
-     * thread: each one is a binder call, and the host finishes right after this returns.
+     * thread: each one is a binder call.
+     *
+     * <p>Backstage tasks are kept, as Slim recents keeps them: a task on a display other than the
+     * main screen, and a task of a package in the Backstage list. They stay in the loaded list, so
+     * the host can keep showing them. Swiping one away still removes it.
      */
     public void dismissAll() {
-        mTasks.clear();
+        final Set<String> backstage = readBackstagePackages();
+        mTasks.removeIf(item -> !isBackstage(item.displayId, item.packageName, backstage));
+        // Stop a snapshot pass still in flight, so the removals queued below run right away. A
+        // host that keeps showing the remaining (Backstage) cards requests their snapshots again.
         ++mThumbnailGeneration;
         mThumbnailExecutor.execute(() -> {
             final List<ActivityManager.RecentTaskInfo> infos;
@@ -279,7 +317,8 @@ public final class RecentsTaskSource {
                 return;
             }
             for (ActivityManager.RecentTaskInfo info : infos) {
-                if (info.taskId < 0 || isExcluded(info)) {
+                if (info.taskId < 0 || isExcluded(info)
+                        || isBackstage(info.displayId, basePackage(info), backstage)) {
                     continue;
                 }
                 try {
@@ -289,6 +328,37 @@ public final class RecentsTaskSource {
                 }
             }
         });
+    }
+
+    private Set<String> readBackstagePackages() {
+        final Set<String> packages = new HashSet<>();
+        try {
+            final String list = Settings.Secure.getStringForUser(mContext.getContentResolver(),
+                    BACKSTAGE_PACKAGES, UserHandle.USER_CURRENT);
+            if (list != null) {
+                for (String pkg : list.split(",")) {
+                    if (!pkg.trim().isEmpty()) {
+                        packages.add(pkg.trim());
+                    }
+                }
+            }
+        } catch (RuntimeException e) {
+            Log.w(TAG, "Could not read the Backstage list", e);
+        }
+        return packages;
+    }
+
+    private static boolean isBackstage(int displayId, String pkg, Set<String> backstage) {
+        return (displayId != Display.DEFAULT_DISPLAY && displayId != Display.INVALID_DISPLAY)
+                || (pkg != null && backstage.contains(pkg));
+    }
+
+    private static String basePackage(ActivityManager.RecentTaskInfo info) {
+        final ComponentName base = info.baseIntent != null ? info.baseIntent.getComponent() : null;
+        if (base != null) {
+            return base.getPackageName();
+        }
+        return info.baseActivity != null ? info.baseActivity.getPackageName() : null;
     }
 
     /**

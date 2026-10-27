@@ -20,6 +20,7 @@ import android.app.Activity;
 import android.app.ActivityOptions;
 import android.app.ActivityManager;
 import android.app.ActivityTaskManager;
+import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.graphics.Color;
@@ -30,6 +31,7 @@ import android.os.SystemClock;
 import android.os.UserHandle;
 import android.provider.Settings;
 import android.util.Log;
+import android.view.Display;
 import android.view.GestureDetector;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
@@ -174,6 +176,12 @@ public class OneUiRecentsActivity extends Activity {
         setContentView(R.layout.oneui_recents_activity);
         mRecyclerView = findViewById(R.id.oneui_recents_list);
         mEmptyView = findViewById(R.id.oneui_recents_empty);
+        if (mEmptyView instanceof TextView) {
+            // IchthysOS: white text over a light blurred wallpaper under a 20% veil was barely
+            // legible in the light theme; a soft shadow keeps it readable on any backdrop.
+            ((TextView) mEmptyView).setShadowLayer(
+                    6f * getResources().getDisplayMetrics().density, 0f, 0f, 0x99000000);
+        }
 
         // One UI blurs the wallpaper behind recents rather than dimming it flat — verified on both
         // a Galaxy S25 FE (One UI 8) and an A3 2016 (Grace UX), and it's the most recognisable part
@@ -319,10 +327,19 @@ public class OneUiRecentsActivity extends Activity {
         }
         if (clearAll != null) {
             clearAll.setOnClickListener(v -> {
+                // IchthysOS: Backstage tasks survive Close all (as in Slim); if any are left,
+                // stay open on them. Otherwise go home, as stock Quickstep's Clear all does:
+                // just finishing showed the app recents was opened over for a moment, until its
+                // task removal (on the background thread) caught up and took it away again.
                 mSource.dismissAll();
-                refreshEmptyState();
                 mAdapter.notifyDataSetChanged();
-                finish();
+                refreshEmptyState();
+                if (mSource.isEmpty()) {
+                    goHomeAndFinish();
+                } else {
+                    mRecyclerView.scrollToPosition(0);
+                    loadThumbnails();
+                }
             });
         }
 
@@ -381,6 +398,28 @@ public class OneUiRecentsActivity extends Activity {
     protected void onStop() {
         super.onStop();
         mStoppedAtElapsedRealtime = SystemClock.elapsedRealtime();
+        // IchthysOS: this singleInstance activity lingers after Home with up to twenty
+        // full-screen task snapshots in its cards. onResume reloads everything anyway, so let
+        // them go now. Re-setting the adapter removes the bound views and empties the view cache
+        // and pool, which is what actually drops the ImageViews' references; a plain
+        // notifyDataSetChanged would wait for a layout pass that never runs while stopped.
+        if (!isFinishing() && !isChangingConfigurations()) {
+            mSource.releaseThumbnails();
+            mRecyclerView.setAdapter(mAdapter);
+        }
+    }
+
+    /** Close all with nothing left: home, like stock, without a window animation of our own. */
+    private void goHomeAndFinish() {
+        try {
+            startActivity(new Intent(Intent.ACTION_MAIN)
+                    .addCategory(Intent.CATEGORY_HOME)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        } catch (ActivityNotFoundException e) {
+            Log.w(TAG, "No home activity to return to", e);
+        }
+        finish();
+        overridePendingTransition(0, 0);
     }
 
     @Override
@@ -501,7 +540,7 @@ public class OneUiRecentsActivity extends Activity {
         try {
             for (ActivityManager.RunningTaskInfo info
                     : ActivityManagerWrapper.getInstance().getRunningTasks(
-                            false /* filterOnlyVisibleRecents */)) {
+                            false /* filterOnlyVisibleRecents */, Display.DEFAULT_DISPLAY)) {
                 final ComponentName cn =
                         info.topActivity != null ? info.topActivity : info.baseActivity;
                 // Skip our own task, which is on top right now, and any other SystemUI task —
@@ -576,6 +615,21 @@ public class OneUiRecentsActivity extends Activity {
         mAdapter.notifyDataSetChanged();
         refreshEmptyState();
         // Snapshots arrive afterwards and rebind their own card; the list is already usable.
+        loadThumbnails();
+        if (DEBUG) {
+            Log.d(TAG, "loadTasks: reload=" + reloadMs + "ms tasks=" + mSource.size()
+                    + " total=" + (SystemClock.elapsedRealtime() - t0) + "ms");
+        }
+        if (!mSource.isEmpty()) {
+            mRecyclerView.scrollToPosition(0); // 0 == most recent
+        }
+    }
+
+    private void loadThumbnails() {
+        // IchthysOS: not at all for a style whose cards have no thumbnail view.
+        if (!mStyle.showsSnapshots()) {
+            return;
+        }
         mSource.loadThumbnailsAsync(mRecyclerView.getHandler() != null
                         ? mRecyclerView.getHandler() : new Handler(getMainLooper()),
                 position -> {
@@ -585,13 +639,6 @@ public class OneUiRecentsActivity extends Activity {
                         mAdapter.notifyItemChanged(position);
                     }
                 });
-        if (DEBUG) {
-            Log.d(TAG, "loadTasks: reload=" + reloadMs + "ms tasks=" + mSource.size()
-                    + " total=" + (SystemClock.elapsedRealtime() - t0) + "ms");
-        }
-        if (!mSource.isEmpty()) {
-            mRecyclerView.scrollToPosition(0); // 0 == most recent
-        }
     }
 
     private void refreshEmptyState() {
@@ -627,6 +674,11 @@ public class OneUiRecentsActivity extends Activity {
                 // just adds latency to a gesture that should feel immediate.
                 overridePendingTransition(0, 0);
             }
+        } else if (!quickSwitch && mSource.get(position) != null) {
+            // IchthysOS: the start failed (the task died since the list was loaded). Refresh so
+            // the dead card goes away instead of the tap silently doing nothing. A failed quick
+            // switch needs nothing here: onResume follows the new intent and reloads.
+            loadTasks();
         }
     }
 

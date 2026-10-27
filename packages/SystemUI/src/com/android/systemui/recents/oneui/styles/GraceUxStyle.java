@@ -211,7 +211,9 @@ public class GraceUxStyle implements RecentsStyle {
     public void styleClearAll(TextView closeAll) {
         mCloseAll = closeAll;
         final GradientDrawable shape = new GradientDrawable();
-        shape.setColor(0x5A000000);
+        // IchthysOS: darker than the original's 0x5A: the peeking front card runs under the
+        // button, and its text showed through the label.
+        shape.setColor(0xD0101012);
         shape.setStroke(Math.max(1, Math.round(mDensity)), 0x40FAFAFA);
         shape.setCornerRadius(CLOSE_ALL_RADIUS_DP * mDensity);
         closeAll.setBackground(new RippleDrawable(ColorStateList.valueOf(0x29000000), shape, null));

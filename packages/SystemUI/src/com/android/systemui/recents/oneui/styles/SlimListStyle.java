@@ -90,6 +90,12 @@ public class SlimListStyle implements RecentsStyle {
         card.setElevation(0f);
     }
 
+    /** IchthysOS: the row has no thumbnail view, so the snapshots would only be fetched for nothing. */
+    @Override
+    public boolean showsSnapshots() {
+        return false;
+    }
+
     @Override
     public int getSwipeDirs() {
         // With no ✕ in the row, swipe is the only way to dismiss a single task, so this style has to
