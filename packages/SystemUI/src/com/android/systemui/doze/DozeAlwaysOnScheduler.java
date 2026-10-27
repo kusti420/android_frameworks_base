@@ -42,8 +42,8 @@ import javax.inject.Inject;
  * that is *already* dozing when a boundary passes: nothing else re-evaluates AOD then, so the AOD
  * would stay in whatever state it entered until the user touched the phone.
  *
- * <p>The sunset/sunrise schedule modes are not handled here; see
- * {@link AmbientDisplayConfiguration#alwaysOnScheduleAllowsNow}.
+ * <p>The sunset / sunrise modes work the same way, on the times TwilightService publishes; see
+ * {@link AmbientDisplayConfiguration#alwaysOnScheduleWindow}.
  */
 @DozeScope
 public class DozeAlwaysOnScheduler implements DozeMachine.Part {
@@ -112,7 +112,7 @@ public class DozeAlwaysOnScheduler implements DozeMachine.Part {
     private LocalTime[] scheduleWindowOrNull() {
         final int userId = mUserTracker.getUserId();
         if (!mConfig.alwaysOnAvailableForUser(userId)
-                || !mConfig.alwaysOnCustomTimeScheduleEnabled(userId)) {
+                || !mConfig.alwaysOnScheduleEnabled(userId)) {
             return null;
         }
         return mConfig.alwaysOnScheduleWindow(userId);

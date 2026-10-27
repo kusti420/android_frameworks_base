@@ -59,9 +59,19 @@ public class AmbientDisplayConfiguration {
 
     /** Values of {@code Settings.Secure.DOZE_ALWAYS_ON_AUTO_MODE}. */
     private static final int AOD_SCHEDULE_DISABLED = 0;
+    private static final int AOD_SCHEDULE_NIGHT = 1;
     private static final int AOD_SCHEDULE_TIME = 2;
+    private static final int AOD_SCHEDULE_MIXED_SUNSET = 3;
+    private static final int AOD_SCHEDULE_MIXED_SUNRISE = 4;
 
     private static final String DEFAULT_AOD_SCHEDULE_TIME = "20:00,07:00";
+    /**
+     * IchthysOS: today's local sunset and sunrise, "HH:mm,HH:mm", published by system_server's
+     * TwilightService while a sunset / sunrise mode is picked (it needs a location fix).
+     */
+    private static final String TWILIGHT_TIMES = "ichthys_twilight_times";
+    /** Used until TwilightService has a location to work the real times out from. */
+    private static final String DEFAULT_TWILIGHT_TIMES = "19:00,07:00";
     private static final DateTimeFormatter AOD_SCHEDULE_TIME_FORMAT =
             DateTimeFormatter.ofPattern("HH:mm");
 
@@ -360,16 +370,14 @@ public class AmbientDisplayConfiguration {
      * ({@code Settings.Secure.DOZE_ALWAYS_ON_AUTO_MODE}) for the current wall
      * clock time.
      *
-     * <p>Only the "custom time" mode can be answered here. The sunset/sunrise modes need twilight
-     * data, which lives behind {@code TwilightManager} -- a system_server local service with no
-     * binder API -- and cannot be computed in the processes this class runs in. Those modes
-     * therefore impose no restriction rather than guessing at a wrong window.
+     * <p>The sunset / sunrise modes use the times system_server's TwilightService publishes
+     * ({@link #TWILIGHT_TIMES}); until it has a location fix, 19:00 and 07:00 stand in.
      *
      * @return whether always-on-display is allowed to be on right now
      * @hide
      */
     public boolean alwaysOnScheduleAllowsNow(int user) {
-        if (!alwaysOnCustomTimeScheduleEnabled(user)) {
+        if (!alwaysOnScheduleEnabled(user)) {
             return true;
         }
         final LocalTime[] window = alwaysOnScheduleWindow(user);
@@ -380,28 +388,68 @@ public class AmbientDisplayConfiguration {
     }
 
     /**
-     * Whether the always-on-display schedule is set to the "custom time" mode -- the only mode that
-     * can be evaluated outside of system_server.
+     * Whether an always-on-display schedule is picked: custom time, sunset to sunrise, or one of
+     * the two mixed modes.
      *
      * @hide
      */
-    public boolean alwaysOnCustomTimeScheduleEnabled(int user) {
+    public boolean alwaysOnScheduleEnabled(int user) {
+        final int mode = scheduleMode(user);
+        return mode == AOD_SCHEDULE_NIGHT || mode == AOD_SCHEDULE_TIME
+                || mode == AOD_SCHEDULE_MIXED_SUNSET || mode == AOD_SCHEDULE_MIXED_SUNRISE;
+    }
+
+    private int scheduleMode(int user) {
         return Settings.Secure.getIntForUser(mContext.getContentResolver(),
-                Settings.Secure.DOZE_ALWAYS_ON_AUTO_MODE, AOD_SCHEDULE_DISABLED, user)
-                == AOD_SCHEDULE_TIME;
+                Settings.Secure.DOZE_ALWAYS_ON_AUTO_MODE, AOD_SCHEDULE_DISABLED, user);
     }
 
     /**
-     * The user's custom always-on-display window as {since, till}, or {@code null} if it cannot be
-     * parsed.
+     * The always-on-display window for the picked mode as {since, till}: the custom times, sunset
+     * to sunrise, sunset to the custom end, or the custom start to sunrise. {@code null} if
+     * no schedule is picked or the times can't be parsed.
      *
      * @hide
      */
     public LocalTime[] alwaysOnScheduleWindow(int user) {
+        final int mode = scheduleMode(user);
+        if (mode == AOD_SCHEDULE_TIME) {
+            return customWindow(user);
+        }
+        if (mode != AOD_SCHEDULE_NIGHT && mode != AOD_SCHEDULE_MIXED_SUNSET
+                && mode != AOD_SCHEDULE_MIXED_SUNRISE) {
+            return null;
+        }
+        String twilight = Settings.Global.getString(mContext.getContentResolver(), TWILIGHT_TIMES);
+        LocalTime[] sun = parseWindow(TWILIGHT_TIMES, twilight);
+        if (sun == null) {
+            sun = parseWindow(TWILIGHT_TIMES, DEFAULT_TWILIGHT_TIMES);
+        }
+        if (mode == AOD_SCHEDULE_NIGHT) {
+            return sun;
+        }
+        final LocalTime[] custom = customWindow(user);
+        if (custom == null) {
+            return null;
+        }
+        return mode == AOD_SCHEDULE_MIXED_SUNSET
+                ? new LocalTime[] {sun[0], custom[1]}
+                : new LocalTime[] {custom[0], sun[1]};
+    }
+
+    /** The user's custom window as {since, till}, or {@code null} if it can't be parsed. */
+    private LocalTime[] customWindow(int user) {
         String value = Settings.Secure.getStringForUser(mContext.getContentResolver(),
                 Settings.Secure.DOZE_ALWAYS_ON_AUTO_TIME, user);
         if (TextUtils.isEmpty(value)) {
             value = DEFAULT_AOD_SCHEDULE_TIME;
+        }
+        return parseWindow(Settings.Secure.DOZE_ALWAYS_ON_AUTO_TIME, value);
+    }
+
+    private static LocalTime[] parseWindow(String key, String value) {
+        if (TextUtils.isEmpty(value)) {
+            return null;
         }
         final String[] parts = value.split(",");
         if (parts.length != 2) {
@@ -413,7 +461,7 @@ public class AmbientDisplayConfiguration {
                     LocalTime.parse(parts[1], AOD_SCHEDULE_TIME_FORMAT),
             };
         } catch (DateTimeParseException e) {
-            Log.w(TAG, "Unparsable " + Settings.Secure.DOZE_ALWAYS_ON_AUTO_TIME + ": " + value);
+            Log.w(TAG, "Unparsable " + key + ": " + value);
             return null;
         }
     }

@@ -23,6 +23,9 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.database.ContentObserver;
+import android.database.Cursor;
+import android.net.Uri;
 import android.icu.util.Calendar;
 import android.location.Location;
 import android.location.LocationListener;
@@ -31,14 +34,21 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
+import android.os.UserHandle;
+import android.provider.Settings;
 import android.util.ArrayMap;
 import android.util.Slog;
 
 import com.android.internal.annotations.GuardedBy;
+import com.android.internal.os.BackgroundThread;
+import com.android.internal.util.crdroid.OmniJawsClient;
 import com.android.server.SystemService;
 
 import com.ibm.icu.impl.CalendarAstronomer;
 
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.Objects;
 
 /**
@@ -73,6 +83,29 @@ public final class TwilightService extends SystemService
 
     @GuardedBy("mListeners")
     protected TwilightState mLastTwilightState;
+
+    /**
+     * IchthysOS: today's sunset and sunrise as local "HH:mm,HH:mm", for the crDroid always-on
+     * display schedule's sunset / sunrise modes and Living Sky (both run in SystemUI, which can't
+     * reach this local service). Written whenever the twilight state is worked out; while either
+     * needs it this service keeps listening on its own. Without a location fix the weather
+     * provider's sunrise and sunset stand in (it has a place of its own: a set city or its last fix).
+     */
+    private static final String ICHTHYS_TWILIGHT_TIMES = "ichthys_twilight_times";
+    /** crDroid DOZE_ALWAYS_ON_AUTO_MODE values that need twilight: sunset-sunrise, mixed. */
+    private static final int AOD_MODE_NIGHT = 1;
+    private static final int AOD_MODE_MIXED_SUNSET = 3;
+    private static final int AOD_MODE_MIXED_SUNRISE = 4;
+    private static final DateTimeFormatter TWILIGHT_TIME_FORMAT =
+            DateTimeFormatter.ofPattern("HH:mm");
+    /** IchthysOS: Secure, 1 while Living Sky regrades the wallpaper's sky. */
+    private static final String LIVING_SKY = "ichthys_living_sky";
+    private static final Uri WEATHER_URI =
+            Uri.parse("content://org.omnirom.omnijaws.provider/weather");
+    private final TwilightListener mAodTwilightListener = state -> { };
+    private boolean mAodListening;
+    private String mPublishedTimes;
+    private ContentObserver mWeatherObserver;
 
     public TwilightService(Context context) {
         super(context.createAttributionContext(ATTRIBUTION_TAG));
@@ -127,7 +160,136 @@ public final class TwilightService extends SystemService
             if (mHasListeners) {
                 startListening();
             }
+
+            // IchthysOS: the AOD schedule's sunset / sunrise modes.
+            final ContentObserver aodObserver = new ContentObserver(mHandler) {
+                @Override
+                public void onChange(boolean selfChange) {
+                    updateAodListening();
+                }
+            };
+            c.getContentResolver().registerContentObserver(
+                    Settings.Secure.getUriFor(Settings.Secure.DOZE_ALWAYS_ON_AUTO_MODE), false,
+                    aodObserver, UserHandle.USER_ALL);
+            c.getContentResolver().registerContentObserver(
+                    Settings.Secure.getUriFor(LIVING_SKY), false, aodObserver,
+                    UserHandle.USER_ALL);
+            // The weather app's data is only readable once the user is unlocked: try again then.
+            final IntentFilter userFilter = new IntentFilter(Intent.ACTION_USER_SWITCHED);
+            userFilter.addAction(Intent.ACTION_USER_UNLOCKED);
+            c.registerReceiverForAllUsers(new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    updateAodListening();
+                    if (mAodListening) {
+                        publishWeatherTimesIfNoFix();
+                    }
+                }
+            }, userFilter, null, mHandler);
+            updateAodListening();
         }
+    }
+
+    /**
+     * IchthysOS: listens for as long as the current user's AOD schedule (a sunset / sunrise mode)
+     * or Living Sky needs twilight.
+     */
+    private void updateAodListening() {
+        final int mode = Settings.Secure.getIntForUser(getContext().getContentResolver(),
+                Settings.Secure.DOZE_ALWAYS_ON_AUTO_MODE, 0, UserHandle.USER_CURRENT);
+        final boolean need = mode == AOD_MODE_NIGHT || mode == AOD_MODE_MIXED_SUNSET
+                || mode == AOD_MODE_MIXED_SUNRISE
+                || Settings.Secure.getIntForUser(getContext().getContentResolver(), LIVING_SKY,
+                        0, UserHandle.USER_CURRENT) == 1;
+        if (need == mAodListening) {
+            return;
+        }
+        mAodListening = need;
+        final TwilightManager manager = getLocalService(TwilightManager.class);
+        if (need) {
+            // The weather's times stand in until there is a location fix; follow its updates.
+            mWeatherObserver = new ContentObserver(mHandler) {
+                @Override
+                public void onChange(boolean selfChange) {
+                    synchronized (mListeners) {
+                        if (mLastTwilightState != null) {
+                            return;
+                        }
+                    }
+                    postWeatherTimes();
+                }
+            };
+            try {
+                getContext().getContentResolver().registerContentObserver(WEATHER_URI, false,
+                        mWeatherObserver, UserHandle.USER_ALL);
+            } catch (SecurityException e) {
+                // OmniJaws not installed: location is the only source.
+                mWeatherObserver = null;
+            }
+            manager.registerListener(mAodTwilightListener, mHandler);
+            publishWeatherTimesIfNoFix();
+        } else {
+            if (mWeatherObserver != null) {
+                getContext().getContentResolver().unregisterContentObserver(mWeatherObserver);
+                mWeatherObserver = null;
+            }
+            manager.unregisterListener(mAodTwilightListener);
+        }
+    }
+
+    private void publishWeatherTimesIfNoFix() {
+        synchronized (mListeners) {
+            if (mLastTwilightState != null) {
+                return;
+            }
+        }
+        postWeatherTimes();
+    }
+
+    /** Off the main thread: the weather app's provider may have to start first. */
+    private void postWeatherTimes() {
+        BackgroundThread.getHandler().post(this::publishWeatherTimes);
+    }
+
+    /** IchthysOS: the weather provider's sunrise / sunset (OpenMeteo fills them), if it has any. */
+    private void publishWeatherTimes() {
+        long sunrise = 0;
+        long sunset = 0;
+        try (Cursor c = getContext().getContentResolver().query(WEATHER_URI,
+                OmniJawsClient.WEATHER_PROJECTION, null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                final int rise = c.getColumnIndex("sunrise");
+                final int set = c.getColumnIndex("sunset");
+                if (rise != -1 && set != -1) {
+                    sunrise = c.getLong(rise);
+                    sunset = c.getLong(set);
+                }
+            }
+        } catch (RuntimeException e) {
+            Slog.w(TAG, "No weather sunrise/sunset", e);
+        }
+        if (sunrise > 0 && sunset > 0) {
+            publishTimes(sunset, sunrise);
+        }
+    }
+
+    /** IchthysOS: see {@link #ICHTHYS_TWILIGHT_TIMES}. */
+    private void publishTwilightTimes(TwilightState state) {
+        publishTimes(state.sunsetTimeMillis(), state.sunriseTimeMillis());
+    }
+
+    private synchronized void publishTimes(long sunsetMillis, long sunriseMillis) {
+        final ZoneId zone = ZoneId.systemDefault();
+        final String times =
+                TWILIGHT_TIME_FORMAT.format(Instant.ofEpochMilli(sunsetMillis).atZone(zone))
+                + "," + TWILIGHT_TIME_FORMAT.format(Instant.ofEpochMilli(sunriseMillis)
+                        .atZone(zone));
+        if (times.equals(mPublishedTimes)) {
+            return;
+        }
+        mPublishedTimes = times;
+        Settings.Global.putString(getContext().getContentResolver(), ICHTHYS_TWILIGHT_TIMES,
+                times);
     }
 
     @Override
@@ -231,8 +393,14 @@ public final class TwilightService extends SystemService
             }
         }
 
+        // IchthysOS: no location fix yet: the weather's times, while someone needs them.
+        if (state == null && mAodListening) {
+            postWeatherTimes();
+        }
+
         // Schedule an alarm to update the state at the next sunrise or sunset.
         if (state != null) {
+            publishTwilightTimes(state);
             final long triggerAtMillis = state.isNight()
                     ? state.sunriseTimeMillis() : state.sunsetTimeMillis();
             mAlarmManager.setExact(AlarmManager.RTC, triggerAtMillis, TAG, this, mHandler);
