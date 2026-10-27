@@ -63,6 +63,9 @@ public final class RecentsTaskSource {
     /** Bumped on every reload so results from a superseded load are discarded. Main thread only. */
     private int mThumbnailGeneration;
 
+    /** IchthysOS: set by {@link #destroy}; stops a snapshot pass still running for a dead host. */
+    private volatile boolean mDestroyed;
+
     /** One recent task, resolved to the bits a card needs to render. */
     public static final class TaskItem {
         public int taskId;
@@ -181,7 +184,8 @@ public final class RecentsTaskSource {
      * renders complete-looking immediately and snapshots fill in behind it, rather than the whole
      * screen waiting on ~50ms of binder per task.
      *
-     * @param onReady invoked on the main thread with the index of each task whose thumbnail arrived
+     * @param onReady invoked on the main thread with the current index of each task whose thumbnail
+     *     arrived (looked up when it lands, so a dismiss meanwhile cannot misdirect it)
      */
     public void loadThumbnailsAsync(Handler mainHandler, IntConsumer onReady) {
         // Anything already in flight belongs to a previous list; its results must not be applied to
@@ -191,6 +195,9 @@ public final class RecentsTaskSource {
         final List<TaskItem> snapshot = new ArrayList<>(mTasks);
         mThumbnailExecutor.execute(() -> {
             for (int i = 0; i < snapshot.size(); i++) {
+                if (mDestroyed) {
+                    return;
+                }
                 final TaskItem item = snapshot.get(i);
                 Bitmap bitmap = null;
                 try {
@@ -200,13 +207,17 @@ public final class RecentsTaskSource {
                     // A task can die mid-load; leaving the thumbnail null renders the colour card.
                 }
                 final Bitmap loaded = bitmap;
-                final int index = i;
                 mainHandler.post(() -> {
                     if (generation != mThumbnailGeneration) {
                         return; // superseded by a newer reload
                     }
                     item.thumbnail = loaded;
-                    onReady.accept(index);
+                    // IchthysOS: positions shift when a card is dismissed while snapshots are
+                    // still loading, so report where the item is now, not where it was.
+                    final int index = mTasks.indexOf(item);
+                    if (index >= 0) {
+                        onReady.accept(index);
+                    }
                 });
             }
         });
@@ -246,16 +257,48 @@ public final class RecentsTaskSource {
         return true;
     }
 
-    /** Removes every loaded task ("clear all"). */
+    /**
+     * Removes every task this list would show ("clear all"), not only the loaded ones.
+     *
+     * <p>IchthysOS: the loaded list is capped at {@link #MAX_TASKS} and skips tasks without a
+     * label, so clearing just that list left older tasks behind. The removals run on the snapshot
+     * thread: each one is a binder call, and the host finishes right after this returns.
+     */
     public void dismissAll() {
-        for (TaskItem item : mTasks) {
-            try {
-                ActivityManagerWrapper.getInstance().removeTask(item.taskId);
-            } catch (Exception e) {
-                Log.w(TAG, "Failed to remove task " + item.taskId, e);
-            }
-        }
         mTasks.clear();
+        ++mThumbnailGeneration;
+        mThumbnailExecutor.execute(() -> {
+            final List<ActivityManager.RecentTaskInfo> infos;
+            try {
+                infos = ActivityTaskManager.getInstance().getRecentTasks(
+                        ActivityTaskManager.getMaxRecentTasksStatic(),
+                        ActivityManager.RECENT_IGNORE_UNAVAILABLE,
+                        ActivityManager.getCurrentUser());
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to read recent tasks for clear all", e);
+                return;
+            }
+            for (ActivityManager.RecentTaskInfo info : infos) {
+                if (info.taskId < 0 || isExcluded(info)) {
+                    continue;
+                }
+                try {
+                    ActivityManagerWrapper.getInstance().removeTask(info.taskId);
+                } catch (Exception e) {
+                    Log.w(TAG, "Failed to remove task " + info.taskId, e);
+                }
+            }
+        });
+    }
+
+    /**
+     * IchthysOS: releases the snapshot thread. Work already queued (a clear all) still runs; a
+     * snapshot pass in progress stops at the next task.
+     */
+    public void destroy() {
+        mDestroyed = true;
+        ++mThumbnailGeneration;
+        mThumbnailExecutor.shutdown();
     }
 
     /** True when {@code color} is dark enough that white foreground text stays legible on it. */

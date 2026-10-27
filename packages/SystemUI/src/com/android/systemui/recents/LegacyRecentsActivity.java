@@ -26,15 +26,22 @@ import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.Matrix;
+import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
+import android.os.Handler;
 import android.os.SystemClock;
 import android.util.Log;
+import android.util.TypedValue;
+import android.view.GestureDetector;
+import android.view.Gravity;
 import android.view.LayoutInflater;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.TextView;
 
@@ -45,9 +52,11 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.android.systemui.res.R;
 import com.android.systemui.shared.system.ActivityManagerWrapper;
 
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * A revival of the pre-Quickstep (Android 7.1.1-style) recents/task switcher: a vertical stack of
@@ -64,19 +73,36 @@ public class LegacyRecentsActivity extends Activity {
 
     private static final int MAX_TASKS = 20;
 
+    /** IchthysOS: size of the "Close all" button, matching the card-list styles' pill (dp). */
+    private static final int CLEAR_ALL_HEIGHT_DP = 34;
+    private static final int CLEAR_ALL_GAP_DP = 8;
+
     /**
-     * How long after recents is shown a second recents press still counts as the double-tap
-     * quick-switch gesture. Mirrors Quickstep's
-     * {@code OverviewCommandHelper.TOGGLE_PREVIOUS_TIMEOUT_MS} (5s), which is the window stock uses
-     * to decide that a second press belongs with the first; that constant lives in Launcher3 and is
-     * not on SystemUI's classpath, so it is matched by value.
+     * IchthysOS: how long an Alt release that arrived before recents came up still applies to it.
+     * A quick Alt+Tab tap releases Alt before the activity has even resumed.
      */
-    private static final long TOGGLE_PREVIOUS_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(5);
+    private static final long ALT_TAB_RELEASE_PENDING_MS = 1000;
+
+    /** IchthysOS: the instance on screen, for {@link #onAltTabReleased}. Main thread only. */
+    private static WeakReference<LegacyRecentsActivity> sShowing;
+    /** IchthysOS: elapsedRealtime of an Alt release no instance was up for yet, or 0. */
+    private static long sAltTabReleasedAt;
 
     private RecyclerView mRecyclerView;
     private View mEmptyView;
+    private TextView mClearAll;
     private final List<TaskItem> mTasks = new ArrayList<>();
     private TaskAdapter mAdapter;
+
+    /**
+     * IchthysOS: snapshots are fetched here, off the main thread, as the card-list styles do
+     * (RecentsTaskSource): each is a binder call returning a full-screen bitmap, and up to 20 of
+     * them used to run inline before recents could draw.
+     */
+    private ExecutorService mThumbnailExecutor;
+    /** Bumped on every load/clear so snapshots from a superseded list are dropped. Main thread. */
+    private int mThumbnailGeneration;
+    private volatile boolean mDestroyed;
 
     /**
      * {@link SystemClock#elapsedRealtime()} of the moment recents last came to the front, i.e. of
@@ -129,6 +155,8 @@ public class LegacyRecentsActivity extends Activity {
 
         mRecyclerView = findViewById(R.id.legacy_recents_list);
         mEmptyView = findViewById(R.id.legacy_recents_empty);
+        mThumbnailExecutor = Executors.newSingleThreadExecutor();
+        addClearAllButton();
 
         // Pad the list by the system-bar insets on top of the base 24dp so the top-most
         // and (crucially) the bottom-most card can scroll fully clear of the status bar and
@@ -137,11 +165,21 @@ public class LegacyRecentsActivity extends Activity {
         // partly hidden behind the nav bar and could not be scrolled into full view. Using
         // the live insets handles both 3-button and gesture navigation.
         final int baseListPadding = mRecyclerView.getPaddingTop();
+        // IchthysOS: the top also clears the "Close all" button, which floats top-end as in
+        // 7.1.1, so the oldest card can scroll out from under it.
+        final int clearAllSpace = dp(CLEAR_ALL_HEIGHT_DP + CLEAR_ALL_GAP_DP);
         mRecyclerView.setOnApplyWindowInsetsListener((v, insets) -> {
             final android.graphics.Insets bars =
                     insets.getInsets(android.view.WindowInsets.Type.systemBars());
-            v.setPadding(v.getPaddingLeft(), baseListPadding + bars.top,
+            v.setPadding(v.getPaddingLeft(), baseListPadding + bars.top + clearAllSpace,
                     v.getPaddingRight(), baseListPadding + bars.bottom);
+            final ViewGroup.MarginLayoutParams lp =
+                    (ViewGroup.MarginLayoutParams) mClearAll.getLayoutParams();
+            final int wantedTop = bars.top + dp(CLEAR_ALL_GAP_DP);
+            if (lp.topMargin != wantedTop) {
+                lp.topMargin = wantedTop;
+                mClearAll.setLayoutParams(lp);
+            }
             return insets;
         });
         mRecyclerView.requestApplyInsets();
@@ -172,8 +210,124 @@ public class LegacyRecentsActivity extends Activity {
 
         // Tapping the dimmed background closes recents.
         findViewById(R.id.legacy_recents_root).setOnClickListener(v -> finish());
+        // IchthysOS: the list is match_parent and takes every touch once it has a layout
+        // manager, so the root's click above only fired beside the list or in the empty state.
+        // Also close on a tap that lands between the cards.
+        final GestureDetector tapOutside = new GestureDetector(this,
+                new GestureDetector.SimpleOnGestureListener() {
+                    private boolean mDownWhileScrolling;
 
-        loadTasks();
+                    @Override
+                    public boolean onDown(MotionEvent e) {
+                        // A tap that only stops a fling is not a request to close.
+                        mDownWhileScrolling =
+                                mRecyclerView.getScrollState() != RecyclerView.SCROLL_STATE_IDLE;
+                        return false;
+                    }
+
+                    @Override
+                    public boolean onSingleTapUp(MotionEvent e) {
+                        if (!mDownWhileScrolling
+                                && mRecyclerView.findChildViewUnder(e.getX(), e.getY()) == null) {
+                            finish();
+                            return true;
+                        }
+                        return false;
+                    }
+                });
+        // Only reaches the list when no card took the touch; returning false keeps scrolling.
+        mRecyclerView.setOnTouchListener((v, e) -> {
+            tapOutside.onTouchEvent(e);
+            return false;
+        });
+
+        // IchthysOS: no loadTasks() here. onResume always runs before the first frame and
+        // reloads, so loading here as well did the whole job twice.
+    }
+
+    /**
+     * IchthysOS: the "Close all" control 7.1.1 had above the stack. Built in code on purpose: a
+     * new id or dimen resource would shift SystemUI's resource IDs (see BLUR_RADIUS_DP in
+     * OneUiRecentsActivity). Reuses the card-list styles' string and background.
+     */
+    private void addClearAllButton() {
+        mClearAll = new TextView(this);
+        mClearAll.setText(R.string.recents_clear_all);
+        mClearAll.setAllCaps(true);
+        mClearAll.setTextColor(Color.WHITE);
+        mClearAll.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        mClearAll.setTypeface(Typeface.DEFAULT_BOLD);
+        mClearAll.setGravity(Gravity.CENTER);
+        mClearAll.setPadding(dp(16), 0, dp(16), 0);
+        mClearAll.setBackgroundResource(R.drawable.oneui_recents_clear_all_bg);
+        mClearAll.setFocusable(true);
+        mClearAll.setVisibility(View.GONE);
+        mClearAll.setOnClickListener(v -> clearAll());
+        final FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(CLEAR_ALL_HEIGHT_DP),
+                Gravity.TOP | Gravity.END);
+        lp.setMarginEnd(dp(16));
+        ((ViewGroup) findViewById(R.id.legacy_recents_root)).addView(mClearAll, lp);
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    /**
+     * IchthysOS: removes every task this list would show, not only the loaded (capped) ones, off
+     * the main thread, then closes recents.
+     */
+    private void clearAll() {
+        mTasks.clear();
+        ++mThumbnailGeneration;
+        mAdapter.notifyDataSetChanged();
+        final String ownPackage = getPackageName();
+        mThumbnailExecutor.execute(() -> {
+            try {
+                final List<ActivityManager.RecentTaskInfo> infos =
+                        ActivityTaskManager.getInstance().getRecentTasks(
+                                ActivityTaskManager.getMaxRecentTasksStatic(),
+                                ActivityManager.RECENT_IGNORE_UNAVAILABLE,
+                                ActivityManager.getCurrentUser());
+                for (ActivityManager.RecentTaskInfo info : infos) {
+                    if (info.taskId < 0 || isExcluded(info, ownPackage)) {
+                        continue;
+                    }
+                    ActivityManagerWrapper.getInstance().removeTask(info.taskId);
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Clear all failed", e);
+            }
+        });
+        finish();
+    }
+
+    /**
+     * IchthysOS: Alt released after Alt+Tab ({@link LegacyRecentsImpl#hideRecentApps}). Launches
+     * the card the keyboard focus is on, or does the same quick switch a second recents press
+     * does, like stock's Keyboard Quick Switch. If recents is not up yet, the release is kept
+     * briefly for the instance about to resume.
+     */
+    static void onAltTabReleased() {
+        final LegacyRecentsActivity showing = sShowing != null ? sShowing.get() : null;
+        if (showing == null || showing.isFinishing()) {
+            sAltTabReleasedAt = SystemClock.elapsedRealtime();
+            return;
+        }
+        sAltTabReleasedAt = 0;
+        showing.launchFocusedOrPrevious();
+    }
+
+    private void launchFocusedOrPrevious() {
+        final View focused = mRecyclerView.getFocusedChild();
+        final int position = focused != null
+                ? mRecyclerView.getChildAdapterPosition(focused) : RecyclerView.NO_POSITION;
+        if (position != RecyclerView.NO_POSITION) {
+            launchTask(position, true /* quickSwitch */);
+        } else {
+            quickSwitchToPreviousTask();
+        }
     }
 
     /**
@@ -197,33 +351,63 @@ public class LegacyRecentsActivity extends Activity {
         final long sinceShown = SystemClock.elapsedRealtime() - mShownAtElapsedRealtime;
         // Still on screen: we have not been stopped since we were last shown.
         final boolean stillShowing = mStoppedAtElapsedRealtime <= mShownAtElapsedRealtime;
-        final boolean inWindow = sinceShown < TOGGLE_PREVIOUS_TIMEOUT_MS;
         if (DEBUG) {
             Log.d(TAG, "onNewIntent: stillShowing=" + stillShowing + " finishing=" + isFinishing()
-                    + " sinceShownMs=" + sinceShown + " inWindow=" + inWindow
-                    + " tasks=" + mTasks.size());
+                    + " sinceShownMs=" + sinceShown + " tasks=" + mTasks.size());
         }
-        if (stillShowing && !isFinishing() && inWindow && quickSwitchToPreviousTask()) {
+        // IchthysOS: no time limit. A second press while recents is still up always switches,
+        // as in stock Quickstep, where OverviewCommandHelper.TOGGLE_PREVIOUS_TIMEOUT_MS only picks
+        // which task to go to; a 5 s gate here made a later press just reload the list.
+        if (stillShowing && !isFinishing() && quickSwitchToPreviousTask()) {
             return;
         }
         if (DEBUG) {
-            Log.d(TAG, "onNewIntent: not consumed as double-tap, refreshing");
+            Log.d(TAG, "onNewIntent: not consumed as double-tap, refresh in onResume");
         }
-        loadTasks();
+        // IchthysOS: no loadTasks() here; onResume always follows a new intent and reloads.
     }
 
     @Override
     protected void onStop() {
         super.onStop();
         mStoppedAtElapsedRealtime = SystemClock.elapsedRealtime();
+        if (sShowing != null && sShowing.get() == this) {
+            sShowing = null;
+        }
+        // IchthysOS: this singleInstance activity lingers after Home; don't keep up to 20
+        // full-screen snapshots alive meanwhile. onResume reloads the list anyway.
+        ++mThumbnailGeneration;
+        mTasks.clear();
+        mAdapter.notifyDataSetChanged();
+    }
+
+    @Override
+    protected void onDestroy() {
+        mDestroyed = true;
+        if (mThumbnailExecutor != null) {
+            // Queued work (a clear all) still runs; a snapshot pass stops at the next task.
+            mThumbnailExecutor.shutdown();
+        }
+        if (sShowing != null && sShowing.get() == this) {
+            sShowing = null;
+        }
+        super.onDestroy();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
         mShownAtElapsedRealtime = SystemClock.elapsedRealtime();
+        sShowing = new WeakReference<>(this);
         // Always refresh when shown (including when a singleInstance task is brought to front).
         loadTasks();
+        // IchthysOS: an Alt release that beat us to the screen (quick Alt+Tab).
+        final long releasedAt = sAltTabReleasedAt;
+        sAltTabReleasedAt = 0;
+        if (releasedAt != 0
+                && SystemClock.elapsedRealtime() - releasedAt < ALT_TAB_RELEASE_PENDING_MS) {
+            launchFocusedOrPrevious();
+        }
     }
 
     /**
@@ -309,7 +493,7 @@ public class LegacyRecentsActivity extends Activity {
                             ActivityManager.getCurrentUser());
             PackageManager pm = getPackageManager();
             for (ActivityManager.RecentTaskInfo info : infos) {
-                if (info.taskId < 0 || isExcluded(info)) {
+                if (info.taskId < 0 || isExcluded(info, getPackageName())) {
                     continue;
                 }
                 TaskItem item = toItem(info, pm);
@@ -324,18 +508,60 @@ public class LegacyRecentsActivity extends Activity {
             Log.e(TAG, "Failed to load recent tasks", e);
         }
         mAdapter.notifyDataSetChanged();
+        refreshEmptyState();
+        if (!mTasks.isEmpty()) {
+            mRecyclerView.scrollToPosition(0); // index 0 == most recent == bottom
+        }
+        loadThumbnailsAsync();
+    }
+
+    private void refreshEmptyState() {
         boolean empty = mTasks.isEmpty();
         mEmptyView.setVisibility(empty ? View.VISIBLE : View.GONE);
         mRecyclerView.setVisibility(empty ? View.GONE : View.VISIBLE);
-        if (!empty) {
-            mRecyclerView.scrollToPosition(0); // index 0 == most recent == bottom
-        }
+        mClearAll.setVisibility(empty ? View.GONE : View.VISIBLE);
+    }
+
+    /**
+     * IchthysOS: fetches the loaded tasks' snapshots on {@link #mThumbnailExecutor} and rebinds
+     * each card as its snapshot lands (at its current position, so a dismiss meanwhile is safe).
+     * Cards show the app icon placeholder until then.
+     */
+    private void loadThumbnailsAsync() {
+        final int generation = ++mThumbnailGeneration;
+        final List<TaskItem> items = new ArrayList<>(mTasks);
+        final Handler main = new Handler(getMainLooper());
+        mThumbnailExecutor.execute(() -> {
+            for (TaskItem item : items) {
+                if (mDestroyed) {
+                    return;
+                }
+                Bitmap bitmap = null;
+                try {
+                    bitmap = ActivityManagerWrapper.getInstance()
+                            .getTaskThumbnail(item.taskId, false).getThumbnail();
+                } catch (Exception e) {
+                    // A task can die mid-load; the card keeps its icon placeholder.
+                }
+                final Bitmap loaded = bitmap;
+                main.post(() -> {
+                    if (generation != mThumbnailGeneration || isDestroyed()) {
+                        return; // superseded by a newer load, a clear or onStop
+                    }
+                    item.thumbnail = loaded;
+                    final int index = mTasks.indexOf(item);
+                    if (index >= 0) {
+                        mAdapter.notifyItemChanged(index);
+                    }
+                });
+            }
+        });
     }
 
     /** Skip the home/launcher task and SystemUI's own tasks. */
-    private boolean isExcluded(ActivityManager.RecentTaskInfo info) {
+    private static boolean isExcluded(ActivityManager.RecentTaskInfo info, String ownPackage) {
         ComponentName cn = info.baseActivity != null ? info.baseActivity : info.topActivity;
-        if (cn != null && getPackageName().equals(cn.getPackageName())) {
+        if (cn != null && ownPackage.equals(cn.getPackageName())) {
             return true;
         }
         if (info.baseIntent != null && info.baseIntent.hasCategory(Intent.CATEGORY_HOME)) {
@@ -377,13 +603,8 @@ public class LegacyRecentsActivity extends Activity {
         item.color = (color == 0) ? 0xFF37474F /* blue grey */ : (0xFF000000 | color);
 
         // The app's last-frame snapshot (what Android 7.1.1 showed inside each card).
-        try {
-            item.thumbnail =
-                    ActivityManagerWrapper.getInstance().getTaskThumbnail(item.taskId, false)
-                            .getThumbnail();
-        } catch (Exception e) {
-            item.thumbnail = null;
-        }
+        // IchthysOS: fetched afterwards, off the main thread (loadThumbnailsAsync).
+        item.thumbnail = null;
         return item;
     }
 
@@ -423,8 +644,7 @@ public class LegacyRecentsActivity extends Activity {
         ActivityManagerWrapper.getInstance().removeTask(item.taskId);
         mAdapter.notifyItemRemoved(position);
         if (mTasks.isEmpty()) {
-            mEmptyView.setVisibility(View.VISIBLE);
-            mRecyclerView.setVisibility(View.GONE);
+            refreshEmptyState();
         }
     }
 

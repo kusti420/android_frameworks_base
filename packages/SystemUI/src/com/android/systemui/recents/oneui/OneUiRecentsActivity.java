@@ -30,7 +30,9 @@ import android.os.SystemClock;
 import android.os.UserHandle;
 import android.provider.Settings;
 import android.util.Log;
+import android.view.GestureDetector;
 import android.view.LayoutInflater;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
@@ -46,7 +48,6 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.android.systemui.res.R;
 import com.android.systemui.shared.system.ActivityManagerWrapper;
 
-import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /**
@@ -66,15 +67,6 @@ public class OneUiRecentsActivity extends Activity {
     private static final boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);
 
     private static final String RECENTS_TYPE = "recents_type";
-
-    /**
-     * How long after recents is shown a second recents press still counts as the double-tap
-     * quick-switch gesture. Mirrors Quickstep's
-     * {@code OverviewCommandHelper.TOGGLE_PREVIOUS_TIMEOUT_MS} (5s), which is the window stock uses
-     * to decide that a second press belongs with the first; that constant lives in Launcher3 and is
-     * not on SystemUI's classpath, so it is matched by value.
-     */
-    private static final long TOGGLE_PREVIOUS_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(5);
 
     /**
      * Backdrop blur radius, in dp. One UI blurs the wallpaper behind recents rather than dimming it
@@ -105,6 +97,12 @@ public class OneUiRecentsActivity extends Activity {
     private View mEmptyView;
     private RecentsTaskSource mSource;
     private RecentsStyle mStyle;
+    /**
+     * IchthysOS: the raw recents_type {@link #mStyle} was built for. This activity is
+     * singleInstance and lingers after Home, so a style change made meanwhile is applied by
+     * recreating it the next time it comes back (see {@link #onResume}).
+     */
+    private int mRecentsType;
     private TaskAdapter mAdapter;
 
     private View mRootView;
@@ -164,7 +162,8 @@ public class OneUiRecentsActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
         getWindow().setStatusBarColor(Color.TRANSPARENT);
 
-        mStyle = RecentsStyles.forType(readRecentsType());
+        mRecentsType = readRecentsType();
+        mStyle = RecentsStyles.forType(mRecentsType);
         mSource = new RecentsTaskSource(this);
         if (mStyle.showsWallpaper()) {
             // The 7.x RecentsActivity themes set windowShowWallpaper: the scrimmed home wallpaper,
@@ -278,6 +277,37 @@ public class OneUiRecentsActivity extends Activity {
 
         if (mStyle.dismissOnScrimTap()) {
             findViewById(R.id.oneui_recents_root).setOnClickListener(v -> closeRecents());
+            // IchthysOS: the list is match_parent and takes every touch once it has a layout
+            // manager, so the root's click above only ever fired in the empty state. Close on a
+            // tap that lands between or around the cards too. Styles whose item views fill the
+            // whole list (StackStyle) never have such a gap, so for them this stays inert.
+            final GestureDetector tapOutside = new GestureDetector(this,
+                    new GestureDetector.SimpleOnGestureListener() {
+                        private boolean mDownWhileScrolling;
+
+                        @Override
+                        public boolean onDown(MotionEvent e) {
+                            // A tap that only stops a fling is not a request to close.
+                            mDownWhileScrolling = mRecyclerView.getScrollState()
+                                    != RecyclerView.SCROLL_STATE_IDLE;
+                            return false;
+                        }
+
+                        @Override
+                        public boolean onSingleTapUp(MotionEvent e) {
+                            final View under = mRecyclerView.findChildViewUnder(e.getX(), e.getY());
+                            if (!mDownWhileScrolling && under == null) {
+                                closeRecents();
+                                return true;
+                            }
+                            return false;
+                        }
+                    });
+            // Only reaches the list when no card took the touch; returning false keeps scrolling.
+            mRecyclerView.setOnTouchListener((v, e) -> {
+                tapOutside.onTouchEvent(e);
+                return false;
+            });
         }
         // Back plays the style's exit too, as it did on the originals.
         getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
@@ -330,19 +360,21 @@ public class OneUiRecentsActivity extends Activity {
         final long sinceShown = SystemClock.elapsedRealtime() - mShownAtElapsedRealtime;
         // Still on screen: we have not been stopped since we were last shown.
         final boolean stillShowing = mStoppedAtElapsedRealtime <= mShownAtElapsedRealtime;
-        final boolean inWindow = sinceShown < TOGGLE_PREVIOUS_TIMEOUT_MS;
         if (DEBUG) {
             Log.d(TAG, "onNewIntent: stillShowing=" + stillShowing + " finishing=" + isFinishing()
-                    + " sinceShownMs=" + sinceShown + " inWindow=" + inWindow
-                    + " tasks=" + mSource.size());
+                    + " sinceShownMs=" + sinceShown + " tasks=" + mSource.size());
         }
-        if (stillShowing && !isFinishing() && inWindow && quickSwitchToPreviousTask()) {
+        // IchthysOS: no time limit. A second press while recents is still up always switches,
+        // as in stock Quickstep, where OverviewCommandHelper.TOGGLE_PREVIOUS_TIMEOUT_MS only picks
+        // which task to go to; a 5 s gate here made a later press just reload the list.
+        if (stillShowing && !isFinishing() && quickSwitchToPreviousTask()) {
             return;
         }
         if (DEBUG) {
-            Log.d(TAG, "onNewIntent: not consumed as double-tap, refreshing");
+            Log.d(TAG, "onNewIntent: not consumed as double-tap, refresh in onResume");
         }
-        loadTasks();
+        // IchthysOS: no loadTasks() here. onResume always follows a new intent and reloads
+        // unconditionally, so loading here as well did the whole job twice.
     }
 
     @Override
@@ -354,6 +386,14 @@ public class OneUiRecentsActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        // IchthysOS: the style is picked once in onCreate. If recents_type changed while this
+        // singleInstance activity lingered in the background, rebuild it for the new style
+        // instead of showing the old one until SystemUI happens to drop it.
+        if (readRecentsType() != mRecentsType) {
+            if (DEBUG) Log.d(TAG, "onResume: recents_type changed, recreating");
+            recreate();
+            return;
+        }
         // Coming back on screen (first show, or re-fronted after being stopped) gets the style's
         // entrance; a resume while still showing (the second half of a double tap, a refresh)
         // does not.
@@ -478,6 +518,15 @@ public class OneUiRecentsActivity extends Activity {
     }
 
     @Override
+    protected void onDestroy() {
+        // IchthysOS: stop the per-instance snapshot thread; a new one comes with each onCreate.
+        if (mSource != null) {
+            mSource.destroy();
+        }
+        super.onDestroy();
+    }
+
+    @Override
     public void onAttachedToWindow() {
         super.onAttachedToWindow();
         getSystemService(WindowManager.class)
@@ -530,6 +579,8 @@ public class OneUiRecentsActivity extends Activity {
         mSource.loadThumbnailsAsync(mRecyclerView.getHandler() != null
                         ? mRecyclerView.getHandler() : new Handler(getMainLooper()),
                 position -> {
+                    // The source reports the item's current position, so a dismiss while the
+                    // snapshots load does not send one to the wrong card.
                     if (position >= 0 && position < mAdapter.getItemCount()) {
                         mAdapter.notifyItemChanged(position);
                     }

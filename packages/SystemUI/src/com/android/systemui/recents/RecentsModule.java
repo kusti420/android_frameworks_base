@@ -69,8 +69,8 @@ public abstract class RecentsModule {
     // Custom Options: user-selectable recents implementation.
     // recents_type: 0 = Stock (Launcher overview), 1 = Classic (revived vertical recents),
     // 2 = Slim (imported Slim Recents), 3 = Grace UX cascade (Samsung 7.1.1), 4 = Grid,
-    // 5 = Stack, 6 = List, 7 = Slim list. Read on every recents request (see
-    // SelectableRecentsImpl), so changing it applies at once.
+    // 5 = Stack, 6 = List, 7 = Slim list, 8 = Samsung Grace UX stack. Read on every recents
+    // request (see SelectableRecentsImpl), so changing it applies at once.
     private static final String RECENTS_TYPE = "recents_type";
     private static final int RECENTS_STOCK = 0;
     private static final int RECENTS_CLASSIC = 1;
@@ -79,7 +79,7 @@ public abstract class RecentsModule {
     @Provides
     public static RecentsImplementation provideRecentsImpl(Context context,
             ContextComponentHelper componentHelper) {
-        // recents_type 1 (Classic) is served by LegacyRecentsImpl; 2 (Slim) and 3-7 (the
+        // recents_type 1 (Classic) is served by LegacyRecentsImpl; 2 (Slim) and 3-8 (the
         // card-list styles) are driven entirely from the launcher's Quickstep
         // (OverviewCommandHelper -> slimrecent.RecentController / OneUiRecentsActivity), which
         // the stock component below forwards to.

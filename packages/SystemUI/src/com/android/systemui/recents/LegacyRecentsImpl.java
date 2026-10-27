@@ -50,6 +50,17 @@ public class LegacyRecentsImpl implements RecentsImplementation {
         showRecents();
     }
 
+    /**
+     * IchthysOS: Alt released after Alt+Tab. Like stock's Keyboard Quick Switch, that picks an
+     * app: the focused card, or the previous app. A release caused by the Home key does not.
+     */
+    @Override
+    public void hideRecentApps(boolean triggeredFromAltTab, boolean triggeredFromHomeKey) {
+        if (triggeredFromAltTab && !triggeredFromHomeKey) {
+            LegacyRecentsActivity.onAltTabReleased();
+        }
+    }
+
     private void showRecents() {
         if (mContext == null) {
             return;
