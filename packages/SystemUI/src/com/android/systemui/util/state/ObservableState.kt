@@ -114,6 +114,18 @@ class SynchronouslyObservableStateMap<K, V, T>(private val selector: (Map<K, V>)
         internalState.value = selector(valuesMap)
     }
 
+    /**
+     * IchthysOS: removes every key but [key], only if [key] itself holds a value (otherwise the
+     * map is left alone). Returns the keys that were removed.
+     */
+    fun retainOnly(key: K): Set<K> {
+        if (key !in valuesMap || valuesMap.size == 1) return emptySet()
+        val removed = valuesMap.keys.filterTo(mutableSetOf()) { it != key }
+        valuesMap.keys.retainAll { it == key }
+        internalState.value = selector(valuesMap)
+        return removed
+    }
+
     override fun observe(
         sendCurrentValue: Boolean,
         observer: (value: T) -> Unit,

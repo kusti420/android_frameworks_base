@@ -499,6 +499,24 @@ constructor(
             }
             .distinctUntilChanged()
 
+    /**
+     * IchthysOS: the scene the container rests on with no overlay and no transition, or null while
+     * anything moves. Drives [dropStalePlaceholderValues].
+     */
+    val restingScene: Flow<SceneKey?> =
+        combine(sceneInteractor.transitionStateFlow, sceneInteractor.currentOverlays) {
+                state,
+                overlays ->
+                if (state is Idle && overlays.isEmpty()) state.currentScene else null
+            }
+            .distinctUntilChanged()
+
+    private val placeholderStorage = placeholderStateStorage
+
+    /** IchthysOS: see [NotificationPlaceholderStateStorage.dropStaleValues]. */
+    fun dropStalePlaceholderValues(scene: SceneKey): Set<ContentKey> =
+        placeholderStorage.dropStaleValues(scene)
+
     /** Y coordinate for the top of the notification stack, including the scroll offset. */
     val stackScrollTop: ObservableState<Float> = placeholderStateStorage.stackScrollTop
 

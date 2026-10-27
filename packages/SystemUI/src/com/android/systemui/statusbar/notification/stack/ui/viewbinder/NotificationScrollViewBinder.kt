@@ -38,6 +38,7 @@ import com.android.systemui.util.kotlin.launchAndDispose
 import javax.inject.Inject
 import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.DisposableHandle
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filter
 
@@ -145,6 +146,29 @@ constructor(
             launch {
                 viewModel.suppressHeightUpdates.collectTraced { view.suppressHeightUpdates(it) }
             }
+            // IchthysOS: once the scene container settles, a placeholder value left behind by a
+            // content that is no longer shown must never keep the stack where that content had it
+            // (the stack was seen drawn over QS after a rejected, chained swipe). Wait for the
+            // outgoing content's last frame, drop such values, then re-apply what is current in
+            // case the view missed an update.
+            launch {
+                viewModel.restingScene.collectLatestTraced { scene ->
+                    if (scene == null) return@collectLatestTraced
+                    // A second, later pass catches a value written by a late final frame.
+                    for (wait in STALE_CHECK_DELAYS_MS) {
+                        delay(wait)
+                        val dropped = viewModel.dropStalePlaceholderValues(scene)
+                        if (dropped.isNotEmpty()) {
+                            Log.w(TAG, "resting on $scene: dropped stale stack values of $dropped")
+                        }
+                        view.setStackScrollTop(viewModel.stackScrollTop.value)
+                        view.updateStackBounds(viewModel.stackBounds.value)
+                        view.setHeadsUpTop(viewModel.headsUpBounds.value.top)
+                        view.setHeadsUpBottom(viewModel.headsUpBounds.value.bottom)
+                        view.setPlaceholderAlpha(viewModel.stackPlaceholderAlpha.value)
+                    }
+                }
+            }
 
             launch {
                 viewModel.sidePaddingConfig.collectLatestTraced {
@@ -200,3 +224,8 @@ constructor(
             }
         }
 }
+
+private const val TAG = "NotifScrollViewBinder"
+
+/** IchthysOS: how long the outgoing content gets to unplace before each stale check. */
+private val STALE_CHECK_DELAYS_MS = longArrayOf(120L, 500L)

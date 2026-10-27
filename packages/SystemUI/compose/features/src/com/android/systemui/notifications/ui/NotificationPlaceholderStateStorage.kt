@@ -122,6 +122,23 @@ constructor(
         stackScale.remove(contentKey)
     }
 
+    /**
+     * IchthysOS: once the scene container rests on [contentKey] with nothing over it, a value
+     * still stored for any other content is stale: that content is no longer shown, so its
+     * placeholder should have reset it on unplace. Interrupted, chained scene changes (a swipe
+     * rejected by falsing, then lockscreen -> shade -> QS) could leave one behind, and because
+     * the highest content wins, the stack was then drawn where that content had put it (on top
+     * of QS). Drops those values; each map is only touched when [contentKey] has its own value.
+     * Returns the contents whose values were dropped.
+     */
+    fun dropStaleValues(contentKey: ContentKey): Set<ContentKey> {
+        return stackScrollTop.retainOnly(contentKey) +
+            stackBounds.retainOnly(contentKey) +
+            hunBounds.retainOnly(contentKey) +
+            stackAlpha.retainOnly(contentKey) +
+            stackScale.retainOnly(contentKey)
+    }
+
     override fun dump(pw: PrintWriter, args: Array<out String>) {
         pw.println("stackScrollTop: $stackScrollTop")
         pw.println("stackBounds: $stackBounds")
