@@ -413,6 +413,13 @@ def reserved_bindings(out):
     """(store, key) bound by the hand-written options, and every key they mention."""
     bound, keys = set(), set()
     d = os.path.dirname(os.path.abspath(out))
+    # IchthysOS: without IchthysOptions.java beside the output, every option it binds came out a
+    # second time (generating into a scratch dir did that) and IchthysConfigService refused the
+    # schema on every boot. So it must be there.
+    if not os.path.exists(os.path.join(d, 'IchthysOptions.java')):
+        sys.exit('gen_crdroid_options: no IchthysOptions.java next to %s; write the output into '
+                 'core/java/com/android/internal/ichthys/config/ (or a copy of that directory)'
+                 % out)
     for name in ('IchthysOptions.java', 'IchthysShields.java'):
         f = os.path.join(d, name)
         if not os.path.exists(f):
