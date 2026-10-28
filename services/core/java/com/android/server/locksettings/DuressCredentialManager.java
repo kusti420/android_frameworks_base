@@ -404,6 +404,15 @@ class DuressCredentialManager {
         }
         DuressData data = DuressData.fromBytes(mStorage.readDuressCredentialData(userId));
         if (data == null) {
+            // Not armed: derive a key anyway, against a throwaway salt, so a failed attempt takes
+            // as long as when a code is set (the time would otherwise tell whether one is).
+            DuressData decoy = new DuressData();
+            decoy.credentialType = credential.getType();
+            decoy.scryptLogN = SCRYPT_LOG_N;
+            decoy.scryptLogR = SCRYPT_LOG_R;
+            decoy.scryptLogP = SCRYPT_LOG_P;
+            decoy.salt = randomBytes(SALT_LENGTH);
+            ArrayUtils.zeroize(hash(credential, decoy));
             return;
         }
         if (credential.getType() != data.credentialType) {
