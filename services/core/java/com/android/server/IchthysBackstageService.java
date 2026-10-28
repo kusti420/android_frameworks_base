@@ -218,6 +218,8 @@ public final class IchthysBackstageService {
     private final ConcurrentHashMap<String, Long> mUserOpenedAt = new ConcurrentHashMap<>();
     /** package -> when a hidden app last started an activity of it itself (elapsed ms). */
     private final ConcurrentHashMap<String, Long> mSelfStartedAt = new ConcurrentHashMap<>();
+    /** The next Entry.serial. mHandler only. */
+    private int mNextSerial;
     /** How recent a start must be to explain a task coming forward. */
     private static final long START_EXPLAINS_MS = 3000;
 
@@ -266,6 +268,8 @@ public final class IchthysBackstageService {
         final IntentFilter actions = new IntentFilter();
         actions.addAction(ACTION_BRING_BACK);
         actions.addAction(ACTION_STOP);
+        // actionIntent() puts the package in the data.
+        actions.addDataScheme("package");
         mContext.registerReceiver(new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
@@ -453,7 +457,7 @@ public final class IchthysBackstageService {
             Slog.w(TAG, pkg + " has no launcher activity, not sending to Backstage");
             return;
         }
-        final Entry entry = new Entry(pkg);
+        final Entry entry = new Entry(pkg, mNextSerial++);
         mEntries.put(pkg, entry);
         if (findTask(pkg, Display.DEFAULT_DISPLAY) != null) {
             hide(entry);
