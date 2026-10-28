@@ -27,6 +27,7 @@ import android.os.IBinder;
 import android.stats.location.LocationStatsEnums;
 import android.util.Log;
 
+import com.android.server.location.IchthysLocationNoFix;
 import com.android.server.location.gnss.hal.GnssNative;
 import com.android.server.location.injector.AppOpsHelper;
 import com.android.server.location.injector.Injector;
@@ -158,8 +159,12 @@ public class GnssStatusProvider extends
     @Override
     public void onReportSvStatus(GnssStatus gnssStatus) {
         deliverToListeners(registration -> {
-            if (mAppOpsHelper.noteOpNoThrow(AppOpsManager.OP_FINE_LOCATION,
-                    registration.getIdentity())) {
+            // IchthysOS "No location": the satellites in view and their signal give the position
+            // away too (GnssNmeaProvider does the same); checked at delivery, so a registration
+            // made before the app was listed stops getting them.
+            if (!IchthysLocationNoFix.isNoFix(registration.getIdentity())
+                    && mAppOpsHelper.noteOpNoThrow(AppOpsManager.OP_FINE_LOCATION,
+                            registration.getIdentity())) {
                 return listener -> listener.onSvStatusChanged(gnssStatus);
             } else {
                 return null;
