@@ -151,13 +151,14 @@ object KeyguardSettingsViewBinder {
             .withStartAction {
                 if (visible) {
                     alpha = 0f
-                    isVisible = true
+                    visibility = View.VISIBLE
                 }
             }
             .alpha(if (visible) 1f else 0f)
             .withEndAction {
                 if (!visible) {
-                    isVisible = false
+                    // IchthysOS: invisible keeps the menu measured (see SettingsMenuElementProvider).
+                    visibility = View.INVISIBLE
                 }
             }
             .start()

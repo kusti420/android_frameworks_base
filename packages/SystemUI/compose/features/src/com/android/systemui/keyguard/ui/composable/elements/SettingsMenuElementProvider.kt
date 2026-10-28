@@ -77,7 +77,10 @@ constructor(
                 LayoutInflater.from(context)
                     .inflate(R.layout.keyguard_settings_popup_menu, null)
                     .apply {
-                        isVisible = false
+                        // IchthysOS: invisible, not gone: a gone view measures nothing, so the
+                        // menu's reported bounds were only its padding, every tap on the button
+                        // counted as "outside" and closed it before it could be pressed.
+                        visibility = android.view.View.INVISIBLE
                         alpha = 0f
 
                         setDisposableHandle(

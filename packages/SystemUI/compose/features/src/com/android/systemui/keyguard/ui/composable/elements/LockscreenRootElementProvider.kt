@@ -342,9 +342,15 @@ private fun LockscreenScope<ContentScope>.LockscreenSceneLayout(
                 constraints.maxHeight - lowerRegionPlaceable.measuredHeight,
             )
 
+            // IchthysOS: above an under-display fingerprint sensor that sits at the bottom (the
+            // A52s): there the sensor's touch area took the taps and "Customize lock screen"
+            // could not be pressed.
+            val menuBottom =
+                if (isUdfpsSupported) minOf(constraints.maxHeight, lockIconBounds.top)
+                else constraints.maxHeight
             settingsMenuPlaceable.placeRelative(
                 (constraints.maxWidth - settingsMenuPlaceable.measuredWidth) / 2,
-                constraints.maxHeight - settingsMenuPlaceable.measuredHeight,
+                menuBottom - settingsMenuPlaceable.measuredHeight,
             )
         }
     }
