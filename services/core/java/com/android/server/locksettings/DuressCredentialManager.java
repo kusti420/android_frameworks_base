@@ -127,16 +127,7 @@ class DuressCredentialManager {
      */
     private static final String WIPE_REASON = "emergency_wipe";
 
-    // Metadata encryption key directory, taken from this device's fstab:
-    //   device/samsung/sm7325-common/init/fstab.qcom -> /data ... keydirectory=/metadata/vold/
-    //   metadata_encryption
-    // Verified rather than guessed: a wrong path here fails silently and leaves the block-layer
-    // key intact, which is the one thing this step exists to remove.
-    private static final String[] METADATA_KEY_DIRS = {
-        "/metadata/vold/metadata_encryption",
-    };
-
-    /** How long to wait for the recovery bootloader-control-block to be armed before rebooting. */
+    /** How long to wait for the recovery wipe to be armed before the keys are destroyed. */
     private static final long BCB_SETUP_TIMEOUT_MS = 4000;
 
     private final Context mContext;
@@ -272,6 +263,10 @@ class DuressCredentialManager {
         if (duressCredential.equals(realCredential)) {
             return SET_RESULT_SAME_AS_REAL;
         }
+        // Nor one slip away from it: a typo of the real PIN or password would wipe the device.
+        if (isOneSlipAway(duressCredential, realCredential)) {
+            return SET_RESULT_SAME_AS_REAL;
+        }
 
         DuressData data = new DuressData();
         data.credentialType = duressCredential.getType();
@@ -289,6 +284,62 @@ class DuressCredentialManager {
             ArrayUtils.zeroize(data.hash);
         }
         return SET_RESULT_OK;
+    }
+
+    /**
+     * Whether {@code a} is one typing slip from {@code b}: one character wrong, missing or extra,
+     * or two neighbours swapped; for passwords also a difference in letter case only.
+     */
+    private static boolean isOneSlipAway(@NonNull LockscreenCredential a,
+            @NonNull LockscreenCredential b) {
+        final byte[] x = a.getCredential();
+        final byte[] y = b.getCredential();
+        final boolean foldCase = a.isPassword();
+        if (foldCase && x.length == y.length) {
+            boolean caseOnly = true;
+            for (int i = 0; i < x.length && caseOnly; i++) {
+                caseOnly = lower(x[i]) == lower(y[i]);
+            }
+            if (caseOnly) {
+                return true;
+            }
+        }
+        if (Math.abs(x.length - y.length) > 1) {
+            return false;
+        }
+        int i = 0;
+        while (i < x.length && i < y.length && x[i] == y[i]) {
+            i++;
+        }
+        if (x.length == y.length) {
+            if (i == x.length) {
+                return true;
+            }
+            // One wrong character, or two neighbours swapped; the rest must match.
+            if (tailEquals(x, i + 1, y, i + 1)) {
+                return true;
+            }
+            return i + 1 < x.length && x[i] == y[i + 1] && x[i + 1] == y[i]
+                    && tailEquals(x, i + 2, y, i + 2);
+        }
+        // One character missing or extra.
+        return x.length > y.length ? tailEquals(x, i + 1, y, i) : tailEquals(x, i, y, i + 1);
+    }
+
+    private static boolean tailEquals(byte[] x, int i, byte[] y, int j) {
+        if (x.length - i != y.length - j) {
+            return false;
+        }
+        for (; i < x.length; i++, j++) {
+            if (x[i] != y[j]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static int lower(byte c) {
+        return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c;
     }
 
     /** Removes any duress credential configured for the given user. */
@@ -406,9 +457,12 @@ class DuressCredentialManager {
      * <p>Order of operations, most-irreversible first:
      *
      * <ol>
-     *   <li>In parallel, arm the recovery bootloader control block with {@code --wipe_data}.  This
-     *       only writes the {@code misc} partition; it does not touch {@code /data} and it does not
-     *       touch any external or public volume.
+     *   <li>Arm the recovery bootloader control block with {@code --wipe_data}, and wait for it
+     *       (at most {@link #BCB_SETUP_TIMEOUT_MS}).  This only writes the {@code misc} partition;
+     *       it does not touch {@code /data} and it does not touch any external or public volume.
+     *       It has to come first: destroying the system user's keys can kill this process before
+     *       anything after it runs, and with the wipe armed any reboot after that, crash or not,
+     *       lands in the reset.
      *   <li>Destroy the file-based-encryption CE and DE keys of every user (vold
      *       {@code destroyUserStorageKeys}).  This evicts the keys from the kernel keyring, deletes
      *       the KeyMint-wrapped key blobs from Keystore, and {@code secdiscard}s the on-flash
@@ -447,10 +501,17 @@ class DuressCredentialManager {
 
         final long identity = Binder.clearCallingIdentity();
         try {
-            // (1) Arm recovery in parallel.  Independent of vold, and does not touch /data.
+            // (1) Arm recovery first, and wait for it (bounded): step 2 can kill this process
+            // before anything after it runs, and every reboot from then on must land in the reset.
+            // Independent of vold, and does not touch /data.
             Thread bcbThread = new Thread(this::armRecoveryWipe, "DuressBcb");
             bcbThread.setDaemon(true);
             bcbThread.start();
+            try {
+                bcbThread.join(BCB_SETUP_TIMEOUT_MS);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
 
             // (2) Crypto-erase.  This is the part that must not be interruptible.
             destroyAllStorageKeys();
@@ -462,27 +523,8 @@ class DuressCredentialManager {
                 // Best effort.
             }
 
-            try {
-                bcbThread.join(BCB_SETUP_TIMEOUT_MS);
-            } catch (InterruptedException ignored) {
-                Thread.currentThread().interrupt();
-            }
-
-            // (4) Destroy the metadata encryption key.  MUST be last: /data is encrypted at the
-            // block layer with this key (dm-default-key), so removing it makes /data unmountable
-            // immediately and kills everything still running, including this method.
-            //
-            // Without this, an interrupted wipe leaves a *mountable* filesystem: FBE has already
-            // made file contents and names unrecoverable, but the structure still leaks - directory
-            // tree, file sizes, timestamps, and which app packages exist.  With it gone the
-            // partition is indistinguishable from random data.  It also means no single failure
-            // (e.g. a stale FBE key blob left behind by flash wear levelling) exposes anything.
-            //
-            // Recovery's --wipe_data erases /metadata anyway; doing it here closes the window
-            // where the reset is prevented from completing.
-            destroyMetadataEncryptionKey();
-
-            // (5) Reboot.  /data is unreadable from here on, so nothing else can run.
+            // (4) Reboot.  The metadata encryption key under /metadata/vold is vold's alone
+            // (root 0700, vold_metadata_file): recovery's --wipe_data reformats /metadata with it.
             rebootToRecovery();
         } finally {
             Binder.restoreCallingIdentity(identity);
@@ -527,7 +569,7 @@ class DuressCredentialManager {
     /**
      * Writes {@code --wipe_data} into the bootloader control block on the {@code misc} partition so
      * that the next boot lands in recovery and reformats {@code /data}.  Best effort: the
-     * crypto-erase above has already made the data unrecoverable regardless.
+     * crypto-erase that follows makes the data unrecoverable regardless.
      */
     private void armRecoveryWipe() {
         try {
@@ -538,68 +580,13 @@ class DuressCredentialManager {
             }
             // NOTE: --wipe_data only.  Never --wipe_media (would erase adopted/emulated media) and
             // never --wipe_euicc.  Recovery erases /data, /cache and /metadata and nothing else.
-            rs.setupBcb("--wipe_data\n--reason=" + WIPE_REASON + "\n");
+            final String command = "--wipe_data\n--reason=" + WIPE_REASON + "\n";
+            if (!rs.setupBcb(command)) {
+                // One retry: uncrypt can lose the race for its socket right after boot.
+                rs.setupBcb(command);
+            }
         } catch (Exception e) {
             // Best effort.
-        }
-    }
-
-    /**
-     * Destroys the metadata encryption key, the key {@code dm-default-key} uses to encrypt the
-     * whole {@code /data} block device beneath FBE.
-     *
-     * <p>Best effort, and deliberately the very last thing before the reboot: the moment the key is
-     * gone {@code /data} cannot be read, so anything still running dies. Overwrite before unlink so
-     * the bytes are not merely unlinked, then {@code fsync} the directory.
-     *
-     * <p>The path comes from the fstab {@code metadata_key_dir} option; on this device that is
-     * {@code /metadata/vold/metadata_encryption}, with the key blob at {@code <dir>/key}.
-     */
-    private void destroyMetadataEncryptionKey() {
-        for (String dir : METADATA_KEY_DIRS) {
-            try {
-                java.io.File keyDir = new java.io.File(dir);
-                if (!keyDir.exists()) {
-                    continue;
-                }
-                java.io.File[] files = keyDir.listFiles();
-                if (files != null) {
-                    for (java.io.File f : files) {
-                        shredFile(f);
-                    }
-                }
-            } catch (Exception e) {
-                // Best effort: the FBE keys are already gone, so the data is unrecoverable
-                // regardless of whether this succeeds.
-            }
-        }
-    }
-
-    /** Overwrites a file's bytes, syncs, then unlinks it. */
-    private void shredFile(@NonNull java.io.File f) {
-        if (f.isDirectory()) {
-            java.io.File[] children = f.listFiles();
-            if (children != null) {
-                for (java.io.File c : children) {
-                    shredFile(c);
-                }
-            }
-        } else {
-            try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(f, "rws")) {
-                long len = raf.length();
-                byte[] zeros = new byte[4096];
-                for (long off = 0; off < len; off += zeros.length) {
-                    raf.write(zeros, 0, (int) Math.min(zeros.length, len - off));
-                }
-                raf.getFD().sync();
-            } catch (Exception e) {
-                // Fall through to unlink.
-            }
-        }
-        try {
-            f.delete();
-        } catch (Exception e) {
-            // Nothing further to try.
         }
     }
 
