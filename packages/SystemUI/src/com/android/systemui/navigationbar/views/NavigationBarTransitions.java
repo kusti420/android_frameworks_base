@@ -112,8 +112,11 @@ public final class NavigationBarTransitions extends BarTransitions implements
     protected void applyModeBackground(int oldMode, int newMode, boolean animate) {
         // Custom Options "pitch black": keep the nav bar background opaque black at all times.
         // IchthysOS: gate on the Abyss palette rather than custom_pitch_black.
-        if (mIchthysInk || Settings.Secure.getInt(
-                mView.getContext().getContentResolver(), "theme_engine_style_mode", 0) == 1) {
+        if (mIchthysInk || (Settings.Secure.getInt(
+                mView.getContext().getContentResolver(), "theme_engine_style_mode", 0) == 1
+                && (mView.getContext().getResources().getConfiguration().uiMode
+                        & android.content.res.Configuration.UI_MODE_NIGHT_MASK)
+                        == android.content.res.Configuration.UI_MODE_NIGHT_YES)) {
             oldMode = MODE_OPAQUE_DARK;
             newMode = MODE_OPAQUE_DARK;
             animate = false;

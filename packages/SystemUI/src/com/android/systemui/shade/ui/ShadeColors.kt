@@ -29,7 +29,10 @@ object ShadeColors {
      * drives the bottom rung of the surface ladder, which these colours read through.
      */
     private fun isPitchBlack(context: Context): Boolean =
-        Settings.Secure.getInt(context.contentResolver, "theme_engine_style_mode", 0) == 1
+        Settings.Secure.getInt(context.contentResolver, "theme_engine_style_mode", 0) == 1 &&
+            (context.resources.configuration.uiMode and
+                android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+                android.content.res.Configuration.UI_MODE_NIGHT_YES
 
     /**
      * IchthysOS: pitch black no longer means flat #000 for every shade surface. ThemeOverlayHelper

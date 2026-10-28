@@ -38,6 +38,17 @@ final class PitchBlackTheme {
     }
 
     /**
+     * IchthysOS: whether the cards go black: the Abyss palette in the dark theme. Abyss is a dark
+     * look; in the light theme black cards under dark text were unreadable.
+     */
+    static boolean blackCards(Context context) {
+        return isEnabled(context)
+                && (context.getResources().getConfiguration().uiMode
+                        & android.content.res.Configuration.UI_MODE_NIGHT_MASK)
+                        == android.content.res.Configuration.UI_MODE_NIGHT_YES;
+    }
+
+    /**
      * IchthysOS "Shoal": theme.surface = hairline (Settings.Secure ichthys_theme_surface) draws a
      * 1 dp outline around each notification card instead of relying on a tonal fill. Unset keeps
      * the stock look.

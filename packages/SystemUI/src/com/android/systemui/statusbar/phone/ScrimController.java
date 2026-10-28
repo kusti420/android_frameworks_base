@@ -1038,8 +1038,12 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, Dump
         debugLog("Applying state: " + mState.name());
         // IchthysOS: gate on the Abyss palette, not custom_pitch_black - the pure-black switch
         // only moves the bottom of the surface ladder now, and these scrims read the ladder.
+        // Abyss is a dark-theme look only.
         mPitchBlack = android.provider.Settings.Secure.getInt(
-                mContext.getContentResolver(), "theme_engine_style_mode", 0) == 1;
+                mContext.getContentResolver(), "theme_engine_style_mode", 0) == 1
+                && (mContext.getResources().getConfiguration().uiMode
+                        & android.content.res.Configuration.UI_MODE_NIGHT_MASK)
+                        == android.content.res.Configuration.UI_MODE_NIGHT_YES;
         mInFrontTint = mState.getFrontTint();
         mBehindTint = mState.getBehindTint();
         mNotificationsTint = mState.getNotifTint();
