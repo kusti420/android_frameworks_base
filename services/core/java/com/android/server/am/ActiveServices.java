@@ -2564,6 +2564,10 @@ public final class ActiveServices {
                                             SystemClock.elapsedRealtime() - (24 * 60 * 60 * 1000));
                                 final long lastTimeOutAt = fgsTypeInfo.getTimeLimitExceededAt();
                                 if (fgsTypeInfo.getFirstFgsStartRealtime() < before24Hr
+                                        // IchthysOS "Unrestricted background": an app picked
+                                        // after it ran out of time starts again at once.
+                                        || IchthysBackgroundExemptions.isFgsTimeLimitExempt(
+                                                r.appInfo.uid)
                                         || r.getHostProcess().getProcState() <= PROCESS_STATE_TOP
                                         || (lastTimeOutAt != Long.MIN_VALUE
                                             && r.getHostProcess().getLastTopTime()

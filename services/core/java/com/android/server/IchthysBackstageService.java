@@ -20,6 +20,7 @@ import android.app.ActivityManager;
 import android.app.ActivityOptions;
 import android.app.ActivityTaskManager;
 import android.app.IActivityTaskManager;
+import android.app.AlarmManager;
 import android.app.KeyguardManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -803,12 +804,21 @@ public final class IchthysBackstageService {
         if (hours <= 0) {
             return;
         }
-        mHandler.postDelayed(() -> {
+        // An elapsed-realtime alarm, not the handler's uptime clock: the hours have to pass
+        // while the phone sleeps too (uptime stops then, and the limit came hours late).
+        final AlarmManager alarms = mContext.getSystemService(AlarmManager.class);
+        final AlarmManager.OnAlarmListener expire = () -> {
             if (mEntries.get(entry.pkg) == entry) {
                 Slog.i(TAG, entry.pkg + " reached the " + hours + " h Backstage limit");
                 stop(entry.pkg);
             }
-        }, hours * HOUR_MS);
+        };
+        if (alarms == null) {
+            mHandler.postDelayed(expire::onAlarm, hours * HOUR_MS);
+            return;
+        }
+        alarms.set(AlarmManager.ELAPSED_REALTIME, SystemClock.elapsedRealtime() + hours * HOUR_MS,
+                "ichthys-backstage-limit", expire, mHandler);
     }
 
     // ---- The hidden displays ----
