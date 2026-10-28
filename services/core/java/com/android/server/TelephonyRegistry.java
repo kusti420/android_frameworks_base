@@ -37,6 +37,8 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.app.role.RoleManager;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.os.Binder;
 import android.os.Build;
@@ -45,6 +47,8 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Message;
 import android.os.Process;
+import android.os.UserManager;
+import android.provider.Settings;
 import android.os.RemoteException;
 import android.os.UserHandle;
 import android.provider.DeviceConfig;
@@ -1690,7 +1694,8 @@ public class TelephonyRegistry extends ITelephonyRegistry.Stub {
 
     private String getCallIncomingNumber(Record record, int phoneId) {
         // Only reveal the incoming number if the record has read call log permission.
-        return record.canReadCallLog() ? mCallIncomingNumber[phoneId] : "";
+        return record.canReadCallLog() && !isCallLogShielded(record)
+                ? mCallIncomingNumber[phoneId] : "";
     }
 
     private Record add(IBinder binder, int callingUid, int callingPid, boolean doesLimitApply) {
@@ -1794,7 +1799,8 @@ public class TelephonyRegistry extends ITelephonyRegistry.Stub {
                         // Ensure the listener has read call log permission; if they do not return
                         // an empty phone number.
                         // This is ONLY for legacy onCallStateChanged in PhoneStateListener.
-                        String phoneNumberOrEmpty = r.canReadCallLog() ? phoneNumber : "";
+                        String phoneNumberOrEmpty =
+                                r.canReadCallLog() && !isCallLogShielded(r) ? phoneNumber : "";
                         r.callback.onLegacyCallStateChanged(state, phoneNumberOrEmpty);
                     } catch (RemoteException ex) {
                         mRemoveList.add(r.binder);
@@ -4585,9 +4591,140 @@ public class TelephonyRegistry extends ITelephonyRegistry.Stub {
         mContext.sendBroadcastAsUser(intent, UserHandle.ALL,
                 android.Manifest.permission.READ_PHONE_STATE,
                 AppOpsManager.OP_READ_PHONE_STATE);
-        mContext.sendBroadcastAsUserMultiplePermissions(intentWithPhoneNumber, UserHandle.ALL,
-                new String[] { android.Manifest.permission.READ_PHONE_STATE,
-                        android.Manifest.permission.READ_CALL_LOG});
+        sendNumberedPhoneStateBroadcast(intentWithPhoneNumber);
+    }
+
+    // ---- IchthysOS: the call-log shield for the numbers of calls as they happen ----
+    // ContactsProvider's IchthysShield.FEATURE_CALL_LOG empties the call log for shielded apps;
+    // the number of each call also reached them live (PHONE_STATE, onCallStateChanged), which
+    // rebuilt the log from then on. Same keys and exemptions: the user's allowlist, preinstalled
+    // apps, the default dialer and SMS app.
+
+    private static final String CALL_LOG_SHIELD = "ichthys_call_log_shield";
+    private static final String CALL_LOG_ALLOWED = "ichthys_call_log_allowed_pkgs";
+
+    /** The PHONE_STATE broadcast with the number, per user, to the apps the shield lets have it. */
+    private void sendNumberedPhoneStateBroadcast(Intent intentWithPhoneNumber) {
+        final String[] permissions = { android.Manifest.permission.READ_PHONE_STATE,
+                android.Manifest.permission.READ_CALL_LOG };
+        final UserManager um = mContext.getSystemService(UserManager.class);
+        if (um == null) {
+            mContext.sendBroadcastAsUserMultiplePermissions(intentWithPhoneNumber, UserHandle.ALL,
+                    permissions);
+            return;
+        }
+        try {
+            for (UserHandle user : um.getUserHandles(/* excludeDying= */ true)) {
+                final String[] included = callLogNumberRecipients(user.getIdentifier());
+                BroadcastOptions options = null;
+                if (included != null) {
+                    options = BroadcastOptions.makeBasic();
+                    options.setIncludedPackages(included);
+                }
+                mContext.createContextAsUser(user, 0).sendBroadcastMultiplePermissions(
+                        intentWithPhoneNumber, permissions, null, null, options);
+            }
+        } catch (RuntimeException e) {
+            // Never at the cost of the call-state broadcast itself: as stock.
+            log("IchthysShield: numbered PHONE_STATE as stock: " + e);
+            mContext.sendBroadcastAsUserMultiplePermissions(intentWithPhoneNumber, UserHandle.ALL,
+                    permissions);
+        }
+    }
+
+    private boolean isCallLogShieldOn(int userId) {
+        return Settings.Secure.getIntForUser(mContext.getContentResolver(), CALL_LOG_SHIELD, 1,
+                userId) != 0;
+    }
+
+    /**
+     * The packages of {@code userId} that may get call numbers: null with the shield off (as
+     * stock). Named, so the runtime receivers of everyone else get nothing either.
+     */
+    private String[] callLogNumberRecipients(int userId) {
+        final long token = Binder.clearCallingIdentity();
+        try {
+            if (!isCallLogShieldOn(userId)) {
+                return null;
+            }
+            final ArrayList<String> out = new ArrayList<>();
+            out.add("android");
+            final PackageManager pm = mContext.createContextAsUser(UserHandle.of(userId), 0)
+                    .getPackageManager();
+            for (ApplicationInfo ai : pm.getInstalledApplications(0)) {
+                if ((ai.flags & (ApplicationInfo.FLAG_SYSTEM
+                        | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0) {
+                    out.add(ai.packageName);
+                }
+            }
+            out.addAll(callLogRoleHolders(userId));
+            final String allowed = Settings.Secure.getStringForUser(mContext.getContentResolver(),
+                    CALL_LOG_ALLOWED, userId);
+            if (!TextUtils.isEmpty(allowed)) {
+                for (String pkg : allowed.split(",")) {
+                    if (!pkg.trim().isEmpty()) out.add(pkg.trim());
+                }
+            }
+            return out.toArray(new String[0]);
+        } catch (RuntimeException e) {
+            log("IchthysShield: call-log recipients unknown, not filtering: " + e);
+            return null;
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+    }
+
+    private List<String> callLogRoleHolders(int userId) {
+        final ArrayList<String> out = new ArrayList<>();
+        final RoleManager roles = mContext.getSystemService(RoleManager.class);
+        if (roles != null) {
+            out.addAll(roles.getRoleHoldersAsUser(RoleManager.ROLE_DIALER, UserHandle.of(userId)));
+            out.addAll(roles.getRoleHoldersAsUser(RoleManager.ROLE_SMS, UserHandle.of(userId)));
+        }
+        return out;
+    }
+
+    /** Whether the record's app may not have call numbers under the call-log shield. */
+    private boolean isCallLogShielded(Record r) {
+        final int uid = r.callerUid;
+        if (UserHandle.getAppId(uid) < Process.FIRST_APPLICATION_UID || r.callingPackage == null) {
+            return false;
+        }
+        final int userId = UserHandle.getUserId(uid);
+        final long token = Binder.clearCallingIdentity();
+        try {
+            if (!isCallLogShieldOn(userId)) {
+                return false;
+            }
+            final String allowed = Settings.Secure.getStringForUser(mContext.getContentResolver(),
+                    CALL_LOG_ALLOWED, userId);
+            if (!TextUtils.isEmpty(allowed)) {
+                for (String pkg : allowed.split(",")) {
+                    if (r.callingPackage.equals(pkg.trim())) return false;
+                }
+            }
+            final PackageManager pm = mContext.createContextAsUser(UserHandle.of(userId), 0)
+                    .getPackageManager();
+            final String[] packages = pm.getPackagesForUid(uid);
+            if (packages != null) {
+                for (String pkg : packages) {
+                    try {
+                        final ApplicationInfo ai = pm.getApplicationInfo(pkg, 0);
+                        if ((ai.flags & (ApplicationInfo.FLAG_SYSTEM
+                                | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0) {
+                            return false;
+                        }
+                    } catch (PackageManager.NameNotFoundException ignored) {
+                        // Gone.
+                    }
+                }
+            }
+            return !callLogRoleHolders(userId).contains(r.callingPackage);
+        } catch (RuntimeException e) {
+            return false;
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
     }
 
     /** Converts TelephonyManager#CALL_STATE_* to TelephonyManager#EXTRA_STATE_*. */
