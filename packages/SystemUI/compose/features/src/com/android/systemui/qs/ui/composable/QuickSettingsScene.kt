@@ -49,7 +49,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -310,8 +309,11 @@ private fun ContentScope.QuickSettingsScene(
         )
 
         if (isAlwaysComposedContentVisible()) {
-            val screenHeight =
-                with(LocalDensity.current) { LocalConfiguration.current.screenHeightDp.dp.toPx() }
+            // IchthysOS: the window's real height, not Configuration.screenHeightDp: that one
+            // leaves out the system bars, so the stack's top sat a navigation bar's height above
+            // the screen's bottom edge and notifications showed in Quick Settings scrolled to its
+            // end. Notifications must never be visible in the Quick Settings scene at rest.
+            val screenHeight = LocalWindowInfo.current.containerSize.height.toFloat()
             /**
              * The minimum possible value for the top of the notification stack. In other words: how
              * high is the notification stack allowed to get when the scene is at rest. It may still

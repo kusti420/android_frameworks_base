@@ -166,7 +166,10 @@ object ShadeHeader {
             replaceWith = ReplaceWith("ShadeHeaderViewModel.statusBarHeightPx"),
         )
         val CollapsedHeightForTransitions = 48.dp
-        val ExpandedHeight = 120.dp
+        // IchthysOS: 98 dp, not 120: the header's content sits at its bottom, so this lifts the
+        // expanded Quick Settings into the status bar strip (empty there but for the privacy
+        // chip), and a full panel fits without scrolling.
+        val ExpandedHeight = 98.dp
         val ChipPaddingHorizontal = 6.dp
         val ChipPaddingVertical = 4.dp
     }
