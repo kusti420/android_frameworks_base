@@ -173,15 +173,29 @@ public final class IchthysHearingController {
         }
 
         try {
+            // IchthysOS: a value counts as applied only when the effect took it; a rejected
+            // curve is pushed again on the retry instead of being remembered as set.
+            boolean ok = true;
             if (!Arrays.equals(gainsMb, mAppliedGainsMb)) {
-                checkParam("band gains",
-                        mEffect.setParameter(PARAM_BAND_GAINS, packInts(gainsMb)));
-                mAppliedGainsMb = gainsMb;
+                if (checkParam("band gains",
+                        mEffect.setParameter(PARAM_BAND_GAINS, packInts(gainsMb)))) {
+                    mAppliedGainsMb = gainsMb;
+                } else {
+                    ok = false;
+                }
             }
             if (makeupMb != mAppliedMakeupMb) {
-                checkParam("makeup gain",
-                        mEffect.setParameter(PARAM_MAKEUP_GAIN, packInts(new int[] {makeupMb})));
-                mAppliedMakeupMb = makeupMb;
+                if (checkParam("makeup gain",
+                        mEffect.setParameter(PARAM_MAKEUP_GAIN, packInts(new int[] {makeupMb})))) {
+                    mAppliedMakeupMb = makeupMb;
+                } else {
+                    ok = false;
+                }
+            }
+            if (!ok) {
+                releaseEffect();
+                scheduleRetry();
+                return;
             }
             if (!mEffect.getEnabled()) {
                 mEffect.setEnabled(true);
@@ -195,10 +209,12 @@ public final class IchthysHearingController {
         }
     }
 
-    private void checkParam(String what, int status) {
+    private boolean checkParam(String what, int status) {
         if (status != AudioEffect.SUCCESS) {
             Slog.w(TAG, "setParameter(" + what + ") returned " + status);
+            return false;
         }
+        return true;
     }
 
     private boolean ensureEffect() {
@@ -218,12 +234,19 @@ public final class IchthysHearingController {
     }
 
     private void scheduleRetry() {
-        if (mRetries++ >= MAX_RETRIES) {
-            Slog.w(TAG, "giving up on attaching the hearing effect for now");
-            return;
+        // IchthysOS: keep trying, backing off (audioserver can take longer than the old 30 s
+        // budget at boot, and the EQ then stayed off until a setting changed).
+        if (mRetries == MAX_RETRIES) {
+            Slog.w(TAG, "hearing effect still not attached; retrying less often");
         }
-        mHandler.postDelayed(this::apply, RETRY_DELAY_MS);
+        final long delay = mRetries < MAX_RETRIES
+                ? RETRY_DELAY_MS : Math.min(RETRY_DELAY_MS * (mRetries - MAX_RETRIES + 2), 60_000L);
+        mRetries++;
+        mHandler.removeCallbacks(mApplyRunnable);
+        mHandler.postDelayed(mApplyRunnable, delay);
     }
+
+    private final Runnable mApplyRunnable = this::apply;
 
     private void releaseEffect() {
         if (mEffect == null) {

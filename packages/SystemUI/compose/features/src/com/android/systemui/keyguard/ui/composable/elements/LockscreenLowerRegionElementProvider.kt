@@ -24,9 +24,11 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -85,6 +87,9 @@ constructor(
                 Box(
                     Modifier.weight(1f)
                         .wrapContentHeight(Alignment.CenterVertically, unbounded = true)
+                        // IchthysOS: the A52s' under-display fingerprint circle sits just above
+                        // this row; centred on the shortcuts, the text ("Charged") touched it.
+                        .offset(y = INDICATION_UDFPS_CLEARANCE)
                 ) {
                     LockscreenElement(IndicationArea)
                 }
@@ -156,3 +161,6 @@ constructor(
         }
     }
 }
+
+/** How far below the shortcuts' middle the indication text sits (clear of the fp circle). */
+private val INDICATION_UDFPS_CLEARANCE = 6.dp
