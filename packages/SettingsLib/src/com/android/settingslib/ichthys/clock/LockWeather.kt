@@ -47,6 +47,9 @@ import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.Executors
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.abs
+import kotlin.math.sin
+import kotlin.math.cos
 import kotlin.math.roundToInt
 
 /**
@@ -654,6 +657,8 @@ constructor(context: Context, attrs: AttributeSet? = null) : View(context, attrs
     private var scale = 1f
     private var offsetX = 0f
     private var marginTop = DEFAULT_MARGIN_TOP
+    /** The clock's turn (degrees), so the line goes under the turned clock's lowest point. */
+    private var rotation = 0f
     private var shown = false
     private val bounds = RectF()
     private var lastBounds: RectF? = null
@@ -713,9 +718,10 @@ constructor(context: Context, attrs: AttributeSet? = null) : View(context, attrs
         dateShown = previewDateShown ?: (secure(KEY_SHOW_DATE, 1) != 0)
         align = previewAlign ?: secure(DepthClockView.KEY_DATE_ALIGN, DepthClockView.ALIGN_CENTRE)
         if (followClock) {
-            scale = secure(KEY_SCALE, 100).coerceIn(50, 150) / 100f
+            scale = secure(KEY_SCALE, 100).coerceIn(40, 180) / 100f
             offsetX = secure(KEY_OFFSET_X, 0).toFloat()
             marginTop = secure(KEY_MARGIN_TOP, DEFAULT_MARGIN_TOP)
+            rotation = secure(KEY_ROTATION, 0).toFloat()
             updateShift()
         }
         val now = data()
@@ -743,7 +749,12 @@ constructor(context: Context, attrs: AttributeSet? = null) : View(context, attrs
         val faceH = max(0f, (clockHeight - padTop).toFloat())
         val anchor = if (depthFace) DepthFaceAnchor.underTop else Float.NaN
         val bottom = if (anchor.isNaN()) faceH else anchor
-        val shift = (padTop + bottom * scale - clockHeight).roundToInt()
+        // IchthysOS: a turned clock reaches lower on one side than its box does: the line goes
+        // under that, not into the digits (it used to sit over or above them).
+        val half = max(0f, resources.displayMetrics.widthPixels / 2f - dp(SIDE_DP)) * scale
+        val turn = Math.toRadians(rotation.toDouble())
+        val drop = (half * abs(sin(turn)) - bottom * scale / 2f * (1 - abs(cos(turn)))).toFloat()
+        val shift = (padTop + bottom * scale + max(0f, drop) - clockHeight).roundToInt()
         if (shift != lastShift) {
             lastShift = shift
             onShift?.invoke(shift)
@@ -772,7 +783,9 @@ constructor(context: Context, attrs: AttributeSet? = null) : View(context, attrs
             if (slot == SLOT_TOP) return dp(TOP_INSET_DP) to w - dp(TOP_INSET_DP)
             val centre = w / 2f + offsetX
             val half = max(0f, w / 2f - dp(SIDE_DP)) * scale
-            return centre - half to centre + half
+            // IchthysOS: never past the screen's side margins (a moved or enlarged clock put the
+            // line partly off the screen).
+            return max(dp(SIDE_DP), centre - half) to min(w - dp(SIDE_DP), centre + half)
         }
         val l = if (spanLeft >= 0f) spanLeft else 0f
         val r = if (spanRight >= 0f) spanRight else w.toFloat()
@@ -879,12 +892,13 @@ constructor(context: Context, attrs: AttributeSet? = null) : View(context, attrs
         private const val KEY_SCALE = "lock_screen_custom_clock_size_scale"
         private const val KEY_OFFSET_X = "ichthys_clock_offset_x"
         private const val KEY_MARGIN_TOP = "lock_screen_custom_clock_margin_top"
+        private const val KEY_ROTATION = "ichthys_clock_rotation"
         private const val DEPTH_STYLE = 80
         private const val BASE_TOP_DP = 72
         private const val DEFAULT_MARGIN_TOP = 15
         private const val SIDE_DP = 24f
         private val CLOCK_KEYS =
             arrayOf(KEY_STYLE, KEY_SHOW_DATE, KEY_SCALE, KEY_OFFSET_X, KEY_MARGIN_TOP,
-                DepthClockView.KEY_DATE_ALIGN)
+                KEY_ROTATION, DepthClockView.KEY_DATE_ALIGN)
     }
 }

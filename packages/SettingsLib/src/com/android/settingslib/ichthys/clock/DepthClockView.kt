@@ -932,7 +932,11 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
     private fun shapedPath(natural: Path): Path {
         val profile = previewOutline ?: SubjectOutline.current
         val skyline = profile?.skyline == true
-        val fit = depthMode != DEPTH_OFF || skyline
+        // IchthysOS: the clock keeps the place and size the owner gave it. Fitting it above the
+        // subject (shrinking, sliding it aside, reflowing the digits) made it change size and
+        // move by itself; with depth on, the subject now just stands in front of it. Only the
+        // Shape mode, which asks for it, still fits the clock to the outline.
+        val fit = depthMode == DEPTH_SHAPE
         val place = if (fit && profile != null) placement() else null
         if (place == null || place[2] <= 0f || profile == null) {
             if (context.packageName == "com.android.systemui") {
@@ -1361,10 +1365,8 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
      * IchthysOS polish (after a draw): the content rectangle and where the weather line under the
      * clock goes ([underTop]):
      * - Shape: right under the shaped digits (which kept room for it above the subject).
-     * - Overlap / X-ray with a subject: under the digits if it fits above the subject there,
-     *   else just above the subject's top, but never higher than under the hours; when even
-     *   under the hours would put it on the subject, above the clock (and its date line).
-     * - Otherwise: under the digits (or the date line below them).
+     * - Otherwise: under the digits (or the date line below them), whatever is behind (the line
+     *   is drawn in front of the subject).
      */
     private fun updateAnchors(path: Path) {
         val k = if (path === shaped) max(shownK[0], shownK[1]) else 1f
@@ -1376,35 +1378,10 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         val bottom =
             if (showDate && datePos == DATE_BELOW && !dateRect.isEmpty) max(digitsBottom, dateRect.bottom)
             else digitsBottom
-        var under = bottom
-        if (underLineH > 0f && depthMode != DEPTH_OFF && depthMode != DEPTH_SHAPE) {
-            val profile = previewOutline ?: SubjectOutline.current
-            val place = if (profile != null) placement() else null
-            if (profile != null && place != null && place[2] > 0f) {
-                buildGlyphs()
-                val scale = place[2]
-                val pw = profile.width.toFloat()
-                fitColumns()
-                val subject = (profile.minTop((place[0] + fitCols[0] * scale) / pw,
-                    (place[0] + fitCols[3] * scale) / pw) * profile.height - place[1]) / scale
-                val need = (underLineH + dp(UNDER_CLEAR_DP)) / scale
-                if (bottom + need > subject) {
-                    val underHours = line1Base + digitSize * 0.02f
-                    under =
-                        if (underHours + need <= subject) max(underHours, subject - need)
-                        else {
-                            // No clear band anywhere under the hours (the subject reaches up
-                            // into the digits): the line goes above the clock instead, over
-                            // the date line when that is on top, never onto the subject.
-                            val topOfFace =
-                                if (showDate && datePos != DATE_BELOW && !dateRect.isEmpty)
-                                    min(dateRect.top, line1Base - capH)
-                                else line1Base - capH
-                            topOfFace - need
-                        }
-                }
-            }
-        }
+        // IchthysOS: "Under the clock" means under the clock. It used to move up between the
+        // rows, or above the clock, when the subject reached that high; but the line is drawn in
+        // front of the subject anyway, and the editor still said "Under clock".
+        val under = bottom
         underTop = under
         // What shows: the digits' block and the date line.
         // The fit's even scale and sideways move included.

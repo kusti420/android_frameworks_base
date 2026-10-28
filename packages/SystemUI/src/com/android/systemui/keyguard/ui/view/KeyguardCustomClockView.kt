@@ -299,7 +299,7 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
 
     private fun applyContainerAttributes(clock: View, animate: Boolean = false) {
         val opacity = secureInt(KEY_OPACITY, 100).coerceIn(0, 100)
-        val scale = secureInt(KEY_SIZE_SCALE, 100).coerceIn(50, 150) / 100f
+        val scale = secureInt(KEY_SIZE_SCALE, 100).coerceIn(40, 180) / 100f
         val marginTopPx = secureInt(KEY_MARGIN_TOP, DEFAULT_MARGIN_TOP)
 
         // IchthysOS lock screen editor (tracker#58): moved sideways and turned freely too.
