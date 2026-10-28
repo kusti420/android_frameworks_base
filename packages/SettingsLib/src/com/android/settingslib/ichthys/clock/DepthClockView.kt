@@ -346,6 +346,21 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
     /** For previews (the lock screen editor): show this fill / status line instead of the settings'. */
     // IchthysOS polish: the preview setters only act on a change. The editor binds every face on
     // every frame of a drag; re-reading the settings and the shape each time was its jank.
+    /** The editor's draft of [KEY_GLASS_FROST] / [KEY_GLASS_OPACITY] (null: the settings). */
+    var previewGlassFrost: Int? = null
+        set(v) {
+            if (field == v) return
+            field = v
+            readFill()
+            invalidate()
+        }
+    var previewGlassOpacity: Int? = null
+        set(v) {
+            if (field == v) return
+            field = v
+            readFill()
+            invalidate()
+        }
     var previewFill: Int? = null
         set(v) {
             if (field == v) return
@@ -456,14 +471,14 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         details = previewDetails ?: (secure(KEY_DETAILS, 0) != 0)
         fill = previewFill ?: secure(KEY_FILL, FILL_SOLID)
         depthMode = previewDepth ?: secure(KEY_DEPTH, 0)
-        glassFrost = secure(KEY_GLASS_FROST, 0)
-        glassOpacity = secure(KEY_GLASS_OPACITY, -1)
+        glassFrost = previewGlassFrost ?: secure(KEY_GLASS_FROST, 0)
+        glassOpacity = previewGlassOpacity ?: secure(KEY_GLASS_OPACITY, -1)
         shapeStyle = previewShapeStyle ?: secure(KEY_SHAPE_STYLE, SHAPE_STRETCH)
         // IchthysOS polish: out of Shape the digits ease back to their height (shapedPath), and
         // the room they took goes once they have.
         dateAlign = previewDateAlign ?: secure(KEY_DATE_ALIGN, ALIGN_CENTRE)
         weatherOptions = previewWeather ?: LockWeather.readOptions(context)
-        val newFont = previewFont ?: secure(KEY_FONT, FONT_TALL)
+        val newFont = previewFont ?: secure(KEY_FONT, FONT_ROUNDED)
         val newPos = previewDatePos ?: secure(KEY_DATE_POS, DATE_ABOVE)
         if (newFont != font || newPos != datePos) {
             font = newFont
@@ -2039,7 +2054,16 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         const val FONT_SQUARE = 6
         /** IchthysOS: rounded heavy figures (Nunito ExtraBold, close to SF Pro Rounded). */
         const val FONT_ROUNDED = 7
-        private val CONDENSED = setOf(FONT_TALL, FONT_FLEX, FONT_THIN)
+        /** IchthysOS: the glass clock's curated faces (IchthysDepth ships them, SIL OFL 1.1). */
+        const val FONT_SOFT = 8          // Rubik ExtraBold, rounded corners
+        const val FONT_TEKO = 9          // Teko SemiBold, tall signage
+        const val FONT_CONDENSED = 10    // Sofia Sans Condensed Black
+        const val FONT_POSTER = 11       // Anton, heavy poster condensed
+        const val FONT_COMPACT = 12      // Archivo Condensed Black
+        const val FONT_GROTESK = 13      // Inter Tight Black
+        const val FONT_HEAVY = 14        // Archivo Black
+        private val CONDENSED = setOf(FONT_TALL, FONT_FLEX, FONT_THIN, FONT_TEKO, FONT_CONDENSED,
+            FONT_POSTER, FONT_COMPACT)
 
         /** Settings.Secure: the date / status line above ([DATE_ABOVE]) or below the digits. */
         const val KEY_DATE_POS = "ichthys_clock_date_pos"
@@ -2090,6 +2114,13 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
                         FONT_MONO -> Typeface.create("monospace", Typeface.BOLD)
                         FONT_ROUNDED ->
                             variable(NUNITO, "'wght' 800") ?: Typeface.create("sans-serif", Typeface.BOLD)
+                        FONT_SOFT -> variable(FONTS + "Rubik-VF.ttf", "'wght' 800")
+                        FONT_TEKO -> variable(FONTS + "Teko-VF.ttf", "'wght' 600")
+                        FONT_CONDENSED -> variable(FONTS + "SofiaSansCondensed-VF.ttf", "'wght' 900")
+                        FONT_POSTER -> variable(FONTS + "Anton-Regular.ttf", "")
+                        FONT_COMPACT -> variable(FONTS + "Archivo-VF.ttf", "'wdth' 62, 'wght' 900")
+                        FONT_GROTESK -> variable(FONTS + "InterTight-VF.ttf", "'wght' 900")
+                        FONT_HEAVY -> variable(FONTS + "ArchivoBlack-Regular.ttf", "")
                         else ->
                             // Big Shoulders Display Black (IchthysDepth ships it), else Roboto
                             // Flex at its narrowest.
@@ -2102,6 +2133,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         private const val BIG_SHOULDERS = "/system/fonts/BigShouldersDisplay-VF.ttf"
         private const val ROBOTO_FLEX = "/system/fonts/RobotoFlex-Regular.ttf"
         private const val NUNITO = "/system/fonts/Nunito-VF.ttf"
+        private const val FONTS = "/system/fonts/"
 
         private fun monoTypeface(): Typeface =
             variable("/system/fonts/JetBrainsMono-VF.ttf", "'wght' 450") ?: Typeface.MONOSPACE
@@ -2109,7 +2141,8 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         private fun variable(path: String, axes: String): Typeface? =
             try {
                 if (File(path).isFile)
-                    Typeface.Builder(File(path)).setFontVariationSettings(axes).build()
+                    Typeface.Builder(File(path))
+                        .let { if (axes.isEmpty()) it else it.setFontVariationSettings(axes) }.build()
                 else null
             } catch (e: Exception) {
                 null
