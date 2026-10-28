@@ -58,9 +58,10 @@ interface IClipboard {
 
     /**
      * IchthysOS: proof that the caller's next clipboard read follows a genuine user action
-     * (a verified pointer-up or key-down its windows just received).
+     * (a verified tap: its pointer-up and the pointer-down it began with, or a paste key-down).
      */
-    void notePasteInput(in InputEvent event, String callingPackage, int userId, int deviceId);
+    void notePasteInput(in InputEvent event, in @nullable InputEvent down, String callingPackage,
+            int userId, int deviceId);
 
     /**
      * IchthysOS: the default IME is about to ask the app it types into to paste

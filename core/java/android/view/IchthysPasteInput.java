@@ -24,6 +24,12 @@ public final class IchthysPasteInput {
     private static final Object sLock = new Object();
     @GuardedBy("sLock")
     private static InputEvent sLastUserInput;
+    /** The press of the last pointer gesture; paired with its release in {@link #sLastUserDown}. */
+    @GuardedBy("sLock")
+    private static MotionEvent sPendingDown;
+    /** The press that began {@link #sLastUserInput} (a tap's ACTION_DOWN), or null. */
+    @GuardedBy("sLock")
+    private static MotionEvent sLastUserDown;
 
     private IchthysPasteInput() {}
 
@@ -32,6 +38,20 @@ public final class IchthysPasteInput {
         final boolean interesting;
         if (event instanceof MotionEvent) {
             final MotionEvent me = (MotionEvent) event;
+            if (me.isFromSource(InputDevice.SOURCE_CLASS_POINTER)
+                    && me.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                // ClipboardService checks the press against the release: a tap, not a swipe.
+                final MotionEvent down = me.copy();
+                final MotionEvent oldDown;
+                synchronized (sLock) {
+                    oldDown = sPendingDown;
+                    sPendingDown = down;
+                }
+                if (oldDown != null) {
+                    oldDown.recycle();
+                }
+                return;
+            }
             interesting = me.isFromSource(InputDevice.SOURCE_CLASS_POINTER)
                     && me.getActionMasked() == MotionEvent.ACTION_UP;
         } else if (event instanceof KeyEvent) {
@@ -46,25 +66,34 @@ public final class IchthysPasteInput {
         }
         final InputEvent copy = event.copy();
         final InputEvent old;
+        final MotionEvent oldDown;
         synchronized (sLock) {
             old = sLastUserInput;
+            oldDown = sLastUserDown;
             sLastUserInput = copy;
+            sLastUserDown = null;
+            if (event instanceof MotionEvent && sPendingDown != null
+                    && sPendingDown.getEventTime() == ((MotionEvent) event).getDownTime()) {
+                sLastUserDown = sPendingDown;
+                sPendingDown = null;
+            }
         }
         if (old != null) {
             old.recycle();
+        }
+        if (oldDown != null) {
+            oldDown.recycle();
         }
     }
 
     /**
      * The key presses that can be a paste (keep in step with ClipboardService): the paste key,
-     * Ctrl/Meta+V, Shift+Insert and the keys that press a focused button.
+     * Ctrl/Meta+V and Shift+Insert. Enter is not one: it sends a message or a search, and an app
+     * reading the clip on it would get it every time.
      */
     private static boolean isPasteKey(KeyEvent key) {
         switch (key.getKeyCode()) {
             case KeyEvent.KEYCODE_PASTE:
-            case KeyEvent.KEYCODE_DPAD_CENTER:
-            case KeyEvent.KEYCODE_ENTER:
-            case KeyEvent.KEYCODE_NUMPAD_ENTER:
                 return true;
             case KeyEvent.KEYCODE_V:
                 return key.isCtrlPressed() || key.isMetaPressed();
@@ -88,6 +117,23 @@ public final class IchthysPasteInput {
                 return null;
             }
             return last.copy();
+        }
+    }
+
+    /**
+     * Returns a copy of the press that began the input {@link #getRecent} returns (a tap's
+     * ACTION_DOWN), or null when that input is a key press or its press was not seen.
+     */
+    @Nullable
+    public static InputEvent getRecentDown(long maxAgeMillis) {
+        synchronized (sLock) {
+            final InputEvent last = sLastUserInput;
+            final MotionEvent down = sLastUserDown;
+            if (last == null || down == null
+                    || SystemClock.uptimeMillis() - last.getEventTime() > maxAgeMillis) {
+                return null;
+            }
+            return down.copy();
         }
     }
 }

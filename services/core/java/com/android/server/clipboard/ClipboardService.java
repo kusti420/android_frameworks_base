@@ -109,6 +109,7 @@ import android.view.MotionEvent;
 import android.view.VerifiedInputEvent;
 import android.view.VerifiedKeyEvent;
 import android.view.VerifiedMotionEvent;
+import android.view.ViewConfiguration;
 import android.view.autofill.AutofillManagerInternal;
 import android.view.textclassifier.TextClassificationContext;
 import android.view.textclassifier.TextClassificationManager;
@@ -231,6 +232,8 @@ public class ClipboardService extends SystemService {
      */
     private static final long ICHTHYS_PASTE_INPUT_MAX_AGE_MS = 2000;
     private static final long ICHTHYS_PASTE_GRANT_MS = 2000;
+    /** The longest press that is still a tap (a long press opens the selection toolbar). */
+    private static final long ICHTHYS_TAP_MAX_MS = 600;
     /**
      * IchthysOS: once a grant has been used, it only lives on this much longer: enough for a
      * paste that reads the clip more than once (WebView reads text and HTML), not for polling.
@@ -734,8 +737,8 @@ public class ClipboardService extends SystemService {
         }
 
         @Override
-        public void notePasteInput(
-                InputEvent event, String callingPackage, @UserIdInt int userId, int deviceId) {
+        public void notePasteInput(InputEvent event, InputEvent down, String callingPackage,
+                @UserIdInt int userId, int deviceId) {
             if (event == null) {
                 return;
             }
@@ -748,10 +751,12 @@ public class ClipboardService extends SystemService {
                 return;
             }
             final VerifiedInputEvent verified;
+            final VerifiedInputEvent verifiedDown;
             final long ident = Binder.clearCallingIdentity();
             try {
                 final InputManager im = getContext().getSystemService(InputManager.class);
                 verified = im == null ? null : im.verifyInputEvent(event);
+                verifiedDown = im == null || down == null ? null : im.verifyInputEvent(down);
             } finally {
                 Binder.restoreCallingIdentity(ident);
             }
@@ -765,8 +770,8 @@ public class ClipboardService extends SystemService {
                 return;
             }
             if (verified instanceof VerifiedMotionEvent
-                    && ((VerifiedMotionEvent) verified).getActionMasked()
-                            != MotionEvent.ACTION_UP) {
+                    && !ichthysIsTap((VerifiedMotionEvent) verified, verifiedDown)) {
+                // IchthysOS: a swipe, scroll, drag or long press is no paste: only a tap is.
                 return;
             }
             if (verified instanceof VerifiedKeyEvent
@@ -811,9 +816,17 @@ public class ClipboardService extends SystemService {
             // IchthysOS: the default keyboard (which may read the clip itself anyway) is about
             // to ask the app it types into to paste (performContextMenuAction(paste), Ctrl+V).
             // The read still needs focus, so only that app can use this.
+            // The keyboard runs in the parent user; a work profile or clone app it types into
+            // reads under its own user, so the grant covers the user's profiles too.
+            final long until = SystemClock.elapsedRealtime() + ICHTHYS_PASTE_GRANT_MS;
+            final List<UserInfo> profiles = getRelatedProfiles(intendingUserId);
             synchronized (mLock) {
-                mIchthysImePasteUntil.put(intendingUserId,
-                        SystemClock.elapsedRealtime() + ICHTHYS_PASTE_GRANT_MS);
+                mIchthysImePasteUntil.put(intendingUserId, until);
+                if (profiles != null) {
+                    for (UserInfo profile : profiles) {
+                        mIchthysImePasteUntil.put(profile.id, until);
+                    }
+                }
             }
         }
 
@@ -1787,9 +1800,6 @@ public class ClipboardService extends SystemService {
         final int meta = key.getMetaState();
         switch (key.getKeyCode()) {
             case KeyEvent.KEYCODE_PASTE:
-            case KeyEvent.KEYCODE_DPAD_CENTER:
-            case KeyEvent.KEYCODE_ENTER:
-            case KeyEvent.KEYCODE_NUMPAD_ENTER:
                 return true;
             case KeyEvent.KEYCODE_V:
                 return (meta & (KeyEvent.META_CTRL_ON | KeyEvent.META_META_ON)) != 0;
@@ -1798,6 +1808,33 @@ public class ClipboardService extends SystemService {
             default:
                 return false;
         }
+    }
+
+    /**
+     * IchthysOS: [up] ends a tap: it is a release whose verified press [down] began the same
+     * gesture on the same device and display, was short (no long press) and didn't move (no
+     * swipe, scroll or drag). Every flick through a feed ends in a release too.
+     */
+    private boolean ichthysIsTap(VerifiedMotionEvent up, @Nullable VerifiedInputEvent down) {
+        if (up.getActionMasked() != MotionEvent.ACTION_UP
+                || !(down instanceof VerifiedMotionEvent)) {
+            return false;
+        }
+        final VerifiedMotionEvent press = (VerifiedMotionEvent) down;
+        if (press.getActionMasked() != MotionEvent.ACTION_DOWN
+                || press.getDeviceId() != up.getDeviceId()
+                || press.getDisplayId() != up.getDisplayId()
+                || press.getEventTimeNanos() != up.getDownTimeNanos()) {
+            return false;
+        }
+        final long heldNanos = up.getEventTimeNanos() - press.getEventTimeNanos();
+        if (heldNanos < 0 || heldNanos > TimeUnit.MILLISECONDS.toNanos(ICHTHYS_TAP_MAX_MS)) {
+            return false;
+        }
+        final float slop = 2f * ViewConfiguration.get(getContext()).getScaledTouchSlop();
+        final float dx = up.getRawX() - press.getRawX();
+        final float dy = up.getRawY() - press.getRawY();
+        return dx * dx + dy * dy <= slop * slop;
     }
 
     /**

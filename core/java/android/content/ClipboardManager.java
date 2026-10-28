@@ -277,11 +277,15 @@ public class ClipboardManager extends android.text.ClipboardManager {
         if (proof == null) {
             return;
         }
+        final InputEvent down = IchthysPasteInput.getRecentDown(PASTE_INPUT_MAX_AGE_MS);
         try {
-            mService.notePasteInput(proof, mContext.getOpPackageName(), mContext.getUserId(),
-                    mContext.getDeviceId());
+            mService.notePasteInput(proof, down, mContext.getOpPackageName(),
+                    mContext.getUserId(), mContext.getDeviceId());
         } finally {
             proof.recycle();
+            if (down != null) {
+                down.recycle();
+            }
         }
     }
 

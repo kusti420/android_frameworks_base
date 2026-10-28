@@ -164,8 +164,8 @@ public class FakeClipboardService extends IClipboard.Stub {
     }
 
     @Override
-    public void notePasteInput(android.view.InputEvent event, String callingPackage, int userId,
-            int deviceId) {
+    public void notePasteInput(android.view.InputEvent event, android.view.InputEvent down,
+            String callingPackage, int userId, int deviceId) {
         // Fake clipboard has no read restrictions.
     }
 

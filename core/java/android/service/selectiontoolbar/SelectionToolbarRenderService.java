@@ -108,6 +108,10 @@ public abstract class SelectionToolbarRenderService extends Service {
                             }
                         }
                         remoteCallbackWrapper.mMenuItems = showInfo.menuItems;
+                        // IchthysOS: and what Paste is called now (the locale can change).
+                        remoteCallbackWrapper.mPasteLabels = new String[] {
+                                getString(android.R.string.paste),
+                                getString(android.R.string.paste_as_plain_text)};
                         SelectionToolbarRenderService.this.onShow(uid, showInfo,
                                 remoteCallbackWrapper);
                     });
@@ -209,6 +213,13 @@ public abstract class SelectionToolbarRenderService extends Service {
         /** IchthysOS: the menu of the latest show, to tell which index is Paste. */
         @Nullable
         volatile List<ToolbarMenuItem> mMenuItems;
+        /**
+         * IchthysOS: the system's own words for Paste and Paste as plain text. Menus that bring
+         * their own item ids (WebView and Chromium: select_action_menu_paste) are told apart by
+         * the label the user tapped.
+         */
+        @Nullable
+        volatile String[] mPasteLabels;
 
         RemoteCallbackWrapper(ISelectionToolbarCallback remoteCallback,
                 IBinder.DeathRecipient deathRecipient, int uid,
@@ -276,7 +287,22 @@ public abstract class SelectionToolbarRenderService extends Service {
                 final ToolbarMenuItem item = items.get(i);
                 if (item != null && item.itemIndex == itemIndex) {
                     return item.itemId == android.R.id.paste
-                            || item.itemId == android.R.id.pasteAsPlainText;
+                            || item.itemId == android.R.id.pasteAsPlainText
+                            || isPasteLabel(item.title);
+                }
+            }
+            return false;
+        }
+
+        private boolean isPasteLabel(@Nullable CharSequence title) {
+            final String[] labels = mPasteLabels;
+            if (title == null || labels == null) {
+                return false;
+            }
+            final String shown = title.toString().trim();
+            for (String label : labels) {
+                if (label != null && shown.equalsIgnoreCase(label.trim())) {
+                    return true;
                 }
             }
             return false;
