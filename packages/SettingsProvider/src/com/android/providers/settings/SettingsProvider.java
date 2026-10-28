@@ -1550,6 +1550,8 @@ public class SettingsProvider extends ContentProvider {
             Slog.v(LOG_TAG, "getAllGlobalSettings()");
         }
 
+        // IchthysOS: asked before the lock (it may ask the package manager).
+        final boolean ichthysTrusted = isCallerSystemOrPlatform();
         synchronized (mLock) {
             // Get the settings.
             // Note that global settings are applicable only for the default device, hence pass
@@ -1568,6 +1570,9 @@ public class SettingsProvider extends ContentProvider {
             // Anyone can get the global settings, so no security checks.
             for (int i = 0; i < nameCount; i++) {
                 String name = names.get(i);
+                if (!ichthysTrusted && isIchthysAllowlist(name)) {
+                    continue; // IchthysOS: see isIchthysAllowlist
+                }
                 try {
                     enforceSettingReadable(name, SETTINGS_TYPE_GLOBAL,
                             UserHandle.getCallingUserId());
@@ -1597,8 +1602,18 @@ public class SettingsProvider extends ContentProvider {
         // Ensure the caller can access the setting.
         enforceSettingReadable(name, SETTINGS_TYPE_GLOBAL, UserHandle.getCallingUserId());
 
+        // IchthysOS: the shields' lists and switches are absent for apps (see
+        // isIchthysAllowlist), in this table as in Secure. Asked before the lock: it may ask the
+        // package manager.
+        final boolean hidden = isIchthysAllowlist(name) && !isCallerSystemOrPlatform();
+
         // Get the value.
         synchronized (mLock) {
+            if (hidden) {
+                final SettingsState settings = mSettingsRegistry.getSettingsLocked(
+                        SETTINGS_TYPE_GLOBAL, UserHandle.USER_SYSTEM, Context.DEVICE_ID_DEFAULT);
+                return settings != null ? settings.getNullSetting() : null;
+            }
             // Global settings are applicable only for the default device, hence pass
             // Context.DEVICE_ID_DEFAULT as the deviceId.
             return mSettingsRegistry.getSettingLocked(SETTINGS_TYPE_GLOBAL,
@@ -2400,17 +2415,24 @@ public class SettingsProvider extends ContentProvider {
     }
 
     /**
-     * IchthysOS: the Guard shields' per-app exception lists (ichthys_*_allowed_pkgs) say which
-     * apps the owner trusts with contacts, the clipboard, SMS..., and ichthys_backstage_pkgs
-     * which apps are kept running out of sight. Undeclared secure settings are
-     * readable by every app, which made them a fingerprint and a map of the owner's trust. Only
-     * system callers (the shields themselves, Settings) see them; others see them as absent.
+     * IchthysOS: the shields' per-app lists (ichthys_*_pkgs: who is trusted with contacts, the
+     * clipboard, SMS..., who gets no location fix or empty scans, who is exempt from sensor
+     * protection, which apps are kept running in Backstage or unrestricted in the background),
+     * their seeding markers, the accessibility scopes and the shields' own switches. Undeclared
+     * settings are readable by every app, which made them a fingerprint, a map of the owner's
+     * trust, and a way for an app to learn its answers are faked (a "no fix" app falling back to
+     * IP geolocation). Only system callers (the shields themselves, Settings, SystemUI) see them;
+     * others see them as absent. Nothing in an app's own process reads them.
      */
     private static boolean isIchthysAllowlist(String name) {
         return name != null && name.startsWith("ichthys_")
-                && (name.endsWith("_allowed_pkgs")
-                        // the apps kept running in Backstage (IchthysBackstageService)
-                        || name.equals("ichthys_backstage_pkgs"));
+                && (name.endsWith("_pkgs")
+                        || name.endsWith("_seeded")
+                        || name.endsWith("_shield")
+                        || name.equals("ichthys_a11y_scopes")
+                        || name.equals("ichthys_contacts_lockdown")
+                        || name.equals("ichthys_clipboard_lockdown")
+                        || name.equals("ichthys_sensor_fingerprint_protection"));
     }
 
     private boolean isCallerSystemOrPlatform() {
