@@ -198,6 +198,8 @@ public final class IchthysBackstageService {
 
         /** Its own number: its notification's id (a hash of the package could collide). */
         final int serial;
+        /** Its hour-limit alarm, if one is set. mHandler only. */
+        AlarmManager.OnAlarmListener limitAlarm;
 
         Entry(String pkg, int serial) {
             this.pkg = pkg;
@@ -261,6 +263,20 @@ public final class IchthysBackstageService {
                             int userId) {
                         if (userId == mUserId) {
                             reconcileWithSetting();
+                        }
+                    }
+                }, UserHandle.USER_ALL);
+        // IchthysOS: a new hour limit applies to the apps already in Backstage too.
+        mContext.getContentResolver().registerContentObserver(
+                Settings.Secure.getUriFor(KEY_MAX_HOURS), false,
+                new ContentObserver(mHandler) {
+                    @Override
+                    public void onChange(boolean selfChange, Collection<Uri> uris, int flags,
+                            int userId) {
+                        if (userId == mUserId) {
+                            for (Entry entry : new ArrayList<>(mEntries.values())) {
+                                scheduleAutoStop(entry);
+                            }
                         }
                     }
                 }, UserHandle.USER_ALL);
@@ -494,6 +510,7 @@ public final class IchthysBackstageService {
         if (entry == null) {
             return;
         }
+        cancelAutoStop(entry);
         cancelNotification(entry);
         final ActivityManager.RunningTaskInfo task = findTask(pkg, stageId(entry));
         if (task != null) {
@@ -536,6 +553,7 @@ public final class IchthysBackstageService {
     /** Returns everything to the main screen and forgets it (user switch). */
     private void clearAll(int userId) {
         for (Entry entry : mEntries.values()) {
+            cancelAutoStop(entry);
             cancelNotification(entry);
             releaseStage(entry);
         }
@@ -947,6 +965,9 @@ public final class IchthysBackstageService {
     }
 
     private void scheduleAutoStop(Entry entry) {
+        // IchthysOS: one alarm per entry, set again (from when it entered Backstage) when the
+        // limit changes, and cancelled when the entry goes.
+        cancelAutoStop(entry);
         final int hours = Settings.Secure.getIntForUser(mContext.getContentResolver(),
                 KEY_MAX_HOURS, 0, mUserId);
         if (hours <= 0) {
@@ -956,6 +977,7 @@ public final class IchthysBackstageService {
         // while the phone sleeps too (uptime stops then, and the limit came hours late).
         final AlarmManager alarms = mContext.getSystemService(AlarmManager.class);
         final AlarmManager.OnAlarmListener expire = () -> {
+            entry.limitAlarm = null;
             if (mEntries.get(entry.pkg) == entry) {
                 Slog.i(TAG, entry.pkg + " reached the " + hours + " h Backstage limit");
                 stop(entry.pkg);
@@ -965,8 +987,21 @@ public final class IchthysBackstageService {
             mHandler.postDelayed(expire::onAlarm, hours * HOUR_MS);
             return;
         }
-        alarms.set(AlarmManager.ELAPSED_REALTIME, SystemClock.elapsedRealtime() + hours * HOUR_MS,
+        entry.limitAlarm = expire;
+        alarms.set(AlarmManager.ELAPSED_REALTIME, entry.startedAt + hours * HOUR_MS,
                 "ichthys-backstage-limit", expire, mHandler);
+    }
+
+    private void cancelAutoStop(Entry entry) {
+        final AlarmManager.OnAlarmListener alarm = entry.limitAlarm;
+        if (alarm == null) {
+            return;
+        }
+        entry.limitAlarm = null;
+        final AlarmManager alarms = mContext.getSystemService(AlarmManager.class);
+        if (alarms != null) {
+            alarms.cancel(alarm);
+        }
     }
 
     // ---- The hidden displays ----
