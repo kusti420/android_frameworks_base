@@ -376,7 +376,16 @@ public final class IchthysGuardService extends SystemService {
             if (!mMonitorRegistered) registerMonitor();
             // IchthysOS: again once the network stack is fully up; the enable at
             // PHASE_SYSTEM_SERVICES_READY may be dropped (applyFirewall reads the state back).
-            mHandler.post(this::applyFirewall);
+            // The rules are written again too, not skipped as unchanged: the BPF layer only logs
+            // a failed write, so one at boot would otherwise leave blocked apps online until
+            // the next rule change.
+            mHandler.post(() -> {
+                synchronized (mApplyLock) {
+                    mAppliedDeny = null;
+                    mAppliedMetered = null;
+                }
+                applyFirewall();
+            });
             mScanHandler.post(this::releaseLauncherlessQuarantines);
             mScanHandler.post(this::backfillScans);
             mHandler.post(this::applyLan);
