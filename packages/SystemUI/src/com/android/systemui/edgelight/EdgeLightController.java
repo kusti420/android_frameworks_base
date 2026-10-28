@@ -104,6 +104,8 @@ public class EdgeLightController implements CoreStartable {
     @Nullable private EdgeLightView mView;
     @Nullable private ValueAnimator mAnimator;
 
+    /** Keys of the notifications seen since they were posted (main handler only). */
+    private final java.util.Set<String> mSeenKeys = new java.util.HashSet<>();
     private boolean mEnabled;
     private int mPulseCount = DEFAULT_PULSE_COUNT;
     private int mStrokeWidthDp = DEFAULT_STROKE_WIDTH_DP;
@@ -156,11 +158,13 @@ public class EdgeLightController implements CoreStartable {
 
             @Override
             public void onNotificationRemoved(StatusBarNotification sbn, RankingMap ranking) {
+                forget(sbn);
             }
 
             @Override
             public void onNotificationRemoved(StatusBarNotification sbn, RankingMap ranking,
                     int reason) {
+                forget(sbn);
             }
 
             @Override
@@ -212,10 +216,24 @@ public class EdgeLightController implements CoreStartable {
         if (!mStatusBarStateController.isDozing()) {
             return;
         }
+        // IchthysOS: an update of a notification already shown that asks to alert only once
+        // (progress, a timer, a download) doesn't pulse again.
+        final boolean seen = !mSeenKeys.add(sbn.getKey());
+        if (seen && sbn.getNotification() != null
+                && (sbn.getNotification().flags & Notification.FLAG_ONLY_ALERT_ONCE) != 0) {
+            return;
+        }
         if (isSuppressed(sbn, rankingMap)) {
             return;
         }
         show(resolveColor(sbn));
+    }
+
+    private void forget(StatusBarNotification sbn) {
+        if (sbn != null) {
+            final String key = sbn.getKey();
+            mHandler.post(() -> mSeenKeys.remove(key));
+        }
     }
 
     /**
@@ -237,6 +255,20 @@ public class EdgeLightController implements CoreStartable {
         }
         if (notification.isMediaNotification()) {
             return true;  // transport controls update constantly
+        }
+        if ((notification.flags & Notification.FLAG_ONGOING_EVENT) != 0) {
+            return true;  // navigation, calls, progress: not news, and they update all the time
+        }
+        // IchthysOS: Do Not Disturb. A notification the filter holds back, or whose ambient
+        // (always-on display) effects it suppresses, doesn't light the edges either.
+        if (rankingMap != null) {
+            final Ranking ranking = new Ranking();
+            if (rankingMap.getRanking(sbn.getKey(), ranking)
+                    && (!ranking.matchesInterruptionFilter()
+                            || (ranking.getSuppressedVisualEffects()
+                                    & NotificationManager.Policy.SUPPRESSED_EFFECT_AMBIENT) != 0)) {
+                return true;
+            }
         }
         return importanceOf(sbn, rankingMap) < NotificationManager.IMPORTANCE_DEFAULT;
     }

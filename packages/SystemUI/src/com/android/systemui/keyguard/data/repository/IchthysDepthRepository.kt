@@ -807,6 +807,8 @@ constructor(
  * - Watches through an input monitor and never takes the touches: apps get them as always.
  * - Saved in SystemUI's device-protected files every few minutes, so a SystemUI restart keeps the
  *   day; starts over at local midnight. Each user has their own day.
+ * - Watches only while the Depth face with the touch heat fill is the lock screen clock: with any
+ *   other clock there is nothing to draw, so no touch is looked at at all.
  */
 @SysUISingleton
 class IchthysTouchHeatCollector
@@ -834,6 +836,7 @@ constructor(
     /** A credential screen is on top (see [isCredentialActivity]); set off the main thread. */
     @Volatile private var credentialOnTop = false
     private var receiver: android.view.InputEventReceiver? = null
+    private var monitor: android.view.InputMonitor? = null
 
     private val saver =
         object : Runnable {
@@ -843,25 +846,61 @@ constructor(
             }
         }
 
+    /** [bgLooper]: watch touches only while the heat face is the clock (see the class doc). */
+    private fun updateWatching() {
+        val cr = context.contentResolver
+        val on =
+            Settings.Secure.getIntForUser(
+                cr, Settings.Secure.LOCK_SCREEN_CUSTOM_CLOCK_STYLE, 0, user) == HEAT_CLOCK_STYLE &&
+                Settings.Secure.getIntForUser(
+                    cr,
+                    com.android.settingslib.ichthys.clock.DepthClockView.KEY_FILL,
+                    com.android.settingslib.ichthys.clock.DepthClockView.FILL_SOLID,
+                    user,
+                ) == com.android.settingslib.ichthys.clock.DepthClockView.FILL_HEAT
+        if (on == (receiver != null)) return
+        if (!on) {
+            receiver?.dispose()
+            receiver = null
+            monitor?.dispose()
+            monitor = null
+            if (dirty) save()
+            return
+        }
+        val m =
+            context.getSystemService(android.hardware.input.InputManager::class.java)
+                ?.monitorGestureInput("ichthys-touch-heat", android.view.Display.DEFAULT_DISPLAY)
+                ?: return
+        monitor = m
+        receiver =
+            object : android.view.InputEventReceiver(m.inputChannel, bgLooper) {
+                override fun onInputEvent(event: android.view.InputEvent) {
+                    try {
+                        if (event is android.view.MotionEvent) onMotion(event)
+                    } finally {
+                        finishInputEvent(event, false)
+                    }
+                }
+            }
+    }
+
     override fun start() {
         handler.post {
             user = userTracker.userId
             load()
-            val monitor =
-                context.getSystemService(android.hardware.input.InputManager::class.java)
-                    ?.monitorGestureInput("ichthys-touch-heat", android.view.Display.DEFAULT_DISPLAY)
-                    ?: return@post
-            receiver =
-                object : android.view.InputEventReceiver(monitor.inputChannel, bgLooper) {
-                    override fun onInputEvent(event: android.view.InputEvent) {
-                        try {
-                            if (event is android.view.MotionEvent) onMotion(event)
-                        } finally {
-                            finishInputEvent(event, false)
-                        }
-                    }
-                }
+            updateWatching()
             handler.postDelayed(saver, SAVE_MS)
+        }
+        val clockObserver =
+            object : ContentObserver(handler) {
+                override fun onChange(selfChange: Boolean) {
+                    updateWatching()
+                }
+            }
+        for (key in arrayOf(Settings.Secure.LOCK_SCREEN_CUSTOM_CLOCK_STYLE,
+                com.android.settingslib.ichthys.clock.DepthClockView.KEY_FILL)) {
+            context.contentResolver.registerContentObserver(
+                Settings.Secure.getUriFor(key), false, clockObserver, UserHandle.USER_ALL)
         }
         userTracker.addCallback(
             object : UserTracker.Callback {
@@ -872,6 +911,7 @@ constructor(
                     com.android.settingslib.ichthys.clock.TouchHeat.reset(today())
                     dirty = false
                     load()
+                    updateWatching()
                 }
             }
         ) { handler.post(it) }
@@ -983,5 +1023,7 @@ constructor(
     private companion object {
         const val TAG = "IchthysTouchHeat"
         const val SAVE_MS = 3 * 60_000L
+        /** The Depth face (IchthysDepthRepository.DEPTH_CLOCK_STYLE). */
+        const val HEAT_CLOCK_STYLE = 80
     }
 }

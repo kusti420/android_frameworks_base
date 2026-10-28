@@ -419,7 +419,8 @@ private fun decodePreview(resolver: ContentResolver, uri: Uri, maxDim: Int): Pai
 
 private const val MAX_PREVIEW_PIXELS = 16_000_000L
 
-private fun decodeFull(resolver: ContentResolver, uri: Uri): Bitmap? {
+/** The image and the inSampleSize it was decoded at (2 when the full size didn't fit). */
+private fun decodeFull(resolver: ContentResolver, uri: Uri): Pair<Bitmap, Int>? {
     for (sample in intArrayOf(1, 2)) {
         try {
             val opts =
@@ -428,7 +429,7 @@ private fun decodeFull(resolver: ContentResolver, uri: Uri): Bitmap? {
                     inPreferredConfig = Bitmap.Config.ARGB_8888
                 }
             val bmp = resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
-            if (bmp != null) return bmp
+            if (bmp != null) return bmp to sample
         } catch (e: OutOfMemoryError) {
             Log.w(ShotEditorActivity.TAG, "Full-res decode OOM at sample $sample", e)
         }
@@ -437,6 +438,8 @@ private fun decodeFull(resolver: ContentResolver, uri: Uri): Bitmap? {
 }
 
 /** Writes the edited image. Returns true on success. Runs on a background thread. */
+private enum class SaveResult { FAILED, SAVED, COPY }
+
 private fun saveImage(
     resolver: ContentResolver,
     uri: Uri,
@@ -444,11 +447,15 @@ private fun saveImage(
     previewSample: Int,
     ops: List<EditOp>,
     asCopy: Boolean,
-): Boolean {
-    val full = if (previewSample == 1) preview else decodeFull(resolver, uri) ?: preview
+): SaveResult {
+    val decoded = if (previewSample == 1) preview to 1 else decodeFull(resolver, uri)
+    val (full, sample) = decoded ?: (preview to previewSample)
+    // IchthysOS: never write a smaller picture over the original (the full size didn't fit in
+    // memory): the edit is kept as a copy instead and the original stays as it was.
+    val copy = asCopy || sample > 1
     val out = ShotRenderer.render(full, ops)
     try {
-        if (!asCopy) {
+        if (!copy) {
             // Keep the original container format so the MediaStore mime type stays truthful.
             val format =
                 when (resolver.getType(uri)) {
@@ -456,9 +463,12 @@ private fun saveImage(
                     "image/webp" -> Bitmap.CompressFormat.WEBP_LOSSLESS
                     else -> Bitmap.CompressFormat.PNG
                 }
-            val os = resolver.openOutputStream(uri, "wt") ?: return false
+            val os = resolver.openOutputStream(uri, "wt") ?: return SaveResult.FAILED
             val quality = if (format == Bitmap.CompressFormat.JPEG) 95 else 100
-            os.use { return out.compress(format, quality, it) }
+            os.use {
+                return if (out.compress(format, quality, it)) SaveResult.SAVED
+                else SaveResult.FAILED
+            }
         }
         val name =
             "Screenshot_" +
@@ -475,7 +485,7 @@ private fun saveImage(
                 put(MediaStore.MediaColumns.IS_PENDING, 1)
             }
         val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        val newUri = resolver.insert(collection, values) ?: return false
+        val newUri = resolver.insert(collection, values) ?: return SaveResult.FAILED
         try {
             val ok =
                 resolver.openOutputStream(newUri, "w")?.use {
@@ -483,7 +493,7 @@ private fun saveImage(
                 } ?: false
             if (!ok) {
                 resolver.delete(newUri, null, null)
-                return false
+                return SaveResult.FAILED
             }
             resolver.update(
                 newUri,
@@ -491,7 +501,7 @@ private fun saveImage(
                 null,
                 null,
             )
-            return true
+            return SaveResult.COPY
         } catch (e: Exception) {
             resolver.delete(newUri, null, null)
             throw e
@@ -620,23 +630,24 @@ private fun ShotEditorScreen(uri: Uri, onDone: () -> Unit) {
         val sample = state.sample
         state.saving = true
         scope.launch {
-            val ok =
+            val result =
                 withContext(NonCancellable + Dispatchers.IO) {
                     try {
                         saveImage(context.contentResolver, uri, src, sample, ops, asCopy)
                     } catch (e: Exception) {
                         Log.e(ShotEditorActivity.TAG, "Save failed", e)
-                        false
+                        SaveResult.FAILED
                     } catch (e: OutOfMemoryError) {
                         Log.e(ShotEditorActivity.TAG, "Save OOM", e)
-                        false
+                        SaveResult.FAILED
                     }
                 }
+            val ok = result != SaveResult.FAILED
             val msg =
-                when {
-                    !ok -> R.string.ichthys_shot_editor_failed
-                    asCopy -> R.string.ichthys_shot_editor_copy_saved
-                    else -> R.string.ichthys_shot_editor_saved
+                when (result) {
+                    SaveResult.FAILED -> R.string.ichthys_shot_editor_failed
+                    SaveResult.COPY -> R.string.ichthys_shot_editor_copy_saved
+                    SaveResult.SAVED -> R.string.ichthys_shot_editor_saved
                 }
             Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
             if (ok) onDone() else state.saving = false

@@ -91,6 +91,7 @@ public class CastTile extends QSTileImpl<BooleanState> {
     private boolean mCastTransportAllowed;
     private boolean mHotspotConnected;
     private boolean mIchthysCastEnabled;
+    private ContentObserver mIchthysCastObserver;
     private final CastDetailsViewModel.Factory mCastDetailsViewModelFactory;
     private final DialogCreator mDialogCreator;
 
@@ -136,17 +137,25 @@ public class CastTile extends QSTileImpl<BooleanState> {
         // IchthysOS: track the cast kill-switch.
         mIchthysCastEnabled = Settings.Global.getInt(
                 mContext.getContentResolver(), Settings.Global.CAST_ENABLED, 0) != 0;
+        mIchthysCastObserver = new ContentObserver(mainHandler) {
+            @Override
+            public void onChange(boolean selfChange) {
+                mIchthysCastEnabled = Settings.Global.getInt(
+                        mContext.getContentResolver(),
+                        Settings.Global.CAST_ENABLED, 0) != 0;
+                refreshState();
+            }
+        };
         mContext.getContentResolver().registerContentObserver(
                 Settings.Global.getUriFor(Settings.Global.CAST_ENABLED),
-                false, new ContentObserver(mainHandler) {
-                    @Override
-                    public void onChange(boolean selfChange) {
-                        mIchthysCastEnabled = Settings.Global.getInt(
-                                mContext.getContentResolver(),
-                                Settings.Global.CAST_ENABLED, 0) != 0;
-                        refreshState();
-                    }
-                });
+                false, mIchthysCastObserver);
+    }
+
+    @Override
+    protected void handleDestroy() {
+        // IchthysOS: the kill-switch observer goes with the tile (it used to outlive it).
+        mContext.getContentResolver().unregisterContentObserver(mIchthysCastObserver);
+        super.handleDestroy();
     }
 
     @Override

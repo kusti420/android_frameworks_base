@@ -101,8 +101,10 @@ constructor(
     ): Boolean {
         // IchthysOS: One UI expand — show the standard user-facing streams as side-by-side
         // capsules.  Internal streams (DTMF, TTS, SYSTEM_ENFORCED) are excluded because the
-        // icon provider doesn't handle them and they have no user-visible volume knob.
-        if (expanded) return streamModel.stream in ONEUI_EXPANDABLE_STREAMS
+        // icon provider doesn't handle them and they have no user-visible volume knob. The
+        // active stream stays too (a call, Bluetooth SCO, cast): the volume keys move it, so
+        // expanding must not take its slider away.
+        if (expanded) return streamModel.isActive || streamModel.stream in ONEUI_EXPANDABLE_STREAMS
 
         if (streamModel.isActive) {
             return true

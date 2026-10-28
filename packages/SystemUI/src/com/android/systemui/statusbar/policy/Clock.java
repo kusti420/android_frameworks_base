@@ -899,6 +899,8 @@ public class Clock extends TextView implements
                 }
             } else if (Intent.ACTION_SCREEN_ON.equals(action)) {
                 if (mSecondsHandler != null) {
+                    // IchthysOS: one tick chain only (a visibility change may have restarted it).
+                    mSecondsHandler.removeCallbacks(mSecondTick);
                     mSecondsHandler.postAtTime(mSecondTick,
                             SystemClock.uptimeMillis() / 1000 * 1000 + 1000);
                 }
