@@ -16,6 +16,7 @@
 
 package com.android.systemui.qs.ui.composable
 
+import android.view.WindowManager
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.OverscrollEffect
@@ -309,11 +310,22 @@ private fun ContentScope.QuickSettingsScene(
         )
 
         if (isAlwaysComposedContentVisible()) {
-            // IchthysOS: the window's real height, not Configuration.screenHeightDp: that one
-            // leaves out the system bars, so the stack's top sat a navigation bar's height above
-            // the screen's bottom edge and notifications showed in Quick Settings scrolled to its
-            // end. Notifications must never be visible in the Quick Settings scene at rest.
-            val screenHeight = LocalWindowInfo.current.containerSize.height.toFloat()
+            // IchthysOS: the display's full height. Configuration.screenHeightDp and this
+            // composition's container both leave out the navigation bar, but the notification
+            // stack view spans the whole display: parked at either, the shelf's icon row showed
+            // under the navigation bar (with a media player in Quick Settings). Notifications must
+            // never be visible in the Quick Settings scene at rest.
+            val context = LocalContext.current
+            val screenHeight =
+                maxOf(
+                        LocalWindowInfo.current.containerSize.height,
+                        context
+                            .getSystemService(WindowManager::class.java)
+                            .maximumWindowMetrics
+                            .bounds
+                            .height(),
+                    )
+                    .toFloat()
             /**
              * The minimum possible value for the top of the notification stack. In other words: how
              * high is the notification stack allowed to get when the scene is at rest. It may still
