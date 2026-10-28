@@ -109,6 +109,13 @@ interface IIchthysGuard {
      */
     boolean isLanDenied(int uid);
 
+    /**
+     * IchthysOS: whether Block and Unmetered only can be applied to {@code uid}: false for
+     * system-critical uids (telephony, IMS, the network stack), whose rules setNetworkPolicy
+     * refuses.
+     */
+    boolean isRestrictable(int uid);
+
     // ---- Behaviour alerts (W8b decisions 9, 35); alerts only, nothing is blocked -----------
 
     /** Camera, microphone or location used while the app is not visible. */

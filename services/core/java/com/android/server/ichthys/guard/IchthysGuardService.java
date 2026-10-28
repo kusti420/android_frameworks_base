@@ -231,22 +231,15 @@ public final class IchthysGuardService extends SystemService {
 
     /**
      * IchthysOS: rules of uninstalled apps, so a reinstall gets them back right away (Settings
-     * keys its rules by package, but only pushes them on its own start). "pkg|userId" -> uid at
-     * removal, and that uid -> {access, behaviour flags}. Memory only, a few entries.
+     * keys its rules by package, but only pushes them on its own start). "pkg|userId" ->
+     * {access, behaviour flags}, taken when the package is removed. Saved with the policy, so an
+     * uninstall, a reboot and a reinstall still bring the rule back; the newest 64 are kept.
      */
     @GuardedBy("mLock")
-    private final LinkedHashMap<String, Integer> mRemovedPackageUids =
-            new LinkedHashMap<String, Integer>(16, 0.75f, false) {
+    private final LinkedHashMap<String, int[]> mRemovedRules =
+            new LinkedHashMap<String, int[]>(16, 0.75f, false) {
                 @Override
-                protected boolean removeEldestEntry(Map.Entry<String, Integer> eldest) {
-                    return size() > 64;
-                }
-            };
-    @GuardedBy("mLock")
-    private final LinkedHashMap<Integer, int[]> mRemovedUidRules =
-            new LinkedHashMap<Integer, int[]>(16, 0.75f, false) {
-                @Override
-                protected boolean removeEldestEntry(Map.Entry<Integer, int[]> eldest) {
+                protected boolean removeEldestEntry(Map.Entry<String, int[]> eldest) {
                     return size() > 64;
                 }
             };
@@ -369,6 +362,7 @@ public final class IchthysGuardService extends SystemService {
         }
         if (phase == PHASE_ACTIVITY_MANAGER_READY) {
             registerReceivers();
+            registerLanWatcher();
             registerMonitor();
             registerBehaviourWatchers();
             registerAlertWatchers();
@@ -648,7 +642,12 @@ public final class IchthysGuardService extends SystemService {
         for (int i = 0; i < want.size(); i++) {
             final int uid = want.keyAt(i);
             final int state = want.valueAt(i);
-            if (mLanApplied.get(uid, LAN_NONE) == state) continue;
+            // A blocked app granted the permission elsewhere (stock permission settings, "Reset
+            // app preferences") is blocked again, not skipped as already done.
+            if (mLanApplied.get(uid, LAN_NONE) == state
+                    && !(state == LAN_DENY && lanGranted(uid))) {
+                continue;
+            }
             setLanPermission(uid, state);
             if (state == LAN_NONE) {
                 mLanApplied.delete(uid);
@@ -658,6 +657,22 @@ public final class IchthysGuardService extends SystemService {
             changed = true;
         }
         if (changed) savePolicy();
+    }
+
+    private boolean lanGranted(int uid) {
+        return getContext().checkPermission(PERMISSION_LOCAL_NETWORK, -1, uid)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
+    /**
+     * IchthysOS: a grant of the local-network permission made outside Guard, to an app Guard
+     * blocks from the LAN, is taken back right away (applyLan re-checks those uids).
+     */
+    private void registerLanWatcher() {
+        getContext().getPackageManager().addOnPermissionsChangeListener(uid ->
+                mHandler.post(() -> {
+                    if (mLanApplied.get(uid, LAN_NONE) == LAN_DENY && lanGranted(uid)) applyLan();
+                }));
     }
 
     /**
@@ -886,6 +901,7 @@ public final class IchthysGuardService extends SystemService {
             mBehaviour.clear();
             mLanDefaultDeny.clear();
             mLanApplied.clear();
+            mRemovedRules.clear();
             if (!mPolicyFile.exists()) return;
             try (FileInputStream in = new AtomicFile(mPolicyFile).openRead()) {
                 final TypedXmlPullParser parser = Xml.resolvePullParser(in);
@@ -913,6 +929,15 @@ public final class IchthysGuardService extends SystemService {
                         if (isAppUid(uid) && (state == LAN_DENY || state == LAN_ALLOW)) {
                             mLanApplied.put(uid, state);
                         }
+                    } else if ("removed".equals(tag)) {
+                        final String key = parser.getAttributeValue(null, "key");
+                        final int access = parser.getAttributeInt(null, "access",
+                                IIchthysGuard.ACCESS_ALLOW);
+                        final int flags = parser.getAttributeInt(null, "flags", 0) & 0xf;
+                        if (key != null && isValidAccess(access)
+                                && (access != IIchthysGuard.ACCESS_ALLOW || flags != 0)) {
+                            mRemovedRules.put(key, new int[] {access, flags});
+                        }
                     } else if ("alerts".equals(tag)) {
                         mAlertMask = parser.getAttributeInt(null, "mask", IIchthysGuard.ALERT_ALL)
                                 & IIchthysGuard.ALERT_ALL;
@@ -930,11 +955,13 @@ public final class IchthysGuardService extends SystemService {
         final SparseIntArray behaviour;
         final SparseBooleanArray lanNew;
         final int alertMask;
+        final ArrayList<Map.Entry<String, int[]>> removed;
         synchronized (mLock) {
             copy = mPolicy.clone();
             behaviour = mBehaviour.clone();
             lanNew = mLanDefaultDeny.clone();
             alertMask = mAlertMask;
+            removed = new ArrayList<>(mRemovedRules.entrySet());
         }
         final AtomicFile file = new AtomicFile(mPolicyFile);
         FileOutputStream out = null;
@@ -965,6 +992,14 @@ public final class IchthysGuardService extends SystemService {
                 xml.attributeInt(null, "id", mLanApplied.keyAt(i));
                 xml.attributeInt(null, "state", mLanApplied.valueAt(i));
                 xml.endTag(null, "lan-applied");
+            }
+            // Oldest first, so the reload keeps the newest when it trims to 64.
+            for (Map.Entry<String, int[]> e : removed) {
+                xml.startTag(null, "removed");
+                xml.attribute(null, "key", e.getKey());
+                xml.attributeInt(null, "access", e.getValue()[0]);
+                xml.attributeInt(null, "flags", e.getValue()[1]);
+                xml.endTag(null, "removed");
             }
             xml.startTag(null, "alerts");
             xml.attributeInt(null, "mask", alertMask);
@@ -1112,14 +1147,18 @@ public final class IchthysGuardService extends SystemService {
         final IntentFilter pkg = new IntentFilter();
         pkg.addAction(Intent.ACTION_PACKAGE_ADDED);
         pkg.addAction(Intent.ACTION_PACKAGE_REPLACED);
-        pkg.addAction(Intent.ACTION_PACKAGE_REMOVED);
         pkg.addAction(Intent.ACTION_PACKAGE_FULLY_REMOVED);
         pkg.addDataScheme("package");
         getContext().registerReceiverForAllUsers(mPackageReceiver, pkg, null, mScanHandler);
-        // Same receiver object, so it must use the same handler: Android refuses a second
-        // registration with a different one (IllegalStateException, which crash-looped boot).
-        getContext().registerReceiverForAllUsers(mPackageReceiver,
-                new IntentFilter(Intent.ACTION_UID_REMOVED), null, mScanHandler);
+        // IchthysOS: removals on Guard's main thread, with their own receiver (one receiver
+        // object can't take two handlers: that IllegalStateException crash-looped boot). The
+        // install receiver below runs there too, so a reinstall always sees the removal first;
+        // behind the scans on the scan thread it could come after it.
+        final IntentFilter removed = new IntentFilter(Intent.ACTION_PACKAGE_REMOVED);
+        removed.addDataScheme("package");
+        getContext().registerReceiverForAllUsers(mRemovalReceiver, removed, null, mHandler);
+        getContext().registerReceiverForAllUsers(mRemovalReceiver,
+                new IntentFilter(Intent.ACTION_UID_REMOVED), null, mHandler);
         // IchthysOS: install-time work (quarantine, LAN default, restoring a reinstalled app's
         // rules) on Guard's main thread with its own receiver: behind the dex scans on the scan
         // thread it came late enough to force-stop an app the user had already opened.
@@ -1162,8 +1201,7 @@ public final class IchthysGuardService extends SystemService {
         }
         boolean changed = false;
         synchronized (mLock) {
-            final Integer oldUid = mRemovedPackageUids.remove(pkgName + "|" + userId);
-            final int[] rules = oldUid != null ? mRemovedUidRules.remove(oldUid) : null;
+            final int[] rules = mRemovedRules.remove(pkgName + "|" + userId);
             if (rules == null) return;
             if (rules[0] != IIchthysGuard.ACCESS_ALLOW && mPolicy.indexOfKey(uid) < 0) {
                 mPolicy.put(uid, rules[0]);
@@ -1182,6 +1220,61 @@ public final class IchthysGuardService extends SystemService {
         }
     }
 
+    /**
+     * IchthysOS: uninstalls. PACKAGE_REMOVED keeps the app's rules for a reinstall
+     * (restoreRemovedRules); UID_REMOVED drops the uid's own, so a later app that gets the uid
+     * doesn't inherit them. Handler thread, like mInstallReceiver.
+     */
+    private final BroadcastReceiver mRemovalReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            try {
+                if (intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)) return;
+                final int uid = intent.getIntExtra(Intent.EXTRA_UID, -1);
+                if (uid < 0) return;
+                if (Intent.ACTION_PACKAGE_REMOVED.equals(intent.getAction())) {
+                    final String pkgName = intent.getData() != null
+                            ? intent.getData().getSchemeSpecificPart() : null;
+                    if (pkgName == null) return;
+                    boolean kept = false;
+                    synchronized (mLock) {
+                        final int access = mPolicy.get(uid, IIchthysGuard.ACCESS_ALLOW);
+                        final int flags = mBehaviour.get(uid);
+                        if (access != IIchthysGuard.ACCESS_ALLOW || flags != 0) {
+                            mRemovedRules.put(pkgName + "|" + getSendingUserId(),
+                                    new int[] {access, flags});
+                            kept = true;
+                        }
+                    }
+                    if (kept) savePolicy();
+                    return;
+                }
+                boolean changed = false;
+                synchronized (mLock) {
+                    if (mPolicy.indexOfKey(uid) >= 0) {
+                        mPolicy.delete(uid);
+                        changed = true;
+                    }
+                    if (mBehaviour.indexOfKey(uid) >= 0) {
+                        mBehaviour.delete(uid);
+                        changed = true;
+                    }
+                    if (mLanDefaultDeny.get(uid)) {
+                        mLanDefaultDeny.delete(uid);
+                        changed = true;
+                    }
+                }
+                if (changed) {
+                    mLanApplied.delete(uid);
+                    savePolicy();
+                    applyFirewall();
+                }
+            } catch (RuntimeException e) {
+                Slog.wtf(TAG, "removal broadcast failed: " + intent, e);
+            }
+        }
+    };
+
     private final BroadcastReceiver mPackageReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -1194,54 +1287,9 @@ public final class IchthysGuardService extends SystemService {
 
         private void onReceiveInternal(Intent intent) {
             final String action = intent.getAction();
-            if (Intent.ACTION_UID_REMOVED.equals(action)) {
-                if (intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)) return;
-                final int uid = intent.getIntExtra(Intent.EXTRA_UID, -1);
-                boolean changed = false;
-                synchronized (mLock) {
-                    // IchthysOS: kept (in memory) for a reinstall, see restoreRemovedRules().
-                    final int access = mPolicy.get(uid, IIchthysGuard.ACCESS_ALLOW);
-                    final int flags = mBehaviour.get(uid);
-                    if (uid >= 0 && (access != IIchthysGuard.ACCESS_ALLOW || flags != 0)) {
-                        mRemovedUidRules.put(uid, new int[] {access, flags});
-                    }
-                    if (uid >= 0 && mPolicy.indexOfKey(uid) >= 0) {
-                        mPolicy.delete(uid);
-                        changed = true;
-                    }
-                    if (uid >= 0 && mBehaviour.indexOfKey(uid) >= 0) {
-                        mBehaviour.delete(uid);
-                        changed = true;
-                    }
-                    if (uid >= 0 && mLanDefaultDeny.get(uid)) {
-                        mLanDefaultDeny.delete(uid);
-                        changed = true;
-                    }
-                }
-                if (changed) {
-                    // A later install may reuse the uid; it must not inherit the rule. On the
-                    // handler thread like every other save, so two writes of the file can't race.
-                    mHandler.post(() -> {
-                        mLanApplied.delete(uid);
-                        savePolicy();
-                        applyFirewall();
-                    });
-                }
-                return;
-            }
             final String pkgName = intent.getData() != null
                     ? intent.getData().getSchemeSpecificPart() : null;
             if (pkgName == null) return;
-            if (Intent.ACTION_PACKAGE_REMOVED.equals(action)) {
-                // IchthysOS: which uid the package had, for restoreRemovedRules().
-                final int uid = intent.getIntExtra(Intent.EXTRA_UID, -1);
-                if (uid >= 0 && !intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)) {
-                    synchronized (mLock) {
-                        mRemovedPackageUids.put(pkgName + "|" + getSendingUserId(), uid);
-                    }
-                }
-                return;
-            }
             if (Intent.ACTION_PACKAGE_FULLY_REMOVED.equals(action)) {
                 boolean removed;
                 synchronized (mLock) {
@@ -1888,6 +1936,17 @@ public final class IchthysGuardService extends SystemService {
             enforce();
             synchronized (mLock) {
                 return lanStateLocked(uid) == LAN_DENY;
+            }
+        }
+
+        @Override
+        public boolean isRestrictable(int uid) {
+            enforce();
+            final long token = Binder.clearCallingIdentity();
+            try {
+                return !isCriticalUid(uid);
+            } finally {
+                Binder.restoreCallingIdentity(token);
             }
         }
 
