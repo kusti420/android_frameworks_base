@@ -353,3 +353,13 @@ private object EditModeButtonDefaults {
 
 /** crDroid `qs_footer_show_edit`: show the Quick Settings edit (pencil) button. */
 private const val KEY_QS_FOOTER_SHOW_EDIT = "qs_footer_show_edit"
+
+/**
+ * IchthysOS: whether [EditModeButton] draws anything (its view model and crDroid's "Edit icon"
+ * switch), for a layout that keeps a place for it.
+ */
+@Composable
+fun rememberEditModeButtonShown(viewModel: EditModeButtonViewModel): Boolean {
+    val enabled = rememberSystemSettingBoolean(KEY_QS_FOOTER_SHOW_EDIT, default = true)
+    return enabled && viewModel.isEditButtonVisible
+}

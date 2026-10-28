@@ -235,8 +235,12 @@ internal fun ContentScope.ShoalTileGrid(
                 }
             }
         }
-        if (small.isNotEmpty()) {
-            val rows = remember(small.size) { honeycombRows(small.size) }
+        // IchthysOS: the edit button takes the cell after the last circle (the free end of a
+        // short row) instead of a footer row of its own under the honeycomb.
+        val trailing = LocalShoalTrailingCircle.current
+        val cells = small.size + if (trailing != null) 1 else 0
+        if (cells > 0) {
+            val rows = remember(cells) { honeycombRows(cells) }
             HoneycombLayout(rows = rows, modifier = Modifier.fillMaxWidth()) {
                 small.forEach { tile ->
                     key(tile.spec) {
@@ -252,6 +256,9 @@ internal fun ContentScope.ShoalTileGrid(
                             )
                         }
                     }
+                }
+                if (trailing != null) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { trailing() }
                 }
             }
         }

@@ -51,12 +51,14 @@ import com.android.systemui.qs.panels.ui.compose.Dimensions.FooterHeight
 import com.android.systemui.qs.panels.ui.compose.Dimensions.InterPageSpacing
 import com.android.systemui.qs.panels.ui.compose.Dimensions.ShoalFooterHeight
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.LocalShoalJunctionOffset
+import com.android.systemui.qs.panels.ui.compose.infinitegrid.LocalShoalTrailingCircle
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.ShoalJunctions
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.ShoalQsColors
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalAccent
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalQsEnabled
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.shoalPages
 import com.android.systemui.qs.panels.ui.compose.toolbar.EditModeButton
+import com.android.systemui.qs.panels.ui.compose.toolbar.rememberEditModeButtonShown
 import com.android.systemui.qs.panels.ui.viewmodel.PaginatedGridViewModel
 import com.android.systemui.qs.panels.ui.viewmodel.TileViewModel
 import com.android.systemui.qs.panels.ui.viewmodel.toolbar.EditModeButtonViewModel
@@ -114,6 +116,27 @@ constructor(
 
         val pagerState = rememberPagerState(0) { pages.size }
 
+        val editButtonViewModel =
+            rememberViewModel(traceName = "PaginatedGridLayout-editButtonViewModel") {
+                viewModel.editModeButtonViewModelFactory.create()
+            }
+        // IchthysOS "Shoal": on a single page the edit button is the honeycomb's last cell and
+        // there is no footer row (no build number either; it is in Settings > About), so a full
+        // panel fits without scrolling.
+        val editInGrid =
+            shoalPaging && pages.size == 1 && rememberEditModeButtonShown(editButtonViewModel)
+        val editCircle: (@Composable () -> Unit)? =
+            if (editInGrid) {
+                {
+                    EditModeButton(
+                        viewModel = editButtonViewModel,
+                        isVisible = listening() && layoutState.isIdle(),
+                    )
+                }
+            } else {
+                null
+            }
+
         LaunchedEffect(listening, pagerState) {
             snapshotFlow { listening() }
                 .collect {
@@ -170,7 +193,8 @@ constructor(
                 // IchthysOS "Shoal": each page has its own junctions; tell the grid which slots
                 // of the junction list are this page's.
                 CompositionLocalProvider(
-                    LocalShoalJunctionOffset provides it * ShoalJunctions.PER_PAGE
+                    LocalShoalJunctionOffset provides it * ShoalJunctions.PER_PAGE,
+                    LocalShoalTrailingCircle provides editCircle,
                 ) {
                     with(delegateGridLayout) {
                         TileGrid(
@@ -182,13 +206,15 @@ constructor(
                     }
                 }
             }
-            FooterBar(
-                buildNumberViewModelFactory = viewModel.buildNumberViewModelFactory,
-                pagerState = pagerState,
-                showArrowsInPager = viewModel.showArrowsInPagerDots,
-                editButtonViewModelFactory = viewModel.editModeButtonViewModelFactory,
-                isVisible = { listening() && layoutState.isIdle() },
-            )
+            if (!(shoalPaging && pages.size == 1)) {
+                FooterBar(
+                    buildNumberViewModelFactory = viewModel.buildNumberViewModelFactory,
+                    pagerState = pagerState,
+                    showArrowsInPager = viewModel.showArrowsInPagerDots,
+                    editButtonViewModel = editButtonViewModel,
+                    isVisible = { listening() && layoutState.isIdle() },
+                )
+            }
         }
     }
 }
@@ -208,13 +234,9 @@ private fun FooterBar(
     buildNumberViewModelFactory: BuildNumberViewModel.Factory,
     pagerState: PagerState,
     showArrowsInPager: Boolean,
-    editButtonViewModelFactory: EditModeButtonViewModel.Factory,
+    editButtonViewModel: EditModeButtonViewModel,
     isVisible: () -> Boolean = { true },
 ) {
-    val editButtonViewModel =
-        rememberViewModel(traceName = "PaginatedGridLayout-editButtonViewModel") {
-            editButtonViewModelFactory.create()
-        }
 
     // Use requiredHeight so it won't be squished if the view doesn't quite fit. As this is
     // expected to be inside a scrollable container, this should not be an issue.
@@ -235,7 +257,8 @@ private fun FooterBar(
         horizontalArrangement = spacedBy(8.dp),
     ) {
         Row(Modifier.weight(1f)) {
-            BuildNumber(viewModelFactory = buildNumberViewModelFactory)
+            // IchthysOS "Shoal": no build number in the panel (it is in Settings > About).
+            if (!shoal) BuildNumber(viewModelFactory = buildNumberViewModelFactory)
             Spacer(modifier = Modifier.weight(1f))
         }
         PagerDots(

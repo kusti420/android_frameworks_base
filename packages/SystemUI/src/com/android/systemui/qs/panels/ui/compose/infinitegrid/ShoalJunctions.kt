@@ -16,6 +16,7 @@
 
 package com.android.systemui.qs.panels.ui.compose.infinitegrid
 
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
 import com.android.systemui.qs.pipeline.shared.TileSpec
 
@@ -73,6 +74,12 @@ internal object ShoalJunctions {
  * a grid that is not paged starts at slot 0.
  */
 internal val LocalShoalJunctionOffset = compositionLocalOf { 0 }
+
+/**
+ * IchthysOS "Shoal": something to put in the honeycomb's next free cell after the circles (the
+ * edit button, on a single page), or null.
+ */
+internal val LocalShoalTrailingCircle = compositionLocalOf<(@Composable () -> Unit)?> { null }
 
 /**
  * What goes where on one page: the big tiles in order, one entry per junction of those big tiles
