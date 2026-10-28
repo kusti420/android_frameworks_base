@@ -97,6 +97,13 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
      */
     private val shaped = Path()
     private val glyphs = Array(4) { Path() }
+    /**
+     * IchthysOS: each digit's centre (x0..x3, y0..y3) where it is drawn, for the clear glass's
+     * face magnification; NaN when not known (the drawn Square digits).
+     */
+    private val glyphCentres = FloatArray(8) { Float.NaN }
+    private val centreBounds = RectF()
+    private val centrePt = FloatArray(2)
     private val glyphPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val columns = FloatArray(4)
     /**
@@ -751,6 +758,13 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         // Frosted: what is seen through the pane is blurred (in the frost's own px).
         sh.setFloatUniform("frost", if (frosted) dp(6f) * glassValues[0].coerceAtLeast(0.05f) else 0f)
         sh.setFloatUniform("lightDir", -0.6f, -0.8f)
+        // Each digit's flat face magnifies the scene a little about its own centre (a pane of
+        // glass is a weak lens): what shows through is shifted against the picture around it,
+        // which is what makes clear glass readable on any picture.
+        val known = !glyphCentres[0].isNaN()
+        sh.setFloatUniform("gcx", glyphCentres[0], glyphCentres[1], glyphCentres[2], glyphCentres[3])
+        sh.setFloatUniform("gcy", glyphCentres[4], glyphCentres[5], glyphCentres[6], glyphCentres[7])
+        sh.setFloatUniform("faceMag", if (known) FACE_MAG else 0f)
         sh.setFloatUniform("alpha", alpha)
         // Over a dark picture the glass takes the picture's accent, pale at the top of the
         // digits to full at their bottom.
@@ -874,6 +888,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
             val mm = String.format(Locale.US, "%02d", minute())
             digits.reset()
             if (squareFont) {
+                glyphCentres.fill(Float.NaN)
                 // IchthysOS: drawn, not set; centred like the text (its advances, side bearings
                 // included).
                 val left = width / 2f - pairWidth(digitPaint) / 2f
@@ -886,12 +901,17 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
             glyphPaint.textAlign = Paint.Align.LEFT
             val cell = digitCell(glyphPaint)
             val left = width / 2f - cell
+            var n = 0
             for ((text, base) in arrayOf(hh to line1Base, mm to line2Base)) {
                 for (i in 0..1) {
                     p.reset()
                     glyphPaint.getTextPath(text, i, i + 1, cellLeft(glyphPaint, text, i, left, cell),
                         base, p)
                     digits.addPath(p)
+                    p.computeBounds(centreBounds, true)
+                    glyphCentres[n] = centreBounds.centerX()
+                    glyphCentres[n + 4] = centreBounds.centerY()
+                    n++
                 }
             }
         }
@@ -1216,6 +1236,12 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
             shapeMatrix.setScale(k, sy, midX, anchor)
             if (minutes) shapeMatrix.postTranslate(0f, minuteTopAt(k, vh) - mTop)
             shaped.addPath(glyph, shapeMatrix)
+            glyph.computeBounds(centreBounds, true)
+            centrePt[0] = centreBounds.centerX()
+            centrePt[1] = centreBounds.centerY()
+            shapeMatrix.mapPoints(centrePt)
+            glyphCentres[i] = centrePt[0]
+            glyphCentres[i + 4] = centrePt[1]
         }
         return shaped
     }
@@ -1965,6 +1991,9 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
             uniform float2 tintSpan;
 
             uniform float frost;
+            uniform float4 gcx;
+            uniform float4 gcy;
+            uniform float faceMag;
 
             half3 scene(float2 q) {
                 float3 f = toFrost * float3(q, 1.0);
@@ -1998,7 +2027,24 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
                 float slope = smoothstep(0.45, 1.0, edge);           // flat face, sloped rim
                 float nz = 1.0 / sqrt(1.0 + slope * slope * 9.0);
                 float2 off = nin * slope * bend;
-                half3 c = half3(scene(p + off * 1.06).r, scene(p + off).g, scene(p + off * 0.94).b);
+                // the face is a weak lens: the scene magnified about this digit's centre
+                float2 q = p;
+                if (faceMag > 0.0) {
+                    float2 c0 = float2(gcx.x, gcy.x);
+                    float2 c1 = float2(gcx.y, gcy.y);
+                    float2 c2 = float2(gcx.z, gcy.z);
+                    float2 c3 = float2(gcx.w, gcy.w);
+                    float2 cc = c0;
+                    float dd = dot(p - c0, p - c0);
+                    float d1 = dot(p - c1, p - c1);
+                    if (d1 < dd) { dd = d1; cc = c1; }
+                    float d2 = dot(p - c2, p - c2);
+                    if (d2 < dd) { dd = d2; cc = c2; }
+                    float d3 = dot(p - c3, p - c3);
+                    if (d3 < dd) { dd = d3; cc = c3; }
+                    q = cc + (p - cc) * (1.0 - faceMag);
+                }
+                half3 c = half3(scene(q + off * 1.06).r, scene(q + off).g, scene(q + off * 0.94).b);
                 c = c * half(dim) + half(add);
                 // Apple's slider: a touch of milk over a bright picture, smoke over a dark one
                 c = milk >= 0.0 ? 1.0 - (1.0 - c) * half(1.0 - milk) : c * half(1.0 + milk);
@@ -2034,6 +2080,8 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         const val SHAPE_TUCK = 1
         const val SHAPE_FOLLOW = 2
         private const val EASE_MS = 450f
+        /** How much the clear glass's face magnifies what is behind it (the PC model's FACEMAG). */
+        private const val FACE_MAG = 0.1f
         private val EASE = android.view.animation.PathInterpolator(0.4f, 0f, 0.2f, 1f)
         /** The shape never reaches below this share of the screen (notifications, shortcuts). */
         private const val MAX_SCREEN_BOTTOM = 0.62f
