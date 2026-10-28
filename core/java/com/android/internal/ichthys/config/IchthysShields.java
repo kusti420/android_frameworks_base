@@ -176,7 +176,8 @@ public final class IchthysShields {
             "Apps that may switch Wi-Fi and change its networks.",
             null, null, "ichthys_wifi_control_pkgs", Polarity.ALLOW, false);
     public static final Shield UWB = new Shield("uwb",
-            "UWB ranging: apps can't measure the distance to nearby devices.",
+            "UWB ranging: apps can't measure the distance to nearby devices over UWB (Bluetooth "
+                    + "and Wi-Fi ranging aren't covered).",
             "Apps that may use UWB ranging.",
             null, null, "ichthys_uwb_pkgs", Polarity.ALLOW, false);
 
