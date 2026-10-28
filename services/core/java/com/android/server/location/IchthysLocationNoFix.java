@@ -106,7 +106,34 @@ public final class IchthysLocationNoFix {
                 || UserHandle.getAppId(identity.getUid()) < Process.FIRST_APPLICATION_UID) {
             return false;
         }
-        return isNoFix(identity.getPackageName(), identity.getUserId());
+        if (isNoFix(identity.getPackageName(), identity.getUserId())) {
+            return true;
+        }
+        // IchthysOS: and by the uid's other packages: with a shared uid, a listed app could name
+        // an unlisted sibling package (it only has to belong to the uid).
+        final Context context;
+        synchronized (sLock) {
+            context = sContext;
+        }
+        if (context == null) {
+            return false;
+        }
+        final String[] packages;
+        final long token = Binder.clearCallingIdentity();
+        try {
+            packages = context.getPackageManager().getPackagesForUid(identity.getUid());
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+        if (packages == null || packages.length < 2) {
+            return false;
+        }
+        for (String pkg : packages) {
+            if (!pkg.equals(identity.getPackageName()) && isNoFix(pkg, identity.getUserId())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
