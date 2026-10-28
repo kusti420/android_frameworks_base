@@ -2428,6 +2428,12 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
             int flags, Bundle bOptions) {
         mAmInternal.enforceCallingPermission(android.Manifest.permission.REORDER_TASKS,
                 "moveTaskToFront()");
+        // IchthysOS: an app in Backstage can't move a task forward itself (only the user brings
+        // it back, through the launcher or SystemUI).
+        if (com.android.server.IchthysBackstageService.isHiddenUid(Binder.getCallingUid())) {
+            Slog.i(TAG, "moveTaskToFront refused: the caller is in Backstage");
+            return;
+        }
 
         ProtoLog.d(WM_DEBUG_TASKS, "moveTaskToFront: moving taskId=%d", taskId);
         synchronized (mGlobalLock) {

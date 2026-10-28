@@ -83,6 +83,7 @@ public interface ActivityInterceptorCallback {
             // Order Ids for system services
             SYSTEM_FIRST_ORDERED_ID,
             PERMISSION_POLICY_ORDERED_ID,
+            ICHTHYS_BACKSTAGE_ORDERED_ID,
             VIRTUAL_DEVICE_SERVICE_ORDERED_ID,
             DREAM_MANAGER_ORDERED_ID,
             PRODUCT_ORDERED_ID,
@@ -106,6 +107,13 @@ public interface ActivityInterceptorCallback {
      * @hide
      */
     int PERMISSION_POLICY_ORDERED_ID = 1;
+
+    /**
+     * IchthysOS: the identifier for {@link com.android.server.IchthysBackstageService}'s
+     * interceptor (keeps what a Backstage app starts on its hidden display).
+     * @hide
+     */
+    int ICHTHYS_BACKSTAGE_ORDERED_ID = 2;
 
     /**
      * The identifier for {@link com.android.server.companion.virtual.VirtualDeviceManagerService}

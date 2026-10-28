@@ -52,6 +52,7 @@ import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.PowerManager;
 import android.os.RemoteException;
+import android.os.Process;
 import android.os.SystemClock;
 import android.os.UserHandle;
 import android.os.UserManager;
@@ -59,6 +60,8 @@ import android.provider.Settings;
 import android.text.TextUtils;
 import android.util.DisplayMetrics;
 import android.util.Slog;
+import android.util.ArraySet;
+import android.util.SparseIntArray;
 import android.view.Display;
 
 import java.util.ArrayList;
@@ -66,6 +69,7 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 
 /**
@@ -189,6 +193,8 @@ public final class IchthysBackstageService {
         boolean notified;
         /** Its hidden display, only while it is (being) hidden. */
         Stage stage;
+        /** Its uid, once hidden (for the activity-start interceptor). */
+        int uid = Process.INVALID_UID;
 
         Entry(String pkg) {
             this.pkg = pkg;
@@ -197,6 +203,23 @@ public final class IchthysBackstageService {
         boolean settling() {
             return SystemClock.elapsedRealtime() - movedAt < MOVE_SETTLE_MS;
         }
+    }
+
+    // IchthysOS: what the activity-start interceptor and ActivityTaskManagerService read, under
+    // the window manager's lock: the uids of the apps on a hidden display -> that display, and
+    // those apps' packages. Written on mHandler (publishHidden), replaced whole, never changed.
+    private static volatile SparseIntArray sHiddenUidStages = new SparseIntArray();
+    private static volatile ArraySet<String> sHiddenPackages = new ArraySet<>();
+    /** package -> when the launcher, SystemUI or a notification last started it (elapsed ms). */
+    private final ConcurrentHashMap<String, Long> mUserOpenedAt = new ConcurrentHashMap<>();
+    /** package -> when a hidden app last started an activity of it itself (elapsed ms). */
+    private final ConcurrentHashMap<String, Long> mSelfStartedAt = new ConcurrentHashMap<>();
+    /** How recent a start must be to explain a task coming forward. */
+    private static final long START_EXPLAINS_MS = 3000;
+
+    /** Whether {@code uid} is an app in Backstage on its hidden display right now. */
+    public static boolean isHiddenUid(int uid) {
+        return sHiddenUidStages.indexOfKey(uid) >= 0;
     }
 
     public IchthysBackstageService(Context context) {
@@ -213,6 +236,11 @@ public final class IchthysBackstageService {
 
     private void init() {
         mUserId = ActivityManager.getCurrentUser();
+        LocalServices.getService(com.android.server.wm.ActivityTaskManagerInternal.class)
+                .registerActivityStartInterceptor(
+                        com.android.server.wm.ActivityInterceptorCallback
+                                .ICHTHYS_BACKSTAGE_ORDERED_ID,
+                        this::interceptStart);
         // Backstage never survives a reboot: start from an empty list for every user.
         for (UserInfo user : mContext.getSystemService(UserManager.class).getAliveUsers()) {
             Settings.Secure.putStringForUser(mContext.getContentResolver(), KEY_PACKAGES, null,
@@ -321,7 +349,7 @@ public final class IchthysBackstageService {
             mAtm.registerTaskStackListener(new TaskStackListener() {
                 @Override
                 public void onTaskCreated(int taskId, ComponentName componentName) {
-                    mHandler.post(() -> moveForeignTasksToMain());
+                    mHandler.post(() -> closeForeignTasks());
                 }
 
                 @Override
@@ -345,7 +373,7 @@ public final class IchthysBackstageService {
                 @Override
                 public void onTaskMovedToFront(ActivityManager.RunningTaskInfo task) {
                     mHandler.post(() -> {
-                        moveForeignTasksToMain();
+                        closeForeignTasks();
                         onOpened(task);
                         scheduleLeftCheck();
                     });
@@ -471,6 +499,14 @@ public final class IchthysBackstageService {
                 Slog.w(TAG, "taking " + pkg + " out of Backstage failed: " + e);
             }
         }
+        if (kill) {
+            // IchthysOS: Stop and the hour limit end the app, not only its task: its foreground
+            // services and wake locks too, wherever its task was (the main screen included).
+            final ActivityManager am = mContext.getSystemService(ActivityManager.class);
+            if (am != null) {
+                am.forceStopPackageAsUser(pkg, mUserId);
+            }
+        }
         final Stage stage = entry.stage;
         entry.stage = null;
         if (stage != null) {
@@ -502,6 +538,67 @@ public final class IchthysBackstageService {
         Settings.Secure.putStringForUser(mContext.getContentResolver(), KEY_PACKAGES, null, userId);
     }
 
+    /**
+     * IchthysOS: every activity start, under the window manager's lock (read only the volatile
+     * snapshots). What an app in Backstage starts itself, of its own or of another app, stays on
+     * its hidden display: it can't put itself, or anything else, over what the user is doing.
+     * Starts of a Backstage app by anyone else (the launcher, SystemUI, a notification sent by
+     * SystemUI) are noted, so onOpened() can tell the user asked for it.
+     */
+    private com.android.server.wm.ActivityInterceptorCallback.ActivityInterceptResult
+            interceptStart(com.android.server.wm.ActivityInterceptorCallback
+                    .ActivityInterceptorInfo info) {
+        final SparseIntArray hidden = sHiddenUidStages;
+        if (hidden.size() == 0) {
+            return null;
+        }
+        final String target = info.getActivityInfo() != null
+                ? info.getActivityInfo().packageName
+                : info.getIntent().getComponent() != null
+                        ? info.getIntent().getComponent().getPackageName() : null;
+        int stage = hidden.get(info.getRealCallingUid(), Display.INVALID_DISPLAY);
+        // A PendingIntent of the hidden app sent by the system (an alarm, a job) is its own
+        // start too; one sent by SystemUI (a notification tapped) is the user's.
+        if (stage == Display.INVALID_DISPLAY && info.getRealCallingUid() == Process.SYSTEM_UID) {
+            stage = hidden.get(info.getCallingUid(), Display.INVALID_DISPLAY);
+        }
+        if (stage == Display.INVALID_DISPLAY) {
+            if (target != null && sHiddenPackages.contains(target)) {
+                mUserOpenedAt.put(target, SystemClock.elapsedRealtime());
+            }
+            return null;
+        }
+        if (target != null) {
+            mSelfStartedAt.put(target, SystemClock.elapsedRealtime());
+        }
+        final ActivityOptions options = info.getCheckedOptions() != null
+                ? info.getCheckedOptions() : ActivityOptions.makeBasic();
+        if (options.getLaunchDisplayId() == stage) {
+            return null;
+        }
+        options.setLaunchDisplayId(stage);
+        return new com.android.server.wm.ActivityInterceptorCallback.ActivityInterceptResult(
+                info.getIntent(), options);
+    }
+
+    /** Publishes the hidden apps for interceptStart() and isHiddenUid(). mHandler only. */
+    private void publishHidden() {
+        final SparseIntArray uids = new SparseIntArray();
+        final ArraySet<String> pkgs = new ArraySet<>();
+        for (Entry entry : mEntries.values()) {
+            if (entry.stage != null && entry.uid != Process.INVALID_UID) {
+                uids.put(entry.uid, entry.stage.id());
+                pkgs.add(entry.pkg);
+            }
+        }
+        sHiddenUidStages = uids;
+        sHiddenPackages = pkgs;
+    }
+
+    private static boolean recent(Long at) {
+        return at != null && SystemClock.elapsedRealtime() - at < START_EXPLAINS_MS;
+    }
+
     // ---- Moving between the screens ----
 
     /** Main screen -> its hidden display. */
@@ -524,6 +621,8 @@ public final class IchthysBackstageService {
             return;
         }
         entry.movedAt = SystemClock.elapsedRealtime();
+        entry.uid = task.effectiveUid;
+        publishHidden();
         postNotification(entry);
         Slog.i(TAG, entry.pkg + " went to Backstage");
     }
@@ -604,7 +703,13 @@ public final class IchthysBackstageService {
             // the keyguard, where it stops. IchthysOS: and only when the user did it, through
             // the launcher or SystemUI (the shade, recents): the app restarting its own activity
             // or moving its task forward must not put itself over what the user is doing.
-            if (isUserPresent() && isSystemSurfaceFocused()) {
+            // IchthysOS: by who started it, not only by who has focus: a start the app made
+            // itself (interceptStart) keeps it hidden even with the launcher focused; one by the
+            // launcher or SystemUI brings it back. Recents moves the task without a start, so
+            // a move with neither and SystemUI or the launcher focused counts as the user's.
+            final boolean asked = recent(mUserOpenedAt.get(entry.pkg));
+            final boolean self = recent(mSelfStartedAt.get(entry.pkg));
+            if (isUserPresent() && isSystemSurfaceFocused() && (asked || !self)) {
                 show(entry);
             } else if (isUserPresent()) {
                 Slog.i(TAG, entry.pkg + " came forward by itself; it stays in Backstage");
@@ -664,11 +769,14 @@ public final class IchthysBackstageService {
         final com.android.server.wm.WindowManagerInternal wm =
                 LocalServices.getService(com.android.server.wm.WindowManagerInternal.class);
         if (wm == null) {
-            return true;  // can't tell: keep the old behaviour rather than strand the app
+            return false;  // can't tell: it stays hidden (the user can bring it back)
         }
         final PackageManager pm = mContext.getPackageManager();
         try {
-            if (wm.isUidFocused(pm.getPackageUidAsUser("com.android.systemui", UserHandle.USER_SYSTEM))) {
+            // On the top focused display only: SystemUI focused on a cast or desktop display
+            // isn't the user asking for this app.
+            if (wm.isUidFocusedOnTopFocusedDisplay(
+                    pm.getPackageUidAsUser("com.android.systemui", UserHandle.USER_SYSTEM))) {
                 return true;
             }
         } catch (PackageManager.NameNotFoundException ignored) {
@@ -678,7 +786,7 @@ public final class IchthysBackstageService {
                 new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),
                 PackageManager.MATCH_DEFAULT_ONLY, mUserId);
         if (home != null && home.activityInfo != null) {
-            return wm.isUidFocused(home.activityInfo.applicationInfo.uid);
+            return wm.isUidFocusedOnTopFocusedDisplay(home.activityInfo.applicationInfo.uid);
         }
         return false;
     }
@@ -752,15 +860,16 @@ public final class IchthysBackstageService {
         if (settling) {
             mHandler.postDelayed(mRefresh, MOVE_SETTLE_MS);
         }
-        moveForeignTasksToMain();
+        closeForeignTasks();
     }
 
     /**
-     * Something a hidden app started in a new task (a browser for a login, "open with") lands
-     * on the app's hidden display, where nobody could see it, covering the app. It belongs on
-     * the main screen.
+     * Something a hidden app started in a new task lands on the app's hidden display
+     * (interceptStart keeps it there), covering the app. The user can't use a hidden app, so it
+     * started it by itself: it must not come over what the user is doing, and it would stop the
+     * app on its display. It is closed. IchthysOS: it used to move to the main screen, on top.
      */
-    private void moveForeignTasksToMain() {
+    private void closeForeignTasks() {
         for (Entry entry : mEntries.values()) {
             final int displayId = stageId(entry);
             if (displayId == Display.INVALID_DISPLAY) {
@@ -773,11 +882,13 @@ public final class IchthysBackstageService {
                             : info.topActivity;
                     if (info.displayId == displayId && base != null
                             && !entry.pkg.equals(base.getPackageName())) {
-                        mAtm.moveRootTaskToDisplay(info.taskId, Display.DEFAULT_DISPLAY);
+                        Slog.i(TAG, entry.pkg + " started " + base.getPackageName()
+                                + " in Backstage; closed");
+                        mAtm.removeTask(info.taskId);
                     }
                 }
             } catch (RemoteException | RuntimeException e) {
-                Slog.w(TAG, "moving a task off " + entry.pkg + "'s hidden display failed: " + e);
+                Slog.w(TAG, "closing a task on " + entry.pkg + "'s hidden display failed: " + e);
             }
         }
     }
@@ -921,6 +1032,7 @@ public final class IchthysBackstageService {
         final int id = entry.stage.id();
         entry.stage.release();
         entry.stage = null;
+        publishHidden();
         Slog.i(TAG, "Backstage display " + id + " of " + entry.pkg + " released");
     }
 

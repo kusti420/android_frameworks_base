@@ -168,6 +168,10 @@ class AppTaskImpl extends IAppTask.Stub {
         // Will bring task to front if it already has a root activity.
         final int callingPid = Binder.getCallingPid();
         final int callingUid = Binder.getCallingUid();
+        // IchthysOS: not by an app in Backstage (see ActivityTaskManagerService.moveTaskToFront).
+        if (com.android.server.IchthysBackstageService.isHiddenUid(callingUid)) {
+            return;
+        }
         mService.assertPackageMatchesCallingUid(callingPackage);
         final long origId = Binder.clearCallingIdentity();
         try {
