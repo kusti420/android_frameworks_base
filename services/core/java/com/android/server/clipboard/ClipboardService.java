@@ -99,6 +99,7 @@ import android.util.IntArray;
 import android.util.Pair;
 import android.util.SafetyProtectionUtils;
 import android.util.Slog;
+import android.util.SparseArray;
 import android.util.SparseArrayMap;
 import android.util.SparseBooleanArray;
 import android.util.SparseLongArray;
@@ -251,6 +252,12 @@ public class ClipboardService extends SystemService {
     /** userId -> elapsedRealtime until which the focused app may read: the keyboard pasted. */
     @GuardedBy("mLock")
     private final SparseLongArray mIchthysImePasteUntil = new SparseLongArray();
+    /**
+     * userId -> the window that had focus when the keyboard pasted: only it may use the
+     * keyboard's grant (any app that took focus within the grant could read otherwise).
+     */
+    @GuardedBy("mLock")
+    private final SparseArray<IBinder> mIchthysImePasteWindow = new SparseArray<>();
 
     /**
      * Instantiates the clipboard.
@@ -820,11 +827,14 @@ public class ClipboardService extends SystemService {
             // reads under its own user, so the grant covers the user's profiles too.
             final long until = SystemClock.elapsedRealtime() + ICHTHYS_PASTE_GRANT_MS;
             final List<UserInfo> profiles = getRelatedProfiles(intendingUserId);
+            final IBinder window = ichthysFocusedWindow();
             synchronized (mLock) {
                 mIchthysImePasteUntil.put(intendingUserId, until);
+                mIchthysImePasteWindow.put(intendingUserId, window);
                 if (profiles != null) {
                     for (UserInfo profile : profiles) {
                         mIchthysImePasteUntil.put(profile.id, until);
+                        mIchthysImePasteWindow.put(profile.id, window);
                     }
                 }
             }
@@ -848,11 +858,12 @@ public class ClipboardService extends SystemService {
             }
             final boolean needsPasteProof =
                     ichthysNeedsPasteProof(pkg, intendingUid, intendingUserId);
+            final IBinder focusedWindow = needsPasteProof ? ichthysFocusedWindow() : null;
             synchronized (mLock) {
                 final Clipboard current = getClipboardLocked(intendingUserId, intendingDeviceId);
                 ichthysExpireIfDueLocked(current);
                 if (needsPasteProof) {
-                    if (!ichthysMayReadLocked(intendingUid, current)) {
+                    if (!ichthysMayReadLocked(intendingUid, current, focusedWindow)) {
                         Slog.i(TAG, "Clipboard lockdown: " + pkg + " read the clipboard without"
                                 + " a user paste action; returned empty");
                         return null;
@@ -903,6 +914,7 @@ public class ClipboardService extends SystemService {
             }
             final boolean needsPasteProof =
                     ichthysNeedsPasteProof(callingPackage, intendingUid, intendingUserId);
+            final IBinder focusedWindow = needsPasteProof ? ichthysFocusedWindow() : null;
             synchronized (mLock) {
                 Clipboard clipboard = getClipboardLocked(intendingUserId, intendingDeviceId);
                 ichthysExpireIfDueLocked(clipboard);
@@ -910,7 +922,8 @@ public class ClipboardService extends SystemService {
                     return null;
                 }
                 final ClipDescription description = clipboard.primaryClip.getDescription();
-                if (needsPasteProof && !ichthysMayReadLocked(intendingUid, clipboard)) {
+                if (needsPasteProof
+                        && !ichthysMayReadLocked(intendingUid, clipboard, focusedWindow)) {
                     // IchthysOS: enough to decide whether to offer Paste (MIME types) and
                     // "Paste as plain text" (styled text), but not the label/extras the copying
                     // app attached. A clip may have no MIME types at all: filterMimeTypes()
@@ -1739,15 +1752,29 @@ public class ClipboardService extends SystemService {
      * system-attested paste (notifyUserAuthorizedClipAccess) or the keyboard's paste.
      */
     @GuardedBy("mLock")
-    private boolean ichthysMayReadLocked(int uid, @Nullable Clipboard clipboard) {
+    private boolean ichthysMayReadLocked(int uid, @Nullable Clipboard clipboard,
+            @Nullable IBinder focusedWindow) {
         if (clipboard != null && clipboard.primaryClip != null
                 && UserHandle.isSameApp(getPccAwareUid(uid),
                         getPccAwareUid(clipboard.primaryClipUid))) {
             return true;
         }
         final long now = SystemClock.elapsedRealtime();
+        final int userId = UserHandle.getUserId(uid);
         return now <= mIchthysPasteGrantUntil.get(uid, 0)
-                || now <= mIchthysImePasteUntil.get(UserHandle.getUserId(uid), 0);
+                || (now <= mIchthysImePasteUntil.get(userId, 0) && focusedWindow != null
+                        && focusedWindow == mIchthysImePasteWindow.get(userId));
+    }
+
+    /** IchthysOS: the window with input focus on the top display now. Not under mLock. */
+    @Nullable
+    private IBinder ichthysFocusedWindow() {
+        final long ident = Binder.clearCallingIdentity();
+        try {
+            return mWm.getFocusedWindowToken();
+        } finally {
+            Binder.restoreCallingIdentity(ident);
+        }
     }
 
     /**
