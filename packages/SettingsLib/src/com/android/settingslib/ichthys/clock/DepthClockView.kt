@@ -2005,6 +2005,8 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
          * typefaces.
          */
         const val FONT_SQUARE = 6
+        /** IchthysOS: rounded heavy figures (Nunito ExtraBold, close to SF Pro Rounded). */
+        const val FONT_ROUNDED = 7
         private val CONDENSED = setOf(FONT_TALL, FONT_FLEX, FONT_THIN)
 
         /** Settings.Secure: the date / status line above ([DATE_ABOVE]) or below the digits. */
@@ -2054,6 +2056,8 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
                                 ?: variable(ROBOTO_FLEX, "'wdth' 25, 'wght' 200, 'opsz' 144")
                         FONT_SERIF -> Typeface.create("serif", Typeface.BOLD)
                         FONT_MONO -> Typeface.create("monospace", Typeface.BOLD)
+                        FONT_ROUNDED ->
+                            variable(NUNITO, "'wght' 800") ?: Typeface.create("sans-serif", Typeface.BOLD)
                         else ->
                             // Big Shoulders Display Black (IchthysDepth ships it), else Roboto
                             // Flex at its narrowest.
@@ -2065,6 +2069,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
 
         private const val BIG_SHOULDERS = "/system/fonts/BigShouldersDisplay-VF.ttf"
         private const val ROBOTO_FLEX = "/system/fonts/RobotoFlex-Regular.ttf"
+        private const val NUNITO = "/system/fonts/Nunito-VF.ttf"
 
         private fun monoTypeface(): Typeface =
             variable("/system/fonts/JetBrainsMono-VF.ttf", "'wght' 450") ?: Typeface.MONOSPACE
