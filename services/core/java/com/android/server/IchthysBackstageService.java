@@ -36,6 +36,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.content.pm.UserInfo;
 import android.content.res.Configuration;
 import android.database.ContentObserver;
@@ -600,9 +601,13 @@ public final class IchthysBackstageService {
             // Brought to the front on its hidden display (launcher, recents, a notification of
             // the app): the user wants to see it. With the screen off or locked that can only be
             // the app itself (restarting its own activity): moving it then would put it behind
-            // the keyguard, where it stops.
-            if (isUserPresent()) {
+            // the keyguard, where it stops. IchthysOS: and only when the user did it, through
+            // the launcher or SystemUI (the shade, recents): the app restarting its own activity
+            // or moving its task forward must not put itself over what the user is doing.
+            if (isUserPresent() && isSystemSurfaceFocused()) {
                 show(entry);
+            } else if (isUserPresent()) {
+                Slog.i(TAG, entry.pkg + " came forward by itself; it stays in Backstage");
             }
         }
     }
@@ -654,6 +659,30 @@ public final class IchthysBackstageService {
     }
 
     /** The main screen is on and unlocked. */
+    /** Whether SystemUI (shade, recents) or the home app has input focus right now. */
+    private boolean isSystemSurfaceFocused() {
+        final com.android.server.wm.WindowManagerInternal wm =
+                LocalServices.getService(com.android.server.wm.WindowManagerInternal.class);
+        if (wm == null) {
+            return true;  // can't tell: keep the old behaviour rather than strand the app
+        }
+        final PackageManager pm = mContext.getPackageManager();
+        try {
+            if (wm.isUidFocused(pm.getPackageUidAsUser("com.android.systemui", UserHandle.USER_SYSTEM))) {
+                return true;
+            }
+        } catch (PackageManager.NameNotFoundException ignored) {
+            // no SystemUI package: fall through to home
+        }
+        final ResolveInfo home = pm.resolveActivityAsUser(
+                new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),
+                PackageManager.MATCH_DEFAULT_ONLY, mUserId);
+        if (home != null && home.activityInfo != null) {
+            return wm.isUidFocused(home.activityInfo.applicationInfo.uid);
+        }
+        return false;
+    }
+
     private boolean isUserPresent() {
         return mDefaultScreenOn && !isKeyguardLocked();
     }
