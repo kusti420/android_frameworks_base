@@ -165,6 +165,15 @@ public final class IchthysGuardService extends SystemService {
             "com.android.stk",
             "com.android.location.fused");
 
+    /**
+     * IchthysOS: microG and its store hold MODIFY_PHONE_STATE (for device registration), but they
+     * are no telephony infrastructure: the owner may cut their network like any app's. The
+     * permission rule below used to skip their rules silently while Guard showed them blocked.
+     */
+    private static final java.util.Set<String> BLOCKABLE_PRIVILEGED_PACKAGES = java.util.Set.of(
+            "com.google.android.gms",
+            "com.android.vending");
+
     /** A uid holding any of these is telephony/IMS/network-stack infrastructure. */
     private static final String[] CRITICAL_PERMISSIONS = {
             android.Manifest.permission.MODIFY_PHONE_STATE,
@@ -414,6 +423,15 @@ public final class IchthysGuardService extends SystemService {
                             && !isVisibleLocked(uid)) {
                         d.put(uid, true);
                     }
+                }
+            }
+            // IchthysOS: an app's SDK sandbox process shares its fate (it had its own uid and
+            // kept the network the app was denied).
+            final int nApps = d.size();
+            for (int i = 0; i < nApps; i++) {
+                final int uid = d.keyAt(i);
+                if (Process.isApplicationUid(uid)) {
+                    d.put(Process.toSdkSandboxUid(uid), true);
                 }
             }
             mDenyNow = d;
@@ -718,6 +736,11 @@ public final class IchthysGuardService extends SystemService {
             for (String p : pkgs) {
                 if (CRITICAL_PACKAGES.contains(p)) return true;
             }
+            boolean blockable = pkgs.length > 0;
+            for (String p : pkgs) {
+                blockable &= BLOCKABLE_PRIVILEGED_PACKAGES.contains(p);
+            }
+            if (blockable) return false;
         }
         for (String perm : CRITICAL_PERMISSIONS) {
             if (getContext().checkPermission(perm, -1, uid)
