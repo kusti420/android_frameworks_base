@@ -20,8 +20,11 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.Service;
 import android.content.Intent;
+import android.content.res.Configuration;
+import android.content.res.Resources;
 import android.os.HandlerThread;
 import android.os.IBinder;
+import android.os.LocaleList;
 import android.os.RemoteException;
 import android.util.Log;
 import android.util.SparseArray;
@@ -32,6 +35,7 @@ import android.view.selectiontoolbar.WidgetInfo;
 
 import com.android.internal.annotations.GuardedBy;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executor;
 
@@ -109,9 +113,7 @@ public abstract class SelectionToolbarRenderService extends Service {
                         }
                         remoteCallbackWrapper.mMenuItems = showInfo.menuItems;
                         // IchthysOS: and what Paste is called now (the locale can change).
-                        remoteCallbackWrapper.mPasteLabels = new String[] {
-                                getString(android.R.string.paste),
-                                getString(android.R.string.paste_as_plain_text)};
+                        remoteCallbackWrapper.mPasteLabels = pasteLabels();
                         SelectionToolbarRenderService.this.onShow(uid, showInfo,
                                 remoteCallbackWrapper);
                     });
@@ -201,6 +203,34 @@ public abstract class SelectionToolbarRenderService extends Service {
     /**
      * Callback to notify the client toolbar events.
      */
+
+    // IchthysOS: the Paste labels of the user's languages, for the locales they were made for.
+    private LocaleList mPasteLabelLocales;
+    private String[] mPasteLabelCache;
+
+    /**
+     * IchthysOS: what Paste and Paste as plain text are called in each of the user's languages: an
+     * app's menu is in the app's language, which can be any of them, not only the first.
+     */
+    private String[] pasteLabels() {
+        final Configuration config = getResources().getConfiguration();
+        final LocaleList locales = config.getLocales();
+        if (mPasteLabelCache != null && locales.equals(mPasteLabelLocales)) {
+            return mPasteLabelCache;
+        }
+        final ArrayList<String> labels = new ArrayList<>();
+        for (int i = 0; i < locales.size(); i++) {
+            final Configuration one = new Configuration(config);
+            one.setLocale(locales.get(i));
+            final Resources res = createConfigurationContext(one).getResources();
+            labels.add(res.getString(android.R.string.paste));
+            labels.add(res.getString(android.R.string.paste_as_plain_text));
+        }
+        mPasteLabelLocales = locales;
+        mPasteLabelCache = labels.toArray(new String[0]);
+        return mPasteLabelCache;
+    }
+
     public static final class RemoteCallbackWrapper implements SelectionToolbarRenderCallback {
 
         private final ISelectionToolbarCallback mRemoteCallback;
@@ -286,9 +316,9 @@ public abstract class SelectionToolbarRenderService extends Service {
             for (int i = 0; i < items.size(); i++) {
                 final ToolbarMenuItem item = items.get(i);
                 if (item != null && item.itemIndex == itemIndex) {
-                    return item.itemId == android.R.id.paste
-                            || item.itemId == android.R.id.pasteAsPlainText
-                            || isPasteLabel(item.title);
+                    // By what the user saw, not the item's id: an app can give any item
+                    // (titled "Translate", say) the id of Paste and get a silent grant.
+                    return isPasteLabel(item.title);
                 }
             }
             return false;
