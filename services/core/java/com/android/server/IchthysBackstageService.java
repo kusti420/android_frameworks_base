@@ -196,8 +196,12 @@ public final class IchthysBackstageService {
         /** Its uid, once hidden (for the activity-start interceptor). */
         int uid = Process.INVALID_UID;
 
-        Entry(String pkg) {
+        /** Its own number: its notification's id (a hash of the package could collide). */
+        final int serial;
+
+        Entry(String pkg, int serial) {
             this.pkg = pkg;
+            this.serial = serial;
         }
 
         boolean settling() {
@@ -1070,22 +1074,25 @@ public final class IchthysBackstageService {
                 .addAction(stop)
                 .build();
         mContext.getSystemService(NotificationManager.class).notifyAsUser(TAG,
-                NOTIFICATION_ID_BASE + (entry.pkg.hashCode() & 0xffff), notification,
+                NOTIFICATION_ID_BASE + entry.serial, notification,
                 UserHandle.of(mUserId));
         entry.notified = true;
     }
 
     private void cancelNotification(Entry entry) {
         mContext.getSystemService(NotificationManager.class).cancelAsUser(TAG,
-                NOTIFICATION_ID_BASE + (entry.pkg.hashCode() & 0xffff), UserHandle.of(mUserId));
+                NOTIFICATION_ID_BASE + entry.serial, UserHandle.of(mUserId));
         entry.notified = false;
     }
 
     private PendingIntent actionIntent(String action, String pkg) {
+        // The package in the data too: intents that differ only in extras are one PendingIntent,
+        // so two apps whose names hashed alike shared "Stop".
         final Intent intent = new Intent(action)
                 .setPackage(mContext.getPackageName())
+                .setData(Uri.fromParts("package", pkg, null))
                 .putExtra(EXTRA_PACKAGE, pkg);
-        return PendingIntent.getBroadcast(mContext, (action + pkg).hashCode(), intent,
+        return PendingIntent.getBroadcast(mContext, 0, intent,
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
     }
 }
