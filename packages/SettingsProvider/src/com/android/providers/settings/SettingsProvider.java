@@ -1776,6 +1776,11 @@ public class SettingsProvider extends ContentProvider {
                     // doesn't exist.
                     continue;
                 }
+                // IchthysOS: and the attestation target list only by its own line (see
+                // getSecureSetting); a listing leaves it out.
+                if (KEYBOX_TARGET_SETTING.equals(name) && !isCallerSystemOrPlatform()) {
+                    continue;
+                }
 
                 try {
                     enforceSettingReadable(name, SETTINGS_TYPE_SECURE, callingUserId);
@@ -1839,11 +1844,47 @@ public class SettingsProvider extends ContentProvider {
             }
         }
 
+        // IchthysOS: the attestation target list, to an app, is only its own line (with its
+        // mode suffix): the hook in its process needs that much, and the list would tell any
+        // app which others are spoofed. Asked before the lock (it may ask the package manager).
+        final boolean ownTargetOnly =
+                KEYBOX_TARGET_SETTING.equals(name) && !isCallerSystemOrPlatform();
+        final String callingPackage = ownTargetOnly ? getCallingPackage() : null;
+
         // Not the SSAID; do a straight lookup
         synchronized (mLock) {
-            return mSettingsRegistry.getSettingLocked(SETTINGS_TYPE_SECURE,
+            final Setting setting = mSettingsRegistry.getSettingLocked(SETTINGS_TYPE_SECURE,
                     owningUserId, deviceId, name);
+            if (!ownTargetOnly || setting == null || setting.isNull()) {
+                return setting;
+            }
+            final SettingsState state = mSettingsRegistry.getSettingsLocked(
+                    SETTINGS_TYPE_SECURE, owningUserId, deviceId);
+            final String line = ownTargetLine(setting.getValue(), callingPackage);
+            if (line == null || state == null) {
+                return state != null ? state.getNullSetting() : null;
+            }
+            return state.new Setting(name, line, setting.getDefaultValue(),
+                    setting.getPackageName(), setting.getTag(), setting.isDefaultFromSystem(),
+                    setting.getId());
         }
+    }
+
+    /** IchthysOS: [pkg]'s line of the attestation target list, or null if it isn't on it. */
+    private static String ownTargetLine(String targets, String pkg) {
+        if (targets == null || pkg == null) {
+            return null;
+        }
+        for (String line : targets.split("\n")) {
+            String entry = line.trim();
+            if (entry.endsWith("!") || entry.endsWith("?")) {
+                entry = entry.substring(0, entry.length() - 1).trim();
+            }
+            if (!entry.isEmpty() && entry.equals(pkg)) {
+                return line.trim();
+            }
+        }
+        return null;
     }
 
     private boolean isNewSsaidSetting(String name) {
@@ -2410,6 +2451,9 @@ public class SettingsProvider extends ContentProvider {
                 // may read it; everyone else (including adb shell) sees it as absent, which also
                 // keeps the keybox out of non-target app processes. (kusti420/ichthysos-tracker#13)
                     isKeyboxReadableByCaller();
+            // IchthysOS: the Play Integrity fingerprint spoof is read in GMS and the Play Store
+            // (system apps) only; to any other app it would say the device is spoofing.
+            case "spoof_pif_config" -> isCallerSystemOrPlatform();
             default -> !isIchthysAllowlist(name) || isCallerSystemOrPlatform();
         };
     }
