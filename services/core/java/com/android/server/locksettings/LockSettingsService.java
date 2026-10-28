@@ -2161,45 +2161,56 @@ public class LockSettingsService extends ILockSettings.Stub {
             if (savedCredential == null || savedCredential.isNone()) {
                 return LockPatternUtils.SET_DURESS_ERROR;
             }
-            // Prove the caller knows the real credential.  Duress-free path on purpose.
-            if (!doVerifyCredential(savedCredential, userId, /* progressCallback= */ null,
-                    /* flags= */ 0).isMatched()) {
-                return LockPatternUtils.SET_DURESS_WRONG_CREDENTIAL;
-            }
-            if (duressCredential == null || duressCredential.isNone()) {
-                mDuressCredentialManager.clearDuressCredential(userId);
-                return LockPatternUtils.SET_DURESS_OK;
-            }
-            try {
-                duressCredential.validateBasicRequirements();
-            } catch (IllegalArgumentException e) {
-                // Do not echo the exception: it can quote the credential's contents.
-                return LockPatternUtils.SET_DURESS_ERROR;
-            }
-            // With PIN auto-confirm on, the keyguard submits as soon as the PIN reaches the length
-            // of the real PIN, so a duress PIN of any other length could never be entered.
-            if (duressCredential.isPin() && savedCredential.isPin()
-                    && mStorage.isAutoPinConfirmSettingEnabled(userId)
-                    && duressCredential.size() != savedCredential.size()) {
-                return LockPatternUtils.SET_DURESS_AUTOCONFIRM_LENGTH_MISMATCH;
-            }
-            switch (mDuressCredentialManager.setDuressCredential(
-                    duressCredential, savedCredential, userId)) {
-                case DuressCredentialManager.SET_RESULT_OK:
-                    return LockPatternUtils.SET_DURESS_OK;
-                case DuressCredentialManager.SET_RESULT_SAME_AS_REAL:
-                    return LockPatternUtils.SET_DURESS_SAME_AS_REAL;
-                case DuressCredentialManager.SET_RESULT_TOO_SHORT:
-                    return LockPatternUtils.SET_DURESS_TOO_SHORT;
-                case DuressCredentialManager.SET_RESULT_WRONG_TYPE:
-                    return LockPatternUtils.SET_DURESS_WRONG_TYPE;
-                default:
-                    return LockPatternUtils.SET_DURESS_ERROR;
+            // IchthysOS: under the lock every credential change holds
+            // (setLockCredentialWithSpLocked), so the real credential can't change between the
+            // check and the write and end up equal to the new duress code.
+            synchronized (mSpManager) {
+                return setDuressCredentialLocked(duressCredential, savedCredential, userId);
             }
         } finally {
             Binder.restoreCallingIdentity(identity);
             LockscreenCredential.zeroizeIfFromParcel(duressCredential);
             LockscreenCredential.zeroizeIfFromParcel(savedCredential);
+        }
+    }
+
+    @GuardedBy("mSpManager")
+    private int setDuressCredentialLocked(LockscreenCredential duressCredential,
+            LockscreenCredential savedCredential, int userId) {
+        // Prove the caller knows the real credential.  Duress-free path on purpose.
+        if (!doVerifyCredential(savedCredential, userId, /* progressCallback= */ null,
+                /* flags= */ 0).isMatched()) {
+            return LockPatternUtils.SET_DURESS_WRONG_CREDENTIAL;
+        }
+        if (duressCredential == null || duressCredential.isNone()) {
+            mDuressCredentialManager.clearDuressCredential(userId);
+            return LockPatternUtils.SET_DURESS_OK;
+        }
+        try {
+            duressCredential.validateBasicRequirements();
+        } catch (IllegalArgumentException e) {
+            // Do not echo the exception: it can quote the credential's contents.
+            return LockPatternUtils.SET_DURESS_ERROR;
+        }
+        // With PIN auto-confirm on, the keyguard submits as soon as the PIN reaches the length
+        // of the real PIN, so a duress PIN of any other length could never be entered.
+        if (duressCredential.isPin() && savedCredential.isPin()
+                && mStorage.isAutoPinConfirmSettingEnabled(userId)
+                && duressCredential.size() != savedCredential.size()) {
+            return LockPatternUtils.SET_DURESS_AUTOCONFIRM_LENGTH_MISMATCH;
+        }
+        switch (mDuressCredentialManager.setDuressCredential(
+                duressCredential, savedCredential, userId)) {
+            case DuressCredentialManager.SET_RESULT_OK:
+                return LockPatternUtils.SET_DURESS_OK;
+            case DuressCredentialManager.SET_RESULT_SAME_AS_REAL:
+                return LockPatternUtils.SET_DURESS_SAME_AS_REAL;
+            case DuressCredentialManager.SET_RESULT_TOO_SHORT:
+                return LockPatternUtils.SET_DURESS_TOO_SHORT;
+            case DuressCredentialManager.SET_RESULT_WRONG_TYPE:
+                return LockPatternUtils.SET_DURESS_WRONG_TYPE;
+            default:
+                return LockPatternUtils.SET_DURESS_ERROR;
         }
     }
 
