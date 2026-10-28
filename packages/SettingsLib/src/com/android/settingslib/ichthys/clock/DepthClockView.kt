@@ -643,7 +643,16 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         return true
     }
 
-    private val clearGlass by lazy { android.graphics.RuntimeShader(CLEAR_GLASS) }
+    // IchthysOS: built defensively: the shader compiles on the device at runtime, and a failure
+    // must fall back to the frosted veil, never take SystemUI down.
+    private val clearGlass: android.graphics.RuntimeShader? by lazy {
+        try {
+            android.graphics.RuntimeShader(CLEAR_GLASS)
+        } catch (e: RuntimeException) {
+            android.util.Log.w("DepthClockView", "clear glass shader failed", e)
+            null
+        }
+    }
     private val clearPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private var glassMask: Bitmap? = null
@@ -658,12 +667,12 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
     private val glassColumns = FloatArray(9)
 
     /**
-     * IchthysOS: clear glass (OriginOS / Liquid Glass): the picture behind ([ClockBackdrop.frost],
-     * a quarter of the screen: softened a little, not frosted) inside the digits, a touch lifted
-     * and fuller, pulled inwards near the edges like a lens; the shape comes from the light on the
-     * rim (bright toward the top left, a dark rim away from it) and a soft shadow, not from a tint,
-     * so the scene always shows through and the colour is always the picture's. False when there
-     * is no picture.
+     * IchthysOS: clear glass (Liquid Glass): each digit a flat pane of real glass over the picture
+     * behind ([ClockBackdrop.frost], a quarter of the screen). The face shows the scene true; only
+     * a narrow rounded edge refracts it, reflects the room (Fresnel) and catches the light, with a
+     * fine light line round the whole outline. Apple's slider position comes from the picture: a
+     * touch of milk over a bright one, smoke over a dark one, a faint glow over near black. False
+     * when there is no picture or the shader could not be built.
      */
     private fun drawClearGlass(canvas: Canvas, path: Path, alpha: Float): Boolean {
         val frost = ClockBackdrop.frost ?: return false
@@ -698,7 +707,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         // Column-major for the shader.
         for (r in 0 until 3) for (c in 0 until 3) glassColumns[c * 3 + r] = glassValues[r * 3 + c]
         val m = (ClockBackdrop.frostDim() * 1.06f).coerceIn(0.06f, 1.7f)
-        val sh = clearGlass
+        val sh = clearGlass ?: return false
         sh.setInputShader("picture", picture)
         sh.setInputShader("mask", mask)
         sh.setFloatUniform("toFrost", glassColumns)
@@ -706,7 +715,13 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         sh.setFloatUniform("bend", dp(9f))
         sh.setFloatUniform("dim", m.coerceAtMost(1f))
         sh.setFloatUniform("add", (m - 1f).coerceAtLeast(0f) * 0.35f)
-        sh.setFloatUniform("lift", (0.16f - ClockBackdrop.luma * 0.12f).coerceIn(0.05f, 0.16f))
+        // Apple's slider position from the picture's lightness: milk over a bright one, smoke
+        // over a dark one, and a faint glow when it is nearly black (smoke would erase the glass).
+        val luma = ClockBackdrop.luma.coerceIn(0f, 1f)
+        val lstar = if (luma > 0.008856f) 116f * Math.cbrt(luma.toDouble()).toFloat() - 16f else 903.3f * luma
+        val milk = if (lstar < 22f) 0.12f else ((lstar - 32f) / 60f).coerceIn(-0.4f, 0.18f)
+        sh.setFloatUniform("milk", milk)
+        sh.setFloatUniform("lightDir", -0.6f, -0.8f)
         sh.setFloatUniform("alpha", alpha)
         // Over a dark picture the glass takes the picture's accent, pale at the top of the
         // digits to full at their bottom.
@@ -1906,37 +1921,58 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
             uniform float bend;
             uniform float dim;
             uniform float add;
-            uniform float lift;
+            uniform float milk;
+            uniform float2 lightDir;
             uniform float alpha;
             uniform half3 tint;
             uniform float tintAmt;
             uniform float2 tintSpan;
 
+            half3 scene(float2 q) {
+                float3 f = toFrost * float3(q, 1.0);
+                return picture.eval(f.xy / f.z).rgb;
+            }
+
             half4 main(float2 p) {
+                // IchthysOS: the clock as a flat pane of real glass (Liquid Glass). The face is
+                // flat and shows the scene true; only a narrow rounded edge slopes. Through that
+                // edge the scene is refracted (pulled in, red a touch further than blue), the
+                // edge reflects the room by the Fresnel law, a key light and the opposite corner
+                // catch crisp highlights, and a fine light line runs round the whole outline.
                 float2 m = p * maskMul;
                 float a = mask.eval(m).a;
-                float gx = mask.eval(m + float2(1.0, 0.0)).a - mask.eval(m - float2(1.0, 0.0)).a;
-                float gy = mask.eval(m + float2(0.0, 1.0)).a - mask.eval(m - float2(0.0, 1.0)).a;
+                float gx = (mask.eval(m + float2(1.0, 0.0)).a - mask.eval(m - float2(1.0, 0.0)).a) * 0.5;
+                float gy = (mask.eval(m + float2(0.0, 1.0)).a - mask.eval(m - float2(0.0, 1.0)).a) * 0.5;
                 float2 g = float2(gx, gy);
                 float gl = length(g);
-                float2 n = gl > 0.0001 ? g / gl : float2(0.0);
-                // 0 deep inside .. 1 on the outline (the blurred edge is half covered there).
+                float2 nin = gl > 0.0001 ? g / gl : float2(0.0);   // into the glyph
+                // 0 deep inside .. 1 on the outline (the blurred edge is half covered there)
                 float edge = clamp((1.0 - a) * 2.0, 0.0, 1.0);
-                float2 q = p + n * edge * edge * bend;
-                float3 f = toFrost * float3(q, 1.0);
-                half3 c = picture.eval(f.xy / f.z).rgb * dim + add;
-                half l = dot(c, half3(0.2126, 0.7152, 0.0722));
-                c = mix(half3(l), c, 1.18);
-                c = 1.0 - (1.0 - c) * (1.0 - lift);
-                c *= 1.06;
+                float slope = smoothstep(0.45, 1.0, edge);           // flat face, sloped rim
+                float nz = 1.0 / sqrt(1.0 + slope * slope * 9.0);
+                float2 off = nin * slope * bend;
+                half3 c = half3(scene(p + off * 1.06).r, scene(p + off).g, scene(p + off * 0.94).b);
+                c = c * half(dim) + half(add);
+                // Apple's slider: a touch of milk over a bright picture, smoke over a dark one
+                c = milk >= 0.0 ? 1.0 - (1.0 - c) * half(1.0 - milk) : c * half(1.0 + milk);
+                // over a dark picture the glass takes the picture's accent, pale to full
                 float t = clamp((p.y - tintSpan.x) / (tintSpan.y - tintSpan.x), 0.0, 1.0);
                 half3 pale = 1.0 - (1.0 - tint) * 0.3;
                 half3 full = 1.0 - (1.0 - tint) * 0.9;
                 c = mix(c, mix(pale, full, half(t)), half(tintAmt));
-                float facing = dot(-n, float2(-0.6, -0.8));
-                float rim = smoothstep(0.25, 0.95, edge);
-                c = mix(c, half3(1.0), rim * clamp(facing, 0.0, 1.0) * 0.85);
-                c *= 1.0 - rim * clamp(-facing, 0.0, 1.0) * 0.32;
+                // Fresnel: the sloped rim reflects the room (a bright, soft picture)
+                half3 env = 1.0 - (1.0 - scene(p - nin * bend * 3.0)) * 0.55;
+                float F = clamp((0.04 + 0.96 * pow(1.0 - nz, 5.0)) * 3.0, 0.0, 1.0);
+                c = mix(c, env, half(F));
+                // crisp highlights from the key light and the opposite corner
+                float3 n3 = normalize(float3(-nin * slope * 3.0, 1.0));
+                float3 hk = normalize(normalize(float3(lightDir, 0.9)) + float3(0.0, 0.0, 1.0));
+                float3 hb = normalize(normalize(float3(-lightDir, 0.85)) + float3(0.0, 0.0, 1.0));
+                float sp = pow(max(dot(n3, hk), 0.0), 160.0) * 1.1 + pow(max(dot(n3, hb), 0.0), 120.0) * 0.7;
+                // a fine light line round the whole outline, brightest facing the light
+                float facing = dot(-nin, normalize(lightDir));
+                float rl = smoothstep(0.72, 0.98, edge) * (0.28 + 0.35 * max(facing, 0.0) + 0.25 * max(-facing, 0.0));
+                c = 1.0 - (1.0 - c) * half(1.0 - clamp(sp + rl, 0.0, 1.0));
                 return half4(clamp(c, 0.0, 1.0), 1.0) * alpha;
             }
         """
