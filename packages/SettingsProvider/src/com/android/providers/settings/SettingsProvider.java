@@ -2395,8 +2395,34 @@ public class SettingsProvider extends ContentProvider {
                 // may read it; everyone else (including adb shell) sees it as absent, which also
                 // keeps the keybox out of non-target app processes. (kusti420/ichthysos-tracker#13)
                     isKeyboxReadableByCaller();
-            default -> true;
+            default -> !isIchthysAllowlist(name) || isCallerSystemOrPlatform();
         };
+    }
+
+    /**
+     * IchthysOS: the Guard shields' per-app exception lists (ichthys_*_allowed_pkgs) say which
+     * apps the owner trusts with contacts, the clipboard, SMS..., and ichthys_backstage_pkgs
+     * which apps are kept running out of sight. Undeclared secure settings are
+     * readable by every app, which made them a fingerprint and a map of the owner's trust. Only
+     * system callers (the shields themselves, Settings) see them; others see them as absent.
+     */
+    private static boolean isIchthysAllowlist(String name) {
+        return name != null && name.startsWith("ichthys_")
+                && (name.endsWith("_allowed_pkgs")
+                        // the apps kept running in Backstage (IchthysBackstageService)
+                        || name.equals("ichthys_backstage_pkgs"));
+    }
+
+    private boolean isCallerSystemOrPlatform() {
+        if (UserHandle.getAppId(Binder.getCallingUid()) < Process.FIRST_APPLICATION_UID) {
+            return true;
+        }
+        try {
+            final ApplicationInfo ai = getCallingApplicationInfoOrThrow();
+            return ai.isSystemApp() || ai.isSignedWithPlatformKey();
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     private static final String KEYBOX_SETTING = "spoof_trickystore_keybox";
