@@ -80,6 +80,9 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
     override val preferredHeightDp: Float = 520f
 
     private var fill = FILL_SOLID
+    /** IchthysOS: [KEY_GLASS_FROST] and [KEY_GLASS_OPACITY], read with the fill. */
+    private var glassFrost = 0
+    private var glassOpacity = -1
 
     /** IchthysOS editor v2: depth mode, shape flow (0..100), font, date line place. */
     private var depthMode = 0
@@ -253,7 +256,8 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
             Settings.Secure.getUriFor(KEY_FILL), false, fillObserver, UserHandle.USER_ALL)
         context.contentResolver.registerContentObserver(
             Settings.Secure.getUriFor(KEY_DETAILS), false, fillObserver, UserHandle.USER_ALL)
-        for (key in arrayOf(KEY_DEPTH, KEY_SHAPE_STYLE, KEY_FONT, KEY_DATE_POS, KEY_DATE_ALIGN)) {
+        for (key in arrayOf(KEY_DEPTH, KEY_SHAPE_STYLE, KEY_FONT, KEY_DATE_POS, KEY_DATE_ALIGN,
+                KEY_GLASS_FROST, KEY_GLASS_OPACITY)) {
             context.contentResolver.registerContentObserver(
                 Settings.Secure.getUriFor(key), false, fillObserver, UserHandle.USER_ALL)
         }
@@ -452,6 +456,8 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         details = previewDetails ?: (secure(KEY_DETAILS, 0) != 0)
         fill = previewFill ?: secure(KEY_FILL, FILL_SOLID)
         depthMode = previewDepth ?: secure(KEY_DEPTH, 0)
+        glassFrost = secure(KEY_GLASS_FROST, 0)
+        glassOpacity = secure(KEY_GLASS_OPACITY, -1)
         shapeStyle = previewShapeStyle ?: secure(KEY_SHAPE_STYLE, SHAPE_STRETCH)
         // IchthysOS polish: out of Shape the digits ease back to their height (shapedPath), and
         // the room they took goes once they have.
@@ -719,8 +725,16 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         // over a dark one, and a faint glow when it is nearly black (smoke would erase the glass).
         val luma = ClockBackdrop.luma.coerceIn(0f, 1f)
         val lstar = if (luma > 0.008856f) 116f * Math.cbrt(luma.toDouble()).toFloat() - 16f else 903.3f * luma
-        val milk = if (lstar < 22f) 0.12f else ((lstar - 32f) / 60f).coerceIn(-0.4f, 0.18f)
+        val frosted = glassFrost != 0
+        val milk = when {
+            glassOpacity in 0..100 -> -0.4f + glassOpacity / 100f * 0.88f      // smoky .. milky
+            lstar < 22f -> if (frosted) 0.16f else 0.12f
+            frosted -> ((lstar - 12f) / 95f).coerceIn(0.05f, 0.38f)
+            else -> ((lstar - 32f) / 60f).coerceIn(-0.4f, 0.18f)
+        }
         sh.setFloatUniform("milk", milk)
+        // Frosted: what is seen through the pane is blurred (in the frost's own px).
+        sh.setFloatUniform("frost", if (frosted) dp(6f) * glassValues[0].coerceAtLeast(0.05f) else 0f)
         sh.setFloatUniform("lightDir", -0.6f, -0.8f)
         sh.setFloatUniform("alpha", alpha)
         // Over a dark picture the glass takes the picture's accent, pale at the top of the
@@ -1868,6 +1882,13 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
          * (ClockBackdrop.frost), so the digits read as frosted glass in the scene.
          */
         const val FILL_GLASS = 3
+        /** Settings.Secure: the glass clear (0) or frosted (1), as Apple's Glass clock offers. */
+        const val KEY_GLASS_FROST = "ichthys_clock_glass_frost"
+        /**
+         * Settings.Secure: the glass's opacity, Apple's slider: 0 smoky .. 100 milky; -1 picks it
+         * from the picture (milk over a bright one, smoke over a dark one).
+         */
+        const val KEY_GLASS_OPACITY = "ichthys_clock_glass_opacity"
 
         /** Settings.Secure: 1 shows the raw status line (seconds, touches, CPU) over the date. */
         const val KEY_DETAILS = "ichthys_clock_details"
@@ -1928,9 +1949,20 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
             uniform float tintAmt;
             uniform float2 tintSpan;
 
+            uniform float frost;
+
             half3 scene(float2 q) {
                 float3 f = toFrost * float3(q, 1.0);
-                return picture.eval(f.xy / f.z).rgb;
+                float2 uv = f.xy / f.z;
+                if (frost <= 0.0) return picture.eval(uv).rgb;
+                // frosted: a soft disc of 12 taps around the point, plus the point itself
+                half3 acc = picture.eval(uv).rgb;
+                for (int i = 0; i < 12; i++) {
+                    float an = float(i) * 0.5235988;
+                    float r = (i - (i / 2) * 2) == 0 ? frost : frost * 0.55;
+                    acc += picture.eval(uv + float2(cos(an), sin(an)) * r).rgb;
+                }
+                return acc / 13.0;
             }
 
             half4 main(float2 p) {
