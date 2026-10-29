@@ -335,7 +335,17 @@ private fun ContentScope.QuickSettingsScene(
              * A 1 pixel is added to compensate for any kind of rounding errors to make sure 100%
              * that the notification stack is entirely "below" the entire screen.
              */
-            val minNotificationStackTop = screenHeight.roundToInt() + 1
+            // IchthysOS: plus a shelf and its gap. With its top below the cutoff the stack has no
+            // height, and StackScrollAlgorithm clamps the rows and the shelf to a shelf height
+            // above the top (shelfStart = stack height - shelf - gap): parked one pixel below the
+            // screen, the shelf's icon row still showed at the screen's bottom edge.
+            val shelfAllowance =
+                dimensionResource(R.dimen.notification_shelf_height) +
+                    dimensionResource(R.dimen.notification_divider_height)
+            val minNotificationStackTop =
+                screenHeight.roundToInt() + 1 + with(LocalDensity.current) {
+                    shelfAllowance.roundToPx()
+                }
             val navigationBarPadding = WindowInsets.navigationBars.asPaddingValues()
             // TODO(b/436646848): remove ScrollingNotificationPanel from QuickSettings
             ScrollingNotificationPanel(
