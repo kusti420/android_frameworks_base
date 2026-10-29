@@ -30,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
@@ -37,6 +38,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.translate
@@ -83,26 +85,13 @@ private fun rememberLensState(lens: IchthysDepthRepository.Lens?): LensState {
 }
 
 /**
- * IchthysOS: what the lens does to the subject over the clock: no hole (cut into a person it read
- * as a wound), a soft see-through veil, strongest in the middle and feathered to nothing at the
- * rim, so the clock shows through the subject as through frosted glass.
+ * IchthysOS: the window the lens opens in the subject over the clock: a circle, its radius
+ * following the lens's spring (grows in, dissolves outward), clipped out of the subject layer.
+ * (A feathered DstOut veil in an offscreen layer looked better but redrew the whole Living Sky
+ * layer through an offscreen buffer every frame: flicker and artifacts.)
  */
-private class LensVeil(val center: Offset, val radius: Float, val strength: Float)
-
-private fun DrawScope.drawLensVeil(veil: LensVeil) {
-    if (veil.strength <= 0f) return
-    drawCircle(
-        brush = androidx.compose.ui.graphics.Brush.radialGradient(
-            0f to Color.Black.copy(alpha = 0.82f * veil.strength),
-            0.55f to Color.Black.copy(alpha = 0.66f * veil.strength),
-            1f to Color.Transparent,
-            center = veil.center,
-            radius = veil.radius,
-        ),
-        radius = veil.radius,
-        center = veil.center,
-        blendMode = androidx.compose.ui.graphics.BlendMode.DstOut,
-    )
+private class LensVeil(val center: Offset, val radius: Float, val strength: Float) {
+    fun path(): Path = Path().apply { addOval(Rect(center, radius * (0.2f + 0.8f * strength))) }
 }
 
 /**
@@ -169,7 +158,7 @@ fun IchthysDepthBackdrop(
 
 /**
  * The wallpaper's subject, over the clock: place it over the clock's box (matchParentSize). With a
- * finger on the subject, the X-ray lens makes it see-through there ([drawLensVeil]).
+ * finger on the subject, the X-ray lens opens a window in it ([LensVeil]).
  */
 @Composable
 fun IchthysDepthCutout(
@@ -402,11 +391,7 @@ private fun LivingSkyLayer(
     Canvas(
         modifier
             .onGloballyPositioned { origin = it.positionInWindow() }
-            .graphicsLayer {
-                this.alpha = alpha
-                compositingStrategy =
-                    androidx.compose.ui.graphics.CompositingStrategy.Offscreen
-            }
+            .graphicsLayer { this.alpha = alpha }
     ) {
         // Read while drawing: every frame of motion draws again.
         LivingSkyFrame.frame.longValue
@@ -414,13 +399,16 @@ private fun LivingSkyLayer(
             now.options.intensity / 100f, w, h, density, LivingSkyFrame.time,
             LivingSkyFrame.flash, now.weather, subject)
         clipRect(left = -origin.x, top = 0f, right = -origin.x + 100_000f, bottom = 100_000f) {
-            translate(-origin.x, -origin.y) {
-                drawIntoCanvas {
-                    if (mask != null) painter.drawMasked(it.nativeCanvas, w, h, mask)
-                    else painter.draw(it.nativeCanvas, w, h)
+            val veil = hole(origin)
+            val draw: DrawScope.() -> Unit = {
+                translate(-origin.x, -origin.y) {
+                    drawIntoCanvas {
+                        if (mask != null) painter.drawMasked(it.nativeCanvas, w, h, mask)
+                        else painter.draw(it.nativeCanvas, w, h)
+                    }
                 }
             }
-            hole(origin)?.let { drawLensVeil(it) }
+            if (veil != null) clipPath(veil.path(), ClipOp.Difference) { draw() } else draw()
         }
     }
 }
@@ -444,18 +432,18 @@ private fun WindowImage(
     Canvas(
         modifier
             .onGloballyPositioned { origin = it.positionInWindow() }
-            .graphicsLayer {
-                this.alpha = alpha
-                // The lens's veil erases from this layer only.
-                compositingStrategy =
-                    androidx.compose.ui.graphics.CompositingStrategy.Offscreen
-            }
+            .graphicsLayer { this.alpha = alpha }
     ) {
         // Nothing above this box (the status bar's icons stay in front); below and beside it the
         // picture may spill, where it is the backdrop's own pixels anyway.
         clipRect(left = -origin.x, top = 0f, right = -origin.x + 100_000f, bottom = 100_000f) {
-            drawAtWindowOrigin(image, origin - shift(), colorFilter)
-            hole(origin)?.let { drawLensVeil(it) }
+            val at = origin - shift()
+            val veil = hole(origin)
+            if (veil != null) {
+                clipPath(veil.path(), ClipOp.Difference) { drawAtWindowOrigin(image, at, colorFilter) }
+            } else {
+                drawAtWindowOrigin(image, at, colorFilter)
+            }
         }
     }
 }
