@@ -192,6 +192,7 @@ import com.android.server.integrity.AppIntegrityManagerService;
 import com.android.server.job.JobSchedulerService;
 import com.android.server.lights.LightsService;
 import com.android.server.locales.LocaleManagerService;
+import com.android.server.location.IchthysPlacesService;
 import com.android.server.location.LocationManagerService;
 import com.android.server.location.altitude.AltitudeService;
 import com.android.server.locksettings.LockSettingsInternal;
@@ -2573,6 +2574,10 @@ public final class SystemServer implements Dumpable {
             if (!isWatch) {
                 t.traceBegin("StartTwilightService");
                 mSystemServiceManager.startService(TwilightService.class);
+                t.traceEnd();
+                // IchthysOS: home city and trips for weather and sun times (Guard).
+                t.traceBegin("StartIchthysPlacesService");
+                mSystemServiceManager.startService(IchthysPlacesService.class);
                 t.traceEnd();
             }
 

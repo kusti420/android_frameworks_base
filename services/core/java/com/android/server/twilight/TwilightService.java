@@ -117,6 +117,15 @@ public final class TwilightService extends SystemService
     private volatile long mWeatherSunset;
     /** IchthysOS: the last twilight state came from a location (not the weather's times). */
     private volatile boolean mHasFix;
+    /**
+     * IchthysOS: the place Guard's home city or a trip under way makes active
+     * (IchthysPlacesService, "lat,lon|name|kind"); it is used instead of GPS. Without one, the
+     * system's last real fix, kept rounded to two decimals (about 1 km) so twilight and the
+     * weather still know the place after a reboot indoors. Both Secure and hidden from apps.
+     */
+    private static final String KEY_LOCATION_ACTIVE = "ichthys_location_active";
+    private static final String KEY_LOCATION_LAST_FIX = "ichthys_location_last_fix";
+    private ContentObserver mLocationSettingsObserver;
 
     public TwilightService(Context context) {
         super(context.createAttributionContext(ATTRIBUTION_TAG));
@@ -407,6 +416,19 @@ public final class TwilightService extends SystemService
             getContext().registerReceiver(mTimeChangedReceiver, intentFilter);
         }
 
+        // IchthysOS: a new home city or a trip starting or ending applies at once.
+        if (mLocationSettingsObserver == null) {
+            mLocationSettingsObserver = new ContentObserver(mHandler) {
+                @Override
+                public void onChange(boolean selfChange) {
+                    updateTwilightState();
+                }
+            };
+            getContext().getContentResolver().registerContentObserver(
+                    Settings.Secure.getUriFor(KEY_LOCATION_ACTIVE), false,
+                    mLocationSettingsObserver, UserHandle.USER_ALL);
+        }
+
         // Force an update now that we have listeners registered.
         updateTwilightState();
     }
@@ -423,15 +445,73 @@ public final class TwilightService extends SystemService
             mAlarmManager.cancel(this);
         }
 
+        if (mLocationSettingsObserver != null) {
+            getContext().getContentResolver().unregisterContentObserver(
+                    mLocationSettingsObserver);
+            mLocationSettingsObserver = null;
+        }
+
         mLocationManager.removeUpdates(this);
         mLastLocation = null;
+    }
+
+    /**
+     * IchthysOS: the active place (a trip under way, else the home city) when there is one,
+     * else the live fix, else the last fix kept across reboots. A live fix is saved for the next
+     * boot.
+     */
+    private Location resolveLocation() {
+        final String active = getSecure(KEY_LOCATION_ACTIVE);
+        if (active != null) {
+            final int bar = active.indexOf('|');
+            final Location place = parseLatLon(bar < 0 ? active : active.substring(0, bar));
+            if (place != null) {
+                return place;
+            }
+        }
+        final Location live = mLastLocation != null ? mLastLocation
+                : mLocationManager.getLastLocation();
+        if (live != null) {
+            saveLastFix(live);
+            return live;
+        }
+        return parseLatLon(getSecure(KEY_LOCATION_LAST_FIX));
+    }
+
+    private void saveLastFix(Location location) {
+        final String fix = String.format(java.util.Locale.ROOT, "%.2f,%.2f",
+                location.getLatitude(), location.getLongitude());
+        if (!fix.equals(getSecure(KEY_LOCATION_LAST_FIX))) {
+            Settings.Secure.putStringForUser(getContext().getContentResolver(),
+                    KEY_LOCATION_LAST_FIX, fix, UserHandle.USER_CURRENT);
+        }
+    }
+
+    private String getSecure(String key) {
+        return Settings.Secure.getStringForUser(getContext().getContentResolver(), key,
+                UserHandle.USER_CURRENT);
+    }
+
+    private static Location parseLatLon(@Nullable String value) {
+        if (value == null) {
+            return null;
+        }
+        final int comma = value.indexOf(',');
+        try {
+            final Location l = new Location("ichthys_shared");
+            l.setLatitude(Double.parseDouble(value.substring(0, comma)));
+            l.setLongitude(Double.parseDouble(value.substring(comma + 1)));
+            return l;
+        } catch (RuntimeException e) {
+            Slog.w(TAG, "Bad shared location: " + value);
+            return null;
+        }
     }
 
     private void updateTwilightState() {
         // Calculate the twilight state based on the current time and location.
         final long currentTimeMillis = System.currentTimeMillis();
-        final Location location = mLastLocation != null ? mLastLocation
-                : mLocationManager.getLastLocation();
+        final Location location = resolveLocation();
         final TwilightState fromLocation = calculateTwilightState(location, currentTimeMillis);
         mHasFix = fromLocation != null;
         final TwilightState state = fromLocation != null ? fromLocation
