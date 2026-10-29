@@ -82,7 +82,14 @@ sealed class TileSpec private constructor(open val spec: String) {
                     null
                 } else {
                     if (endsWith(")")) {
-                        val extracted = substring(CustomTile.PREFIX.length, length - 1)
+                        var extracted = substring(CustomTile.PREFIX.length, length - 1)
+                        // IchthysOS: "custom(custom(pkg/.Cls))" (a spec wrapped once too often,
+                        // e.g. by `cmd statusbar add-tile custom(...)`) is that component, not an
+                        // invalid one that then stays in the list for good.
+                        while (extracted.startsWith(CustomTile.PREFIX) && extracted.endsWith(")")) {
+                            extracted = extracted.substring(CustomTile.PREFIX.length,
+                                extracted.length - 1)
+                        }
                         ComponentName.unflattenFromString(extracted)
                     } else {
                         null
