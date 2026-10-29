@@ -26,6 +26,8 @@ import android.app.WallpaperManager;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.Point;
 import android.graphics.RecordingCanvas;
 import android.graphics.Rect;
 import android.graphics.RectF;
@@ -38,6 +40,7 @@ import android.service.wallpaper.WallpaperService;
 import android.util.Log;
 import android.view.Surface;
 import android.view.SurfaceHolder;
+import android.view.WindowManager;
 
 import androidx.annotation.NonNull;
 
@@ -194,6 +197,12 @@ public class ImageWallpaper extends WallpaperService {
                     mUserTracker.getUserId());
             int width = Math.max(MIN_SURFACE_WIDTH, dimensions.width());
             int height = Math.max(MIN_SURFACE_HEIGHT, dimensions.height());
+            if (isLockOnly()) {
+                // IchthysOS: see lockRegion().
+                final Point screen = naturalScreenSize();
+                width = screen.x;
+                height = screen.y;
+            }
             mSurfaceHolder.setFixedSize(width, height);
 
             getDisplayContext().getSystemService(DisplayManager.class)
@@ -298,7 +307,9 @@ public class ImageWallpaper extends WallpaperService {
             if (canvas != null) {
                 Rect dest = mSurfaceHolder.getSurfaceFrame();
                 try {
-                    canvas.drawBitmap(bitmap, null, dest, null);
+                    final Rect src = isLockOnly() ? lockRegion(bitmap) : null;
+                    canvas.drawBitmap(bitmap, src, dest,
+                            src != null ? new Paint(Paint.FILTER_BITMAP_FLAG) : null);
                     mDrawn = true;
                 } finally {
                     surface.unlockCanvasAndPost(canvas);
@@ -476,6 +487,51 @@ public class ImageWallpaper extends WallpaperService {
             // this call will deactivate the offset notifications
             // if we are no longer processing colors
             mColorExtractor.removeLocalColorAreas(regions);
+        }
+
+        /** IchthysOS: this engine draws a lock screen wallpaper of its own (not the home one). */
+        private boolean isLockOnly() {
+            return getWallpaperFlags() == WallpaperManager.FLAG_LOCK;
+        }
+
+        /** IchthysOS: the display in its natural (portrait) orientation. */
+        private Point naturalScreenSize() {
+            final Rect b = getDisplayContext().getSystemService(WindowManager.class)
+                    .getMaximumWindowMetrics().getBounds();
+            return new Point(Math.min(b.width(), b.height()), Math.max(b.width(), b.height()));
+        }
+
+        /**
+         * IchthysOS: the part of the lock screen wallpaper to show, the same as the lock screen's
+         * own layers (IchthysDepthRepository.region: the wallpaper's crop for this screen, cut to
+         * the screen's aspect ratio around its centre). Drawn at the screen's size, so it isn't
+         * slid sideways by the home screen's page offset either: a picture wider than the screen
+         * otherwise sat at the launcher's last page under the lock screen's centred copy, and
+         * jumped sideways when the lock screen faded on unlock.
+         */
+        private Rect lockRegion(Bitmap bitmap) {
+            final Point screen = naturalScreenSize();
+            Rect r = null;
+            try {
+                final java.util.List<Rect> crops = mWallpaperManager.getBitmapCrops(
+                        java.util.List.of(screen), WallpaperManager.FLAG_LOCK, false);
+                r = crops.isEmpty() ? null : crops.get(0);
+            } catch (RuntimeException e) {
+                Log.w(TAG, "No crop for the lock screen wallpaper", e);
+            }
+            if (r == null || r.isEmpty() || r.right > bitmap.getWidth()
+                    || r.bottom > bitmap.getHeight()) {
+                r = new Rect(0, 0, bitmap.getWidth(), bitmap.getHeight());
+            }
+            final float aspect = (float) screen.x / screen.y;
+            if ((float) r.width() / r.height() > aspect) {
+                final int w = Math.round(r.height() * aspect);
+                final int left = r.left + (r.width() - w) / 2;
+                return new Rect(left, r.top, left + w, r.bottom);
+            }
+            final int h = Math.round(r.width() / aspect);
+            final int top = r.top + (r.height() - h) / 2;
+            return new Rect(r.left, top, r.right, top + h);
         }
 
         @Override
