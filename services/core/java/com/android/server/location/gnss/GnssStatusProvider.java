@@ -28,6 +28,7 @@ import android.stats.location.LocationStatsEnums;
 import android.util.Log;
 
 import com.android.server.location.IchthysLocationNoFix;
+import com.android.server.location.IchthysLocationSpoof;
 import com.android.server.location.gnss.hal.GnssNative;
 import com.android.server.location.injector.AppOpsHelper;
 import com.android.server.location.injector.Injector;
@@ -163,6 +164,7 @@ public class GnssStatusProvider extends
             // away too (GnssNmeaProvider does the same); checked at delivery, so a registration
             // made before the app was listed stops getting them.
             if (!IchthysLocationNoFix.isNoFix(registration.getIdentity())
+                    && !IchthysLocationSpoof.isSpoofed(registration.getIdentity())
                     && mAppOpsHelper.noteOpNoThrow(AppOpsManager.OP_FINE_LOCATION,
                             registration.getIdentity())) {
                 return listener -> listener.onSvStatusChanged(gnssStatus);

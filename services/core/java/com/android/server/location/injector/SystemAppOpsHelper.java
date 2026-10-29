@@ -23,6 +23,7 @@ import android.os.Binder;
 
 import com.android.internal.util.Preconditions;
 import com.android.server.FgThread;
+import com.android.server.location.IchthysLocationSpoof;
 
 import java.util.Objects;
 
@@ -56,19 +57,22 @@ public class SystemAppOpsHelper extends AppOpsHelper {
                 });
     }
 
+    // IchthysOS: note and start run as the location service's own calls, which the fake location
+    // doesn't turn into "ignored" (IchthysLocationSpoof.isSpoofedCached): the service hands such
+    // apps the fake place itself. Checks stay plain (their results are cached process-wide).
     @Override
     public boolean startOpNoThrow(int appOp, CallerIdentity callerIdentity) {
         Preconditions.checkState(mAppOps != null);
 
         final long identity = Binder.clearCallingIdentity();
         try {
-            return mAppOps.startOpNoThrow(
+            return IchthysLocationSpoof.asLocationService(() -> mAppOps.startOpNoThrow(
                     appOp,
                     callerIdentity.getUid(),
                     callerIdentity.getPackageName(),
                     false,
                     callerIdentity.getAttributionTag(),
-                    callerIdentity.getListenerId()) == AppOpsManager.MODE_ALLOWED;
+                    callerIdentity.getListenerId()) == AppOpsManager.MODE_ALLOWED);
         } finally {
             Binder.restoreCallingIdentity(identity);
         }
@@ -111,12 +115,12 @@ public class SystemAppOpsHelper extends AppOpsHelper {
 
         final long identity = Binder.clearCallingIdentity();
         try {
-            return mAppOps.noteOp(
+            return IchthysLocationSpoof.asLocationService(() -> mAppOps.noteOp(
                     appOp,
                     callerIdentity.getUid(),
                     callerIdentity.getPackageName(),
                     callerIdentity.getAttributionTag(),
-                    callerIdentity.getListenerId()) == AppOpsManager.MODE_ALLOWED;
+                    callerIdentity.getListenerId()) == AppOpsManager.MODE_ALLOWED);
         } finally {
             Binder.restoreCallingIdentity(identity);
         }
@@ -128,12 +132,12 @@ public class SystemAppOpsHelper extends AppOpsHelper {
 
         final long identity = Binder.clearCallingIdentity();
         try {
-            return mAppOps.noteOpNoThrow(
+            return IchthysLocationSpoof.asLocationService(() -> mAppOps.noteOpNoThrow(
                     appOp,
                     callerIdentity.getUid(),
                     callerIdentity.getPackageName(),
                     callerIdentity.getAttributionTag(),
-                    callerIdentity.getListenerId()) == AppOpsManager.MODE_ALLOWED;
+                    callerIdentity.getListenerId()) == AppOpsManager.MODE_ALLOWED);
         } finally {
             Binder.restoreCallingIdentity(identity);
         }

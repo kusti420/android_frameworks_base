@@ -103,6 +103,7 @@ import com.android.server.FgThread;
 import com.android.server.IoThread;
 import com.android.server.LocalServices;
 import com.android.server.location.IchthysLocationNoFix;
+import com.android.server.location.IchthysLocationSpoof;
 import com.android.server.location.LocationPermissions;
 import com.android.server.location.LocationPermissions.PermissionLevel;
 import com.android.server.location.fudger.LocationFudger;
@@ -430,6 +431,14 @@ public class LocationProviderManager extends
          */
         final boolean isIchthysNoFix() {
             return !getRequest().isBypass() && IchthysLocationNoFix.isNoFix(getIdentity());
+        }
+
+        /**
+         * IchthysOS "Fake location": the app gets the fake place instead of its position.
+         * Emergency bypass is never affected.
+         */
+        final boolean isIchthysSpoofed() {
+            return !getRequest().isBypass() && IchthysLocationSpoof.isSpoofed(getIdentity());
         }
 
         /** Update {@link #mIsInEmergency} by invoking Telephony APIs. **/
@@ -960,6 +969,13 @@ public class LocationProviderManager extends
             if (isIchthysNoFix()) {
                 return null;
             }
+            // Before the permission step, so a coarse-only app gets the fake place coarsened.
+            if (isIchthysSpoofed()) {
+                fineLocationResult = IchthysLocationSpoof.fake(fineLocationResult, getIdentity());
+                if (fineLocationResult == null) {
+                    return null;
+                }
+            }
 
             LocationResult permittedLocationResult = Objects.requireNonNull(
                     getPermittedLocationResult(fineLocationResult, getPermissionLevel()));
@@ -1395,6 +1411,9 @@ public class LocationProviderManager extends
 
             if (fineLocationResult != null) {
                 fineLocationResult = fineLocationResult.asLastLocationResult();
+            }
+            if (fineLocationResult != null && isIchthysSpoofed()) {
+                fineLocationResult = IchthysLocationSpoof.fake(fineLocationResult, getIdentity());
             }
 
             LocationResult locationResult = getPermittedLocationResult(fineLocationResult,
@@ -1856,13 +1875,16 @@ public class LocationProviderManager extends
             return null;
         }
 
-        Location location = getPermittedLocation(
-                getLastLocationUnsafe(
-                        identity.getUserId(),
-                        permissionLevel,
-                        request.isBypass(),
-                        Long.MAX_VALUE),
-                permissionLevel);
+        Location last = getLastLocationUnsafe(
+                identity.getUserId(),
+                permissionLevel,
+                request.isBypass(),
+                Long.MAX_VALUE);
+        // IchthysOS "Fake location": the fake place's fix instead.
+        if (!request.isBypass() && IchthysLocationSpoof.isSpoofed(identity)) {
+            last = IchthysLocationSpoof.fake(last, identity);
+        }
+        Location location = getPermittedLocation(last, permissionLevel);
 
         if (location != null) {
             // lastly - note app ops

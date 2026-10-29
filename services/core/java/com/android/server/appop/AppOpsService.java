@@ -113,6 +113,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManagerInternal;
 import android.content.pm.ParceledListSlice;
 import android.content.pm.PermissionInfo;
@@ -3471,7 +3472,8 @@ public class AppOpsService extends IAppOpsService.Stub {
                     packageName);
         }
         if (isOpRestrictedDueToSuspend(code, packageName, uid)
-                || isOpRestrictedByIchthysNoLocation(code, packageName, uid)) {
+                || isOpRestrictedByIchthysNoLocation(code, packageName, uid)
+                || isOpRestrictedByIchthysSpoof(code, packageName, uid)) {
             return new SyncNotedAppOp(AppOpsManager.MODE_IGNORED, code, attributionTag,
                     packageName);
         }
@@ -4136,7 +4138,8 @@ public class AppOpsService extends IAppOpsService.Stub {
                     packageName);
         }
         if (isOpRestrictedDueToSuspend(code, packageName, uid)
-                || isOpRestrictedByIchthysNoLocation(code, packageName, uid)) {
+                || isOpRestrictedByIchthysNoLocation(code, packageName, uid)
+                || isOpRestrictedByIchthysSpoof(code, packageName, uid)) {
             return new SyncNotedAppOp(AppOpsManager.MODE_IGNORED, code, attributionTag,
                     packageName);
         }
@@ -4281,7 +4284,8 @@ public class AppOpsService extends IAppOpsService.Stub {
                     packageName);
         }
         if (isOpRestrictedDueToSuspend(code, packageName, uid)
-                || isOpRestrictedByIchthysNoLocation(code, packageName, uid)) {
+                || isOpRestrictedByIchthysNoLocation(code, packageName, uid)
+                || isOpRestrictedByIchthysSpoof(code, packageName, uid)) {
             return new SyncNotedAppOp(AppOpsManager.MODE_IGNORED, code, attributionTag,
                     packageName);
         }
@@ -5431,6 +5435,33 @@ public class AppOpsService extends IAppOpsService.Stub {
         // Cache only: reading Settings here could deadlock against SettingsProvider.
         return com.android.server.location.IchthysLocationNoFix.isNoFixCached(packageName,
                 UserHandle.getUserId(uid));
+    }
+
+    /**
+     * IchthysOS: while the fake location is on (IchthysLocationSpoof), a spoofed app's location
+     * app-ops are noted and started as ignored, so Wi-Fi scans and connection info, cell info and
+     * Bluetooth scans, which each place the phone, come back empty. Not checks: their results
+     * are cached process-wide, and the location service, which hands such apps the fake place
+     * itself, checks them; its own notes and starts are let through by isSpoofedCached.
+     */
+    private boolean isOpRestrictedByIchthysSpoof(int code, String packageName, int uid) {
+        if (code != AppOpsManager.OP_COARSE_LOCATION && code != AppOpsManager.OP_FINE_LOCATION
+                && code != AppOpsManager.OP_MONITOR_LOCATION
+                && code != AppOpsManager.OP_MONITOR_HIGH_POWER_LOCATION) {
+            return false;
+        }
+        if (packageName == null) {
+            return false;
+        }
+        return com.android.server.location.IchthysLocationSpoof.isSpoofedCached(packageName, uid,
+                () -> {
+                    final PackageManagerInternal pmi =
+                            LocalServices.getService(PackageManagerInternal.class);
+                    final ApplicationInfo ai = pmi == null ? null : pmi.getApplicationInfo(
+                            packageName, 0, Process.SYSTEM_UID, UserHandle.getUserId(uid));
+                    return ai != null && (ai.flags & (ApplicationInfo.FLAG_SYSTEM
+                            | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0;
+                });
     }
 
     private boolean isOpRestrictedDueToSuspend(int code, String packageName, int uid) {
