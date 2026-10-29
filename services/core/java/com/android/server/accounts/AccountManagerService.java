@@ -46,6 +46,7 @@ import android.app.BroadcastOptions;
 import android.app.INotificationManager;
 import android.app.Notification;
 import android.app.NotificationManager;
+import android.app.ActivityManagerInternal;
 import android.app.PendingIntent;
 import android.app.admin.DevicePolicyEventLogger;
 import android.app.admin.DevicePolicyManager;
@@ -5185,9 +5186,39 @@ public class AccountManagerService
                 }
                 intent.setComponent(targetActivityInfo.getComponentName());
                 bundle.putParcelable(AccountManager.KEY_INTENT, intent);
+                ichthysAddKeyIntentSender(bundle, intent, targetActivityInfo, authUid);
                 return true;
             } finally {
                 Binder.restoreCallingIdentity(bid);
+            }
+        }
+
+        /**
+         * IchthysOS: an authenticator may answer with a screen of its own that it doesn't export
+         * (microG's "let this app act as another" prompt, which Aurora Store's Google login
+         * needs). The client can't start that: it isn't exported to the client's uid, so the
+         * request hangs. The screen is the authenticator's own (same uid), so it is handed out
+         * as a PendingIntent the authenticator owns as well: starting it is what the
+         * authenticator could do itself, and AccountManager's client side starts that instead
+         * ({@link AccountManager#ICHTHYS_KEY_INTENT_SENDER}). Exported screens are unchanged.
+         */
+        private void ichthysAddKeyIntentSender(Bundle bundle, Intent intent,
+                ActivityInfo target, int authUid) {
+            if (target.exported || target.getUid() != authUid) {
+                return;
+            }
+            try {
+                final PendingIntent pi = LocalServices.getService(ActivityManagerInternal.class)
+                        .getPendingIntentActivityAsApp(0, new Intent(intent),
+                                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_ONE_SHOT
+                                        | PendingIntent.FLAG_CANCEL_CURRENT,
+                                null, target.packageName, authUid);
+                if (pi != null) {
+                    bundle.putParcelable(AccountManager.ICHTHYS_KEY_INTENT_SENDER,
+                            pi.getIntentSender());
+                }
+            } catch (RuntimeException e) {
+                Log.w(TAG, "No launcher for " + target.name + " of " + target.packageName, e);
             }
         }
 

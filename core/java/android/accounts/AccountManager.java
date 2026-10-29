@@ -223,6 +223,13 @@ public class AccountManager {
     public static final String KEY_INTENT = "intent";
 
     /**
+     * IchthysOS: next to {@link #KEY_INTENT} when it is an unexported screen of the authenticator
+     * itself: an IntentSender the authenticator owns, which starts it.
+     * @hide
+     */
+    public static final String ICHTHYS_KEY_INTENT_SENDER = "ichthys_key_intent_sender";
+
+    /**
      * Bundle key used to supply the password directly in options to
      * {@link #confirmCredentials}, rather than prompting the user with
      * the standard password prompt.
@@ -2439,7 +2446,24 @@ public class AccountManager {
                 if (intent != null && mActivity != null) {
                     // since the user provided an Activity we will silently start intents
                     // that we see
-                    mActivity.startActivity(intent);
+                    // IchthysOS: the authenticator's own unexported screen comes with a
+                    // sender it owns (AccountManagerService); the intent alone can't be started.
+                    final android.content.IntentSender sender = bundle.getParcelable(
+                            ICHTHYS_KEY_INTENT_SENDER, android.content.IntentSender.class);
+                    if (sender != null) {
+                        try {
+                            mActivity.startIntentSender(sender, null, 0, 0, 0,
+                                    android.app.ActivityOptions.makeBasic()
+                                            .setPendingIntentBackgroundActivityStartMode(
+                                                    android.app.ActivityOptions
+                                                    .MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
+                                            .toBundle());
+                        } catch (android.content.IntentSender.SendIntentException e) {
+                            mActivity.startActivity(intent);
+                        }
+                    } else {
+                        mActivity.startActivity(intent);
+                    }
                     // leave the Future running to wait for the real response to this request
                 } else if (bundle.getBoolean("retry")) {
                     try {
