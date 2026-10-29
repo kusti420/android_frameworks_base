@@ -97,6 +97,8 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
      */
     private val shaped = Path()
     private val glyphs = Array(4) { Path() }
+    /** The fill rule each row of [glyphs] needs ([mergeGlyphs]). */
+    private val glyphRule = Array(2) { Path.FillType.WINDING }
     /**
      * IchthysOS: each digit's centre (x0..x3, y0..y3) where it is drawn, for the clear glass's
      * face magnification; NaN when not known (the drawn Square digits).
@@ -884,11 +886,50 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
      * contours (a "1" is a stem with a separate flag over it): filled that doesn't show, but
      * stroked (the AOD's outline, the edge lines) every contour's edge was drawn, inside the digit
      * too, as stray and crossing lines. Glyph paths change once a minute, so this costs nothing.
+     * The merge's result uses the even-odd rule (Skia's path ops don't orient holes against
+     * their outline), so a path the merged glyphs go into must use it too ([mergeGlyphs]): under
+     * the default winding rule the bowls of "8", "9" and "6" filled in. The merge is kept only
+     * when the covered pixels match the glyph's own; otherwise null.
      */
-    private fun mergeOverlaps(glyph: Path) {
-        if (glyph.isEmpty) return
+    private fun mergeOverlaps(glyph: Path): Path? {
+        if (glyph.isEmpty) return Path(glyph)
         val merged = Path()
-        if (merged.op(glyph, Path(), Path.Op.UNION)) glyph.set(merged)
+        if (!merged.op(glyph, Path(), Path.Op.UNION)) return null
+        glyph.computeBounds(mergeBounds, true)
+        val clip = android.graphics.Region(
+            mergeBounds.left.toInt() - 2, mergeBounds.top.toInt() - 2,
+            mergeBounds.right.toInt() + 2, mergeBounds.bottom.toInt() + 2)
+        val before = android.graphics.Region().apply { setPath(glyph, clip) }
+        val after = android.graphics.Region().apply { setPath(merged, clip) }
+        val area = regionArea(before)
+        if (area == 0L) return null
+        // Edges may land a pixel apart; a lost or added bowl is far more than 1 %.
+        val diff = android.graphics.Region(before).apply {
+            op(after, android.graphics.Region.Op.XOR)
+        }
+        return if (regionArea(diff) * 100 <= area) merged else null
+    }
+
+    /**
+     * IchthysOS: [glyphs] merged ([mergeOverlaps]) when every one of them merges, and the fill
+     * rule the path they go into must use. Merged glyphs don't overlap each other, so even-odd
+     * is right for them; if one fails, all stay as the font has them, under the winding rule.
+     */
+    private fun mergeGlyphs(glyphs: List<Path>): Path.FillType {
+        val merged = glyphs.map { mergeOverlaps(it) }
+        if (merged.any { it == null }) return Path.FillType.WINDING
+        glyphs.forEachIndexed { i, g -> g.set(merged[i]!!) }
+        return Path.FillType.EVEN_ODD
+    }
+
+    private val mergeBounds = RectF()
+
+    private fun regionArea(region: android.graphics.Region): Long {
+        var sum = 0L
+        val it = android.graphics.RegionIterator(region)
+        val r = android.graphics.Rect()
+        while (it.next(r)) sum += r.width().toLong() * r.height()
+        return sum
     }
 
     private fun digitsPath(): Path {
@@ -906,6 +947,8 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
                 val left = width / 2f - pairWidth(digitPaint) / 2f
                 SquareDigits.textPath(hh, 0, 2, left, line1Base, digitSize, digits)
                 SquareDigits.textPath(mm, 0, 2, left, line2Base, digitSize, digits)
+                // Their bars are merged by path ops too: even-odd (see mergeOverlaps).
+                digits.fillType = Path.FillType.EVEN_ODD
                 return digits
             }
             val p = Path()
@@ -914,19 +957,21 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
             val cell = digitCell(glyphPaint)
             val left = width / 2f - cell
             var n = 0
+            val parts = ArrayList<Path>(4)
             for ((text, base) in arrayOf(hh to line1Base, mm to line2Base)) {
                 for (i in 0..1) {
                     p.reset()
                     glyphPaint.getTextPath(text, i, i + 1, cellLeft(glyphPaint, text, i, left, cell),
                         base, p)
-                    mergeOverlaps(p)
-                    digits.addPath(p)
+                    parts.add(Path(p))
                     p.computeBounds(centreBounds, true)
                     glyphCentres[n] = centreBounds.centerX()
                     glyphCentres[n + 4] = centreBounds.centerY()
                     n++
                 }
             }
+            digits.fillType = mergeGlyphs(parts)
+            for (part in parts) digits.addPath(part)
         }
         return digits
     }
@@ -1230,6 +1275,9 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         shownV.copyInto(shapedForV)
         shapedVersion = glyphVersion
         shaped.reset()
+        // Merged glyphs (and square digits, whose bars are merged) go in under even-odd.
+        shaped.fillType = if (squareFont || glyphRule.all { it == Path.FillType.EVEN_ODD })
+            Path.FillType.EVEN_ODD else Path.FillType.WINDING
         // IchthysOS: evenly, about the top middle of the digit block; beside the subject each
         // glyph's height on top ([sidePlan]), its width kept. The minutes follow the hours down.
         val midX = (columns[0] + columns[3]) / 2f
@@ -1310,8 +1358,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
                     pair.second, glyphs[row * 2])
                 glyphPaint.getTextPath(text, 1, 2, cellLeft(glyphPaint, text, 1, x, a),
                     pair.second, glyphs[row * 2 + 1])
-                mergeOverlaps(glyphs[row * 2])
-                mergeOverlaps(glyphs[row * 2 + 1])
+                glyphRule[row] = mergeGlyphs(listOf(glyphs[row * 2], glyphs[row * 2 + 1]))
             }
             x0Left = min(x0Left, x)
             x1Left = max(x1Left, x + a)
