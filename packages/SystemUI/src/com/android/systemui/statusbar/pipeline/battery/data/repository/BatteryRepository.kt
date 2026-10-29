@@ -584,6 +584,11 @@ constructor(
         const val BATTERY_STYLE_LANDSCAPE = 4
         const val BATTERY_STYLE_FULL_CIRCLE = 5
         const val BATTERY_STYLE_HIDDEN = 6
+        /** IchthysOS additions, 2026-10-29 (IchthysBatteryStyles). */
+        const val BATTERY_STYLE_SEGMENTS = 7
+        const val BATTERY_STYLE_ARC = 8
+        const val BATTERY_STYLE_BAR = 9
+        const val BATTERY_STYLE_HEXAGON = 10
 
         private const val COL_PLUGGED_IN = "pluggedIn"
         private const val COL_POWER_SAVE = "powerSave"

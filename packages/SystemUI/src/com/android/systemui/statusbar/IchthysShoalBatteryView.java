@@ -357,6 +357,8 @@ public class IchthysShoalBatteryView extends View implements DarkReceiver {
             }
         }
         mTextOnly = style == BatteryRepositoryImpl.BATTERY_STYLE_TEXT;
+        // IchthysOS: a new style has another cell width; the old measure clipped the percent.
+        if (mStyle != style) requestLayout();
         mStyle = style;
         mHiddenByList = false;
         if (!mQsHeader) {
@@ -395,6 +397,12 @@ public class IchthysShoalBatteryView extends View implements DarkReceiver {
                 Math.min(BatteryCustomization.MAX_SCALE,
                         systemInt(cr, BatteryCustomization.KEY_SCALE,
                                 BatteryCustomization.DEFAULT_SCALE))) / 100f;
+        // IchthysOS: the QS header's icon row is one fixed height; a size above 100 % made the
+        // cell taller than the row and the pill / circle were clipped top and bottom. The user's
+        // size applies to the status bar; the header shows the icon at its stock size.
+        if (mQsHeader) {
+            mScale = Math.min(mScale, 1f);
+        }
         mFrameStrokeDp = STROKE_STEP_DP * Math.max(BatteryCustomization.MIN_FRAME_THICKNESS,
                 Math.min(BatteryCustomization.MAX_FRAME_THICKNESS,
                         systemInt(cr, BatteryCustomization.KEY_FRAME_THICKNESS,
@@ -520,15 +528,20 @@ public class IchthysShoalBatteryView extends View implements DarkReceiver {
                 top + cellH - stroke / 2f);
         final float radius = RADIUS_DP * mDensity * cellH / (CELL_H_DP * mDensity);
         final boolean round = isCircleStyle();
+        // IchthysOS 2026-10-29: the styles that draw their own level (no bottom-up fill below).
+        final boolean ownFill = round || isNewStyle()
+                || mStyle == BatteryRepositoryImpl.BATTERY_STYLE_LANDSCAPE;
         if (round) {
             drawCircleCell(canvas, stroke);
         } else if (mStyle == BatteryRepositoryImpl.BATTERY_STYLE_LANDSCAPE) {
             drawLandscapeCell(canvas, stroke, cellH);
+        } else if (isNewStyle()) {
+            drawNewStyleCell(canvas, stroke, cellH);
         } else {
             canvas.drawRoundRect(mCell, radius, radius, mFramePaint);
         }
 
-        if (mLevel > 0 && !round && mStyle != BatteryRepositoryImpl.BATTERY_STYLE_LANDSCAPE) {
+        if (mLevel > 0 && !ownFill) {
             final float inset = stroke / 2f + INSET_DP * mDensity * cellH / (CELL_H_DP * mDensity);
             mInner.set(mCell.left + inset, mCell.top + inset, mCell.right - inset,
                     mCell.bottom - inset);
@@ -586,11 +599,121 @@ public class IchthysShoalBatteryView extends View implements DarkReceiver {
                 || mStyle == BatteryRepositoryImpl.BATTERY_STYLE_FULL_CIRCLE;
     }
 
+    /** IchthysOS 2026-10-29: segments, arc gauge, bar, hexagon (IchthysBatteryStyles). */
+    private boolean isNewStyle() {
+        return mStyle == BatteryRepositoryImpl.BATTERY_STYLE_SEGMENTS
+                || mStyle == BatteryRepositoryImpl.BATTERY_STYLE_ARC
+                || mStyle == BatteryRepositoryImpl.BATTERY_STYLE_BAR
+                || mStyle == BatteryRepositoryImpl.BATTERY_STYLE_HEXAGON;
+    }
+
     /** IchthysOS: the cell's width for a cell [cellH] tall, per battery style. */
     private float cellWidthFor(float cellH) {
         if (isCircleStyle()) return cellH * 0.9f;
         if (mStyle == BatteryRepositoryImpl.BATTERY_STYLE_LANDSCAPE) return cellH * 1.55f;
+        if (mStyle == BatteryRepositoryImpl.BATTERY_STYLE_SEGMENTS) return cellH * 1.7f;
+        if (mStyle == BatteryRepositoryImpl.BATTERY_STYLE_BAR) return cellH * 1.9f;
+        if (mStyle == BatteryRepositoryImpl.BATTERY_STYLE_ARC
+                || mStyle == BatteryRepositoryImpl.BATTERY_STYLE_HEXAGON) return cellH * 0.95f;
         return CELL_W_DP * cellH / CELL_H_DP;
+    }
+
+    /**
+     * IchthysOS 2026-10-29: the four newer styles, matching IchthysBatteryStyles. Segments: a
+     * landscape cell of four bars, each a quarter of the charge. Arc: a 270-degree gauge open at
+     * the bottom. Bar: a bare track and fill. Hexagon: a flat-topped outline filling from the
+     * bottom.
+     */
+    private void drawNewStyleCell(Canvas canvas, float stroke, float cellH) {
+        final float cx = mCell.centerX();
+        final float cy = mCell.centerY();
+        final int level = Math.max(0, Math.min(mLevel, 100));
+        switch (mStyle) {
+            case BatteryRepositoryImpl.BATTERY_STYLE_SEGMENTS: {
+                final float h = cellH * 0.62f;
+                final float nub = mCell.width() * 0.07f;
+                final float top = cy - h / 2f;
+                final float right = mCell.right - nub;
+                final float radius = h * 0.22f;
+                mInner.set(mCell.left, top, right, top + h);
+                canvas.drawRoundRect(mInner, radius, radius, mFramePaint);
+                canvas.drawRect(right + stroke / 2f, cy - h * 0.18f, mCell.right, cy + h * 0.18f,
+                        nubPaint(mTint));
+                final float inset = stroke / 2f + INSET_DP * mDensity * 0.6f;
+                final float gap = Math.max(1f, inset * 0.8f);
+                final float l = mInner.left + inset;
+                final float r = mInner.right - inset;
+                final float cellW = (r - l - gap * 3f) / 4f;
+                final int lit = mLevel < 0 ? 0 : Math.min(4, (level + 12) / 25);
+                for (int i = 0; i < 4; i++) {
+                    final float x = l + i * (cellW + gap);
+                    final Paint p = i < lit ? mFillPaint : mRingPaint;
+                    if (i >= lit) {
+                        mRingPaint.setStyle(Paint.Style.FILL);
+                        mRingPaint.setPathEffect(null);
+                        mRingPaint.setColor(mTint);
+                        mRingPaint.setAlpha(60);
+                    }
+                    mLandscapeInner.set(x, mInner.top + inset, x + cellW, mInner.bottom - inset);
+                    canvas.drawRoundRect(mLandscapeInner, gap * 0.6f, gap * 0.6f, p);
+                }
+                return;
+            }
+            case BatteryRepositoryImpl.BATTERY_STYLE_ARC: {
+                final float size = Math.min(mCell.width(), mCell.height());
+                final float ring = Math.max(stroke * 1.4f, size * 0.15f);
+                final float r = size / 2f - ring / 2f;
+                mInner.set(cx - r, cy - r, cx + r, cy + r);
+                mRingPaint.setStyle(Paint.Style.STROKE);
+                mRingPaint.setStrokeWidth(ring);
+                mRingPaint.setStrokeCap(Paint.Cap.ROUND);
+                mRingPaint.setPathEffect(null);
+                mRingPaint.setColor(mTint);
+                mRingPaint.setAlpha(70);
+                canvas.drawArc(mInner, 135f, 270f, false, mRingPaint);
+                if (level > 0) {
+                    mRingPaint.setColor(mFillPaint.getColor());
+                    canvas.drawArc(mInner, 135f, 270f * level / 100f, false, mRingPaint);
+                }
+                return;
+            }
+            case BatteryRepositoryImpl.BATTERY_STYLE_BAR: {
+                final float h = Math.max(stroke * 1.6f, cellH * 0.3f);
+                final float top = cy - h / 2f;
+                mInner.set(mCell.left, top, mCell.right, top + h);
+                mRingPaint.setStyle(Paint.Style.FILL);
+                mRingPaint.setPathEffect(null);
+                mRingPaint.setColor(mTint);
+                mRingPaint.setAlpha(70);
+                canvas.drawRoundRect(mInner, h / 2f, h / 2f, mRingPaint);
+                if (level > 0) {
+                    final float w = Math.max(h, mInner.width() * level / 100f);
+                    mLandscapeInner.set(mInner.left, top, mInner.left + w, top + h);
+                    canvas.drawRoundRect(mLandscapeInner, h / 2f, h / 2f, mFillPaint);
+                }
+                return;
+            }
+            default: { // HEXAGON
+                final float size = Math.min(mCell.width(), mCell.height());
+                final float r = size / 2f - stroke / 2f;
+                mInnerPath.reset();
+                for (int i = 0; i < 6; i++) {
+                    final double a = Math.toRadians(60.0 * i - 30.0);
+                    final float x = cx + r * (float) Math.cos(a);
+                    final float y = cy + r * (float) Math.sin(a);
+                    if (i == 0) mInnerPath.moveTo(x, y); else mInnerPath.lineTo(x, y);
+                }
+                mInnerPath.close();
+                if (level > 0) {
+                    final float fillTop = cy + r - 2f * r * level / 100f;
+                    canvas.save();
+                    canvas.clipRect(cx - r, fillTop, cx + r, cy + r);
+                    canvas.drawPath(mInnerPath, mFillPaint);
+                    canvas.restore();
+                }
+                canvas.drawPath(mInnerPath, mFramePaint);
+            }
+        }
     }
 
     /**
