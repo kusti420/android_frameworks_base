@@ -746,36 +746,20 @@ half4 main(float2 p) {
     float3 skyNew = mix(grad, cloudLight, cloud) * pow(rel, 0.6);
     float3 skyOut = mix(lin, skyNew, skyAmount);
 
-    // The weather's clouds, made of the photo's own sky: wide soft banks drifting across it,
-    // flatter toward the horizon, lit on the side facing the sun; overcast closes them up.
+    // The weather's clouds, as a grade of the photo's own sky: no painted cloud shapes (noise
+    // over a real photo never stopped looking stuck on). Cover pulls the sky toward the cloud
+    // light and flattens it, keeping the photo's own structure (its clouds, glow and texture,
+    // relative to its mean sky) as the overcast's light and shade; storms darken it.
     float deck = 0.0;
     if (cover > 0.01 && s > 0.01) {
-        // No perspective projection (it bent the noise into fans and swirls): the banks only
-        // compress vertically toward the picture's horizon, on a log scale of the height above
-        // it (in screen widths), and stay wide. Low frequencies only: soft shapes, no grain.
-        float h = max((horizon * size.y - p.y) / size.x, 0.0);
-        float2 uv = float2(p.x / size.x * 1.25 + time * 0.008,
-            -log(h + 0.08) * 1.5 + time * 0.002);
-        float n = fbm(uv) * 0.82 + fbm(uv * 2.3 + 4.3) * 0.18;
-        float thr = mix(0.74, 0.3, cover);
-        deck = smoothstep(thr, thr + mix(0.3, 0.2, cover), n) * smoothstep(0.0, 0.1, h);
-        // The photo's own clouds stay its own: the weather thickens them rather than painting
-        // over them.
-        deck *= 1.0 - 0.6 * cloud;
-        float2 toSun = normalize(sunPos - p + float2(0.0, 0.001)) * 0.06;
-        float lit = clamp((n - fbm(uv + toSun) * 0.82 - fbm((uv + toSun) * 2.3 + 4.3) * 0.18)
-            * 5.0 + 0.55, 0.0, 1.0);
-        float3 base = mix(cloudLight * 0.5, grad * 0.4, 0.35) * (1.0 - 0.5 * storm);
-        float3 top3 = mix(cloudLight * 1.05, sunColor * exposure, 0.35 * sunGlow);
-        float3 cc = mix(base, top3, lit);
-        // Heavy cloud is grey whatever the hour: only a thin deck keeps the warm light.
+        deck = smoothstep(0.0, 1.0, cover) * 0.88;
+        float shade = clamp(pow(rel, 0.55), 0.7, 1.35);
+        float3 overcast = cloudLight * shade * (1.0 - 0.45 * storm);
+        // Heavy cloud is grey whatever the hour: only thin cover keeps the warm light.
         float heavy = smoothstep(0.55, 1.0, cover);
-        cc = mix(cc, luma(cc) * float3(0.94, 0.98, 1.06), heavy * 0.75) * (1.0 - 0.3 * heavy);
-        cc += float3(0.85, 0.89, 1.0) * (flash * 1.6 * lit);
-        // The photo's texture runs through the cloud (its grain, glow and own cloud detail,
-        // relative to its mean sky), so the cloud sits in the picture instead of on it.
-        cc *= mix(1.0, clamp(pow(rel, 0.5), 0.75, 1.3), 0.6);
-        skyOut = mix(skyOut, cc, deck * mix(0.6, 0.92, cover));
+        overcast = mix(overcast, luma(overcast) * float3(0.94, 0.98, 1.06), heavy * 0.75);
+        overcast += float3(0.85, 0.89, 1.0) * (flash * 1.2 * shade);
+        skyOut = mix(skyOut, overcast, deck);
     }
 
     float3 land = lin * light * exposure;
