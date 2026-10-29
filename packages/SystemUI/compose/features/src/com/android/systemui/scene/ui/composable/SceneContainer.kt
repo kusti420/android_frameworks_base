@@ -37,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalView
@@ -156,6 +157,10 @@ private fun InternalSceneContainer(
         }
 
     val resources = LocalResources.current
+    // IchthysOS "Shoal": the header transitions differ with the Shoal shade; the flag is read
+    // when a transition starts, so this needs no rebuild of the transitions.
+    (transitionsBuilder as? SceneContainerTransitions)?.shoalShadeActive =
+        com.android.systemui.shade.ui.ShoalShade.isActive(LocalContext.current)
     val sceneTransitions =
         remember(
             hapticFeedback,

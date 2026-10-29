@@ -22,6 +22,7 @@ import kotlin.time.Duration.Companion.milliseconds
 fun TransitionBuilder.shadeToQuickSettingsTransition(
     durationScale: Double = 1.0,
     animateQsTilesAsShared: () -> Boolean = { true },
+    shoalHeader: () -> Boolean = { false },
 ) {
     spec = tween(durationMillis = (DefaultDuration * durationScale).inWholeMilliseconds.toInt())
     distance = UserActionDistance { fromContent, _, _ ->
@@ -68,34 +69,41 @@ fun TransitionBuilder.shadeToQuickSettingsTransition(
     fractionRange(end = 0.5f) { fade(QqsTileElementMatcher) }
     anchoredTranslate(QqsTileElementMatcher, Elements.GridAnchor)
 
-    val translationY = ShadeHeader.Dimensions.CollapsedHeightForTransitions
-    translate(ShadeHeader.Elements.CollapsedContentStart, y = translationY)
-    translate(ShadeHeader.Elements.CollapsedContentEnd, y = translationY)
-    translate(
-        ShadeHeader.Elements.ExpandedContent,
-        y = -(ShadeHeader.Dimensions.ExpandedHeight - translationY),
-    )
-    translate(ShadeHeader.Elements.ShadeCarrierGroup, y = -translationY)
+    // IchthysOS "Shoal": both scenes draw the one header at the same place (ShoalShadeHeader),
+    // so its date, pill and icons are shared elements that must not be moved or faded here:
+    // these stock moves slid them down and blinked them on every swipe.
+    if (!shoalHeader()) {
+        val translationY = ShadeHeader.Dimensions.CollapsedHeightForTransitions
+        translate(ShadeHeader.Elements.CollapsedContentStart, y = translationY)
+        translate(ShadeHeader.Elements.CollapsedContentEnd, y = translationY)
+        translate(
+            ShadeHeader.Elements.ExpandedContent,
+            y = -(ShadeHeader.Dimensions.ExpandedHeight - translationY),
+        )
+        translate(ShadeHeader.Elements.ShadeCarrierGroup, y = -translationY)
 
-    fractionRange(end = .14f) {
-        fade(ShadeHeader.Elements.CollapsedContentStart)
-        fade(ShadeHeader.Elements.CollapsedContentEnd)
-    }
+        fractionRange(end = .14f) {
+            fade(ShadeHeader.Elements.CollapsedContentStart)
+            fade(ShadeHeader.Elements.CollapsedContentEnd)
+        }
 
-    fractionRange(start = .58f) {
-        fade(ShadeHeader.Elements.ExpandedContent)
-        fade(ShadeHeader.Elements.ShadeCarrierGroup)
+        fractionRange(start = .58f) {
+            fade(ShadeHeader.Elements.ExpandedContent)
+            fade(ShadeHeader.Elements.ShadeCarrierGroup)
+        }
     }
 }
 
 fun TransitionBuilder.quickSettingsToShadeTransition(
     durationScale: Double = 1.0,
     animateQsTilesAsShared: () -> Boolean = { true },
+    shoalHeader: () -> Boolean = { false },
 ) {
     reversed {
         shadeToQuickSettingsTransition(
             durationScale = durationScale,
             animateQsTilesAsShared = animateQsTilesAsShared,
+            shoalHeader = shoalHeader,
         )
     }
     // Translate the HeadsUpNotificationPlaceholder from the StackPlaceholder's start position to

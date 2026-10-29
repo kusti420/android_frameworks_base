@@ -76,6 +76,9 @@ import com.android.systemui.shade.ui.composable.Shade
  * Please keep the list sorted alphabetically.
  */
 class SceneContainerTransitions : SceneContainerTransitionsBuilder {
+    /** IchthysOS "Shoal": set by SceneContainer from its context (ShoalShade.isActive). */
+    @Volatile var shoalShadeActive: Boolean = false
+
     override fun build(
         shadeExpansionMotion: VerticalExpandContainerSpec,
         revealHaptics: ContainerRevealHaptics,
@@ -83,6 +86,8 @@ class SceneContainerTransitions : SceneContainerTransitionsBuilder {
         toBouncerTransitionViewModel: ToBouncerTransitionViewModel,
         resources: Resources,
     ): SceneTransitions {
+        // IchthysOS "Shoal": read at transition time, so a theme change applies to the next swipe.
+        val shoalHeader: () -> Boolean = { shoalShadeActive }
         return transitions {
             interruptionHandler = DefaultInterruptionHandler
 
@@ -275,7 +280,8 @@ class SceneContainerTransitions : SceneContainerTransitionsBuilder {
                 cujTag = TAG_COLLAPSE,
             ) {
                 quickSettingsToShadeTransition(
-                    animateQsTilesAsShared = { animateQsTilesViewModel.animateQsTiles }
+                    animateQsTilesAsShared = { animateQsTilesViewModel.animateQsTiles },
+                    shoalHeader = shoalHeader,
                 )
             }
             from(
@@ -367,7 +373,8 @@ class SceneContainerTransitions : SceneContainerTransitionsBuilder {
                 cujTag = TAG_EXPAND,
             ) {
                 shadeToQuickSettingsTransition(
-                    animateQsTilesAsShared = { animateQsTilesViewModel.animateQsTiles }
+                    animateQsTilesAsShared = { animateQsTilesViewModel.animateQsTiles },
+                    shoalHeader = shoalHeader,
                 )
             }
             from(
