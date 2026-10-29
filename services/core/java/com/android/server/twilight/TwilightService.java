@@ -47,6 +47,8 @@ import com.android.server.SystemService;
 import com.ibm.icu.impl.CalendarAstronomer;
 
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Objects;
@@ -106,6 +108,15 @@ public final class TwilightService extends SystemService
     private boolean mAodListening;
     private String mPublishedTimes;
     private ContentObserver mWeatherObserver;
+    /**
+     * IchthysOS: the weather provider's last sunrise / sunset (epoch ms, 0 = none). Without a
+     * location fix every listener (Night Light's sunset-to-sunrise schedule too, which otherwise
+     * stayed in whatever state it was in) gets a twilight state made from them.
+     */
+    private volatile long mWeatherSunrise;
+    private volatile long mWeatherSunset;
+    /** IchthysOS: the last twilight state came from a location (not the weather's times). */
+    private volatile boolean mHasFix;
 
     public TwilightService(Context context) {
         super(context.createAttributionContext(ATTRIBUTION_TAG));
@@ -145,6 +156,17 @@ public final class TwilightService extends SystemService
                 synchronized (mListeners) {
                     return mLastTwilightState;
                 }
+            }
+        });
+    }
+
+    @Override
+    public void onUserUnlocked(@NonNull TargetUser user) {
+        // IchthysOS: until the unlock the weather provider's storage can't be read, so a boot
+        // without a location fix found no stand-in times: ask again.
+        mHandler.post(() -> {
+            if (mHasListeners && mBootCompleted && !mHasFix) {
+                postWeatherTimes();
             }
         });
     }
@@ -211,10 +233,8 @@ public final class TwilightService extends SystemService
             mWeatherObserver = new ContentObserver(mHandler) {
                 @Override
                 public void onChange(boolean selfChange) {
-                    synchronized (mListeners) {
-                        if (mLastTwilightState != null) {
-                            return;
-                        }
+                    if (mHasFix) {
+                        return;
                     }
                     postWeatherTimes();
                 }
@@ -238,10 +258,8 @@ public final class TwilightService extends SystemService
     }
 
     private void publishWeatherTimesIfNoFix() {
-        synchronized (mListeners) {
-            if (mLastTwilightState != null) {
-                return;
-            }
+        if (mHasFix) {
+            return;
         }
         postWeatherTimes();
     }
@@ -270,7 +288,46 @@ public final class TwilightService extends SystemService
         }
         if (sunrise > 0 && sunset > 0) {
             publishTimes(sunset, sunrise);
+            if (sunrise != mWeatherSunrise || sunset != mWeatherSunset) {
+                mWeatherSunrise = sunrise;
+                mWeatherSunset = sunset;
+                // Only on a change: updateTwilightState asks for the weather again while there
+                // is no fix.
+                mHandler.post(() -> {
+                    if (mHasListeners && mBootCompleted) {
+                        updateTwilightState();
+                    }
+                });
+            }
         }
+    }
+
+    /**
+     * IchthysOS: the weather's sunrise and sunset at their times of day on the days around
+     * [timeMillis], laid out as {@link #calculateTwilightState} does; null without weather times.
+     */
+    private TwilightState weatherTwilightState(long timeMillis) {
+        final long rise = mWeatherSunrise;
+        final long set = mWeatherSunset;
+        if (rise <= 0 || set <= 0) {
+            return null;
+        }
+        final ZoneId zone = ZoneId.systemDefault();
+        final LocalDate today = Instant.ofEpochMilli(timeMillis).atZone(zone).toLocalDate();
+        final LocalTime riseTime = Instant.ofEpochMilli(rise).atZone(zone).toLocalTime();
+        final LocalTime setTime = Instant.ofEpochMilli(set).atZone(zone).toLocalTime();
+        long sunriseTimeMillis = epochMillis(today, riseTime, zone);
+        long sunsetTimeMillis = epochMillis(today, setTime, zone);
+        if (sunsetTimeMillis < timeMillis) {
+            sunriseTimeMillis = epochMillis(today.plusDays(1), riseTime, zone);
+        } else if (sunriseTimeMillis > timeMillis) {
+            sunsetTimeMillis = epochMillis(today.minusDays(1), setTime, zone);
+        }
+        return new TwilightState(sunriseTimeMillis, sunsetTimeMillis);
+    }
+
+    private static long epochMillis(LocalDate date, LocalTime time, ZoneId zone) {
+        return date.atTime(time).atZone(zone).toInstant().toEpochMilli();
     }
 
     /** IchthysOS: see {@link #ICHTHYS_TWILIGHT_TIMES}. */
@@ -375,7 +432,10 @@ public final class TwilightService extends SystemService
         final long currentTimeMillis = System.currentTimeMillis();
         final Location location = mLastLocation != null ? mLastLocation
                 : mLocationManager.getLastLocation();
-        final TwilightState state = calculateTwilightState(location, currentTimeMillis);
+        final TwilightState fromLocation = calculateTwilightState(location, currentTimeMillis);
+        mHasFix = fromLocation != null;
+        final TwilightState state = fromLocation != null ? fromLocation
+                : weatherTwilightState(currentTimeMillis);
         if (DEBUG) {
             Slog.d(TAG, "updateTwilightState: " + state);
         }
@@ -393,8 +453,9 @@ public final class TwilightService extends SystemService
             }
         }
 
-        // IchthysOS: no location fix yet: the weather's times, while someone needs them.
-        if (state == null && mAodListening) {
+        // IchthysOS: no location fix yet: the weather's times (refreshed), while someone needs
+        // them. A change comes back here through publishWeatherTimes.
+        if (location == null && mHasListeners) {
             postWeatherTimes();
         }
 
