@@ -69,7 +69,7 @@ private data class ShoalHeaderWeatherState(
  * face, and today's high and low below it. Tapping it opens the weather page.
  *
  * Shows nothing while it is switched off (quickSettings.header.weather), the weather service is
- * off or there is no data. The data is the same OmniJaws
+ * off or there is no data ([fallback] then shows instead). The data is the same OmniJaws
  * the status bar weather reads.
  */
 @Composable
@@ -78,11 +78,19 @@ fun ShoalHeaderWeather(
     mutedColor: Color,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    fallback: @Composable () -> Unit = {},
 ) {
     // quickSettings.header.weather; unset means on.
-    if (!rememberSecureSettingBoolean(SETTING_ENABLED, default = true)) return
+    if (!rememberSecureSettingBoolean(SETTING_ENABLED, default = true)) {
+        fallback()
+        return
+    }
     val context = LocalContext.current
-    val state = rememberShoalHeaderWeather(context) ?: return
+    val state = rememberShoalHeaderWeather(context)
+    if (state == null) {
+        fallback()
+        return
+    }
     val monoFamily =
         remember(context) {
             FontFamily(

@@ -326,6 +326,7 @@ fun ContentScope.ExpandedShadeHeader(
     val useExpandedFormat by remember { derivedStateOf { shouldUseExpandedFormat(layoutState) } }
 
     val textColor = ShadeHeader.Colors.textColor
+    val context = LocalContext.current
 
     Box(modifier = modifier.sysuiResTag(ShadeHeader.TestTags.Root)) {
         if (viewModel.isPrivacyChipVisible) {
@@ -362,10 +363,21 @@ fun ContentScope.ExpandedShadeHeader(
                         modifier =
                             Modifier.element(ShadeHeader.Elements.ShadeCarrierGroup).fillMaxWidth()
                     ) {
-                        ShadeCarrierGroup(
-                            viewModel = viewModel,
-                            modifier = Modifier.align(Alignment.CenterEnd).widthIn(max = 180.dp),
-                        )
+                        // IchthysOS: the weather (glyph, temperature, today's high / low) in the
+                        // carrier's place, as in the Shoal header: a surface style without the
+                        // Shoal shade ("tonal") lost it. The carrier shows when there is none.
+                        ShoalHeaderWeather(
+                            textColor = textColor,
+                            mutedColor = textColor.copy(alpha = 0.7f),
+                            onClick = { viewModel.onWeatherClicked(context) },
+                            modifier = Modifier.align(Alignment.CenterEnd),
+                        ) {
+                            ShadeCarrierGroup(
+                                viewModel = viewModel,
+                                modifier =
+                                    Modifier.align(Alignment.CenterEnd).widthIn(max = 180.dp),
+                            )
+                        }
                     }
                 }
             }
