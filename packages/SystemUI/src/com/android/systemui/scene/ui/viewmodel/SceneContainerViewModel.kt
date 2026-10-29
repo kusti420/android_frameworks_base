@@ -157,6 +157,9 @@ constructor(
         combine(shadeModeInteractor.shadeMode, pulldownInteractor.quickPulldownMode) {
                 shadeMode,
                 quickPulldown ->
+                // IchthysOS: every detector also knows the lock screen's bottom band
+                // (LockscreenUserActionsViewModel: the swipe up that unlocks starts there only).
+                LockscreenBottomBandDetector(
                 if (shadeMode is ShadeMode.Dual) {
                     SceneContainerSwipeDetector(
                         dynamicSizeEdgeDetector = dynamicSizeEdgeDetector,
@@ -173,8 +176,9 @@ constructor(
                 } else {
                     dynamicSizeEdgeDetector
                 }
+                )
             }
-            .hydratedStateOf(initialValue = dynamicSizeEdgeDetector)
+            .hydratedStateOf(initialValue = LockscreenBottomBandDetector(dynamicSizeEdgeDetector))
 
     /** Amount of color saturation for the Flexi🥃 ribbon. */
     val ribbonColorSaturation: Float by

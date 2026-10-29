@@ -255,10 +255,17 @@ constructor(
             }
 
     val iconType: Flow<DeviceEntryIconView.IconType> =
-        combine(deviceEntryUdfpsInteractor.isListeningForUdfps, isUnlocked) {
-            isListeningForUdfps,
-            isUnlocked ->
-            if (isListeningForUdfps) {
+        combine(
+            deviceEntryUdfpsInteractor.isListeningForUdfps,
+            deviceEntryUdfpsInteractor.isUdfpsEnrolledAndEnabled,
+            isUnlocked,
+        ) { isListeningForUdfps, udfpsEnrolled, isUnlocked ->
+            // IchthysOS: with a fingerprint enrolled the icon is the fingerprint, listening or
+            // not: the padlock showed whenever the sensor paused (after a lockout, a failed
+            // attempt, a timing gap on wake), which read as fingerprint being unavailable.
+            // Only a lockout / strong-auth state really needs the padlock, and those also stop
+            // the sensor; the icon stays a fingerprint and a tap on it still explains why.
+            if (isListeningForUdfps || udfpsEnrolled) {
                 if (isUnlocked) {
                     // Don't show any UI until isUnlocked=false. This covers the case
                     // when the "Power button instantly locks > 0s" or the device doesn't lock
@@ -290,7 +297,9 @@ constructor(
             when (deviceEntryStatus) {
                 DeviceEntryIconView.IconType.LOCK -> isUdfps
                 DeviceEntryIconView.IconType.UNLOCK -> true
-                DeviceEntryIconView.IconType.FINGERPRINT,
+                // IchthysOS: the fingerprint icon stands in for the padlock too (iconType), so a
+                // long press on it must still open the bouncer.
+                DeviceEntryIconView.IconType.FINGERPRINT -> isUdfps
                 DeviceEntryIconView.IconType.NONE -> false
             }
         }

@@ -17,6 +17,7 @@
 package com.android.systemui.keyguard.ui.viewmodel
 
 import android.os.UserHandle
+import com.android.compose.animation.scene.Edge
 import com.android.compose.animation.scene.Swipe
 import com.android.compose.animation.scene.UserAction
 import com.android.compose.animation.scene.UserActionResult
@@ -24,6 +25,7 @@ import com.android.systemui.communal.domain.interactor.CommunalInteractor
 import com.android.systemui.deviceentry.domain.interactor.DeviceEntryInteractor
 import com.android.systemui.scene.shared.model.Overlays
 import com.android.systemui.scene.shared.model.Scenes
+import com.android.systemui.scene.ui.viewmodel.LockscreenBottomBand
 import com.android.systemui.scene.ui.viewmodel.UserActionsViewModel
 import com.android.systemui.shade.domain.interactor.ShadeInteractor
 import com.android.systemui.shade.domain.interactor.ShadeModeInteractor
@@ -73,17 +75,28 @@ constructor(
                                 add(Swipe.Start to Scenes.Communal)
                             }
 
-                            if (isDeviceUnlocked) {
-                                add(Swipe.Up to Scenes.Gone)
-                            } else {
-                                add(Swipe.Up to Overlays.Bouncer)
-                            }
+                            // IchthysOS: the swipe up that unlocks starts in the bottom band only
+                            // (LockscreenBottomBand); anywhere higher the lock screen's own
+                            // touch features (the depth X-ray lens, the clock's heat) have the
+                            // finger.
+                            val unlock: UserActionResult =
+                                if (isDeviceUnlocked) UserActionResult(Scenes.Gone)
+                                else UserActionResult.ShowOverlay(Overlays.Bouncer)
+                            add(Swipe.Up(fromSource = LockscreenBottomBand) to unlock)
+                            add(Swipe.Up(fromSource = Edge.Bottom) to unlock)
 
                             addAll(
                                 when (shadeMode) {
                                     ShadeMode.Single -> singleShadeActions()
                                     ShadeMode.Split -> splitShadeActions()
                                     ShadeMode.Dual -> dualShadeActions()
+                                }.let { actions ->
+                                    // IchthysOS: on the lock screen the shade opens from the
+                                    // status bar only (a source-less swipe down works from
+                                    // anywhere, which took the X-ray lens's drags).
+                                    actions.filter { (action, _) ->
+                                        (action as? Swipe)?.fromSource != null
+                                    }
                                 }.let { actions ->
                                     // IchthysOS: crDroid's enable_lockscreen_quick_settings. When
                                     // off, the lockscreen keeps its shade gestures but loses the
