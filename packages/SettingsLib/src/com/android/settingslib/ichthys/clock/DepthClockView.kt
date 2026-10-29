@@ -879,6 +879,18 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
     }
 
     /** The digits as one path; rebuilt when the minute changes. */
+    /**
+     * IchthysOS: [glyph] as one outline. Display fonts often build a digit from overlapping
+     * contours (a "1" is a stem with a separate flag over it): filled that doesn't show, but
+     * stroked (the AOD's outline, the edge lines) every contour's edge was drawn, inside the digit
+     * too, as stray and crossing lines. Glyph paths change once a minute, so this costs nothing.
+     */
+    private fun mergeOverlaps(glyph: Path) {
+        if (glyph.isEmpty) return
+        val merged = Path()
+        if (merged.op(glyph, Path(), Path.Op.UNION)) glyph.set(merged)
+    }
+
     private fun digitsPath(): Path {
         // IchthysOS polish: compared as a number, so no strings are made on the frames between.
         val t = displayHour() * 100 + minute()
@@ -907,6 +919,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
                     p.reset()
                     glyphPaint.getTextPath(text, i, i + 1, cellLeft(glyphPaint, text, i, left, cell),
                         base, p)
+                    mergeOverlaps(p)
                     digits.addPath(p)
                     p.computeBounds(centreBounds, true)
                     glyphCentres[n] = centreBounds.centerX()
@@ -1297,6 +1310,8 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
                     pair.second, glyphs[row * 2])
                 glyphPaint.getTextPath(text, 1, 2, cellLeft(glyphPaint, text, 1, x, a),
                     pair.second, glyphs[row * 2 + 1])
+                mergeOverlaps(glyphs[row * 2])
+                mergeOverlaps(glyphs[row * 2 + 1])
             }
             x0Left = min(x0Left, x)
             x1Left = max(x1Left, x + a)
