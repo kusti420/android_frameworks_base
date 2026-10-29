@@ -16,8 +16,6 @@
 
 package com.android.systemui.keyguard.ui.composable.elements
 
-import android.graphics.Paint
-import android.graphics.Typeface
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.runtime.getValue
@@ -31,23 +29,13 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import com.android.systemui.keyguard.data.repository.IchthysDepthRepository
-import java.io.File
-import kotlin.math.exp
-import kotlin.math.max
-import kotlin.math.roundToInt
-import kotlin.math.sin
 
 /**
  * IchthysOS depth lock screen, X-ray (kusti420/ichthysos-tracker#58): a finger put down on the
@@ -72,7 +60,11 @@ fun Modifier.ichthysDepthLens(repository: IchthysDepthRepository): Modifier = co
                 pulse(at)
                 repository.ripple(at)
                 val lens = repository.hitsSubject(at.x, at.y)
-                if (lens) repository.setLens(IchthysDepthRepository.Lens(at, down.pressure))
+                if (lens) {
+                    repository.setLens(IchthysDepthRepository.Lens(at, down.pressure))
+                    // IchthysOS: the lens opening is felt as much as seen: one light tick.
+                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                }
                 // Press and hold on the clock, then draw: from then on the touch is the clock's,
                 // so the shade and unlock swipes don't take it. A quick swipe still swipes. Only
                 // where there is something to draw into; elsewhere a held finger stays a swipe.
@@ -130,43 +122,34 @@ private fun finish(lens: Boolean, repository: IchthysDepthRepository) {
     if (lens) repository.setLens(null)
 }
 
-/** Number of panel cells across the screen (the A52s' touch panel reads 16 x 37 nodes). */
-private const val COLUMNS = 16
-private const val ROWS = 37
-
-/** Highest node value drawn, like the touch IC's delta frame. */
-private const val PEAK = 950f
-
-private val monoFace: Typeface by lazy {
-    val f = File("/system/fonts/JetBrainsMono-VF.ttf")
-    (if (f.isFile) runCatching { Typeface.Builder(f).build() }.getOrNull() else null)
-        ?: Typeface.MONOSPACE
-}
-
 /**
- * What the lens shows over the hole it cuts in the subject: the touch panel's nodes around the
- * finger, each with its strength, a ring, and its reading. The strengths are modelled from where the
- * finger is and how hard it presses, in the shape a delta frame has (a peak spreading over a few
- * nodes); reading the panel's real frames is a later step.
+ * The lens over the veil the cut-out opens: a soft halo of pond light fading out past the rim,
+ * one thin cream ring at the rim and a fine accent ring a little outside it. [shown] (0..1) is
+ * the lens animating in (ring and halo grow and brighten together) or dissolving on release.
+ * No touch-panel readout any more (it read as surgery): just a calm, watchful ring.
  */
-fun DrawScope.drawDepthLens(
-    lens: IchthysDepthRepository.Lens,
-    radius: Float,
-    accent: Color,
-    screen: Size,
-) {
-    // A clean window through the subject: the hole is cut by the cut-out layer; here only its
-    // rim, a fine cream ring and a dotted pond-light ring just outside it.
-    drawCircle(Color(0xFFF6F1EA).copy(alpha = 0.9f), radius, lens.position,
-        style = Stroke(width = 1.2f * density))
+fun DrawScope.drawDepthLens(position: Offset, radius: Float, shown: Float, accent: Color) {
+    if (shown <= 0f) return
+    val fade = shown * shown * (3f - 2f * shown)
+    // Light spilling out of the lens into the picture around it.
     drawCircle(
-        accent.copy(alpha = 0.55f),
-        radius + 10f * density,
-        lens.position,
-        style =
-            Stroke(
-                width = 1f * density,
-                pathEffect = PathEffect.dashPathEffect(floatArrayOf(1.5f * density, 5f * density)),
-            ),
+        brush = androidx.compose.ui.graphics.Brush.radialGradient(
+            0.78f to Color.Transparent,
+            0.9f to accent.copy(alpha = 0.16f * fade),
+            1f to Color.Transparent,
+            center = position,
+            radius = radius * 1.35f,
+        ),
+        radius = radius * 1.35f,
+        center = position,
     )
+    // The rim: cream, a hair wide, with a faint dark line just inside so it reads on a bright
+    // picture too.
+    drawCircle(Color(0xFF07090B).copy(alpha = 0.35f * fade), radius - 1.1f * density, position,
+        style = Stroke(width = 1.2f * density))
+    drawCircle(Color(0xFFF6F1EA).copy(alpha = 0.92f * fade), radius, position,
+        style = Stroke(width = 1.6f * density))
+    // Pond light a little outside it, fine and continuous.
+    drawCircle(accent.copy(alpha = 0.5f * fade), radius + 9f * density, position,
+        style = Stroke(width = 1f * density))
 }

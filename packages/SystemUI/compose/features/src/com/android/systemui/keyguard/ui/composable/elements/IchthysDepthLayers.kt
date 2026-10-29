@@ -30,7 +30,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
@@ -38,7 +37,6 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.translate
@@ -52,7 +50,60 @@ import com.android.settingslib.ichthys.sky.LivingSky
 import com.android.systemui.keyguard.data.repository.IchthysDepthRepository
 
 /** Radius of the X-ray lens. */
-private const val LENS_RADIUS_DP = 70f
+private const val LENS_RADIUS_DP = 110f
+
+/**
+ * IchthysOS: where the lens is and how far it is shown (0..1), animated: it grows in on a press,
+ * trails the finger a little and dissolves outward on release. The cut-out's veil and the
+ * overlay's ring use the same springs, so they move as one.
+ */
+private class LensState(val position: Offset, val shown: Float, val pressed: Boolean) {
+    /** The lens's radius now: grows in on a press, widens as it fades on release. */
+    fun radius(base: Float): Float =
+        base * if (pressed) 0.72f + 0.28f * shown else 1f + 0.22f * (1f - shown)
+}
+
+@Composable
+private fun rememberLensState(lens: IchthysDepthRepository.Lens?): LensState {
+    var last by remember { mutableStateOf(Offset.Zero) }
+    if (lens != null) last = lens.position
+    val shown by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (lens != null) 1f else 0f,
+        animationSpec =
+            if (lens != null) androidx.compose.animation.core.spring(0.7f, 380f)
+            else tween(340),
+        label = "lensShown",
+    )
+    val position by androidx.compose.animation.core.animateOffsetAsState(
+        targetValue = last,
+        animationSpec = androidx.compose.animation.core.spring(0.9f, 1400f),
+        label = "lensPosition",
+    )
+    return LensState(position, shown, lens != null)
+}
+
+/**
+ * IchthysOS: what the lens does to the subject over the clock: no hole (cut into a person it read
+ * as a wound), a soft see-through veil, strongest in the middle and feathered to nothing at the
+ * rim, so the clock shows through the subject as through frosted glass.
+ */
+private class LensVeil(val center: Offset, val radius: Float, val strength: Float)
+
+private fun DrawScope.drawLensVeil(veil: LensVeil) {
+    if (veil.strength <= 0f) return
+    drawCircle(
+        brush = androidx.compose.ui.graphics.Brush.radialGradient(
+            0f to Color.Black.copy(alpha = 0.82f * veil.strength),
+            0.55f to Color.Black.copy(alpha = 0.66f * veil.strength),
+            1f to Color.Transparent,
+            center = veil.center,
+            radius = veil.radius,
+        ),
+        radius = veil.radius,
+        center = veil.center,
+        blendMode = androidx.compose.ui.graphics.BlendMode.DstOut,
+    )
+}
 
 /**
  * IchthysOS polish: depth turned on or off, a new wallpaper or a new mask: the layers cross-fade
@@ -118,7 +169,7 @@ fun IchthysDepthBackdrop(
 
 /**
  * The wallpaper's subject, over the clock: place it over the clock's box (matchParentSize). With a
- * finger on the subject, the X-ray lens cuts a hole in it.
+ * finger on the subject, the X-ray lens makes it see-through there ([drawLensVeil]).
  */
 @Composable
 fun IchthysDepthCutout(
@@ -128,6 +179,7 @@ fun IchthysDepthCutout(
 ) {
     val layers by repository.layers.collectAsStateWithLifecycle()
     val lens by repository.lens.collectAsStateWithLifecycle()
+    val lensState = rememberLensState(lens)
     val finger by IchthysDepthRepository.fingerOnSensor.collectAsStateWithLifecycle()
     val skyNow by repository.livingSky.collectAsStateWithLifecycle()
     // IchthysOS: the Depth face says when its fit stepped back (no room above the subject): the
@@ -159,9 +211,10 @@ fun IchthysDepthCutout(
         if (!depthApplies || !repository.cutoutKeepsClockReadable(current)) return@Crossfade
         Box(Modifier.fillMaxSize()) {
             if (dozeAmount < 1f) {
-                val hole: DrawScope.(Offset) -> Path? = { origin ->
-                    lens?.let {
-                        Path().apply { addOval(Rect(it.position - origin, LENS_RADIUS_DP * density)) }
+                val hole: DrawScope.(Offset) -> LensVeil? = { origin ->
+                    lensState.takeIf { it.shown > 0f }?.let {
+                        LensVeil(it.position - origin, it.radius(LENS_RADIUS_DP * density),
+                            it.shown)
                     }
                 }
                 // IchthysOS Living Sky: the graded picture (and its weather), only where the
@@ -195,7 +248,7 @@ fun IchthysDepthCutout(
 @Composable
 fun IchthysDepthLensOverlay(repository: IchthysDepthRepository, modifier: Modifier = Modifier) {
     val lens by repository.lens.collectAsStateWithLifecycle()
-    val trail by repository.trail.collectAsStateWithLifecycle()
+    val lensState = rememberLensState(lens)
     val ripples by repository.ripples.collectAsStateWithLifecycle()
     val accent = Color(0xFF9FE7DD)
     var origin by remember { mutableStateOf(Offset.Zero) }
@@ -208,8 +261,8 @@ fun IchthysDepthLensOverlay(repository: IchthysDepthRepository, modifier: Modifi
             }
         }
     }
-    val current = lens
-    if (current == null && ripples.none { now - it.start < IchthysDepthRepository.RIPPLE_MS }) {
+    if (lensState.shown <= 0f &&
+        ripples.none { now - it.start < IchthysDepthRepository.RIPPLE_MS }) {
         return
     }
     Canvas(
@@ -232,18 +285,9 @@ fun IchthysDepthLensOverlay(repository: IchthysDepthRepository, modifier: Modifi
                     )
                 }
             }
-            if (current == null) return@translate
-            // The lens's trail: rings growing and fading behind it (newest last).
-            trail.dropLast(1).forEachIndexed { i, p ->
-                val age = trail.size - 1 - i
-                drawCircle(
-                    Color(0xFFF6F1EA).copy(alpha = (0.42f - age * 0.08f).coerceAtLeast(0.06f)),
-                    radius = (12f + age * 9f) * density,
-                    center = p,
-                    style = androidx.compose.ui.graphics.drawscope.Stroke(1.2f * density),
-                )
-            }
-            drawDepthLens(current, LENS_RADIUS_DP * density, accent, size)
+            if (lensState.shown <= 0f) return@translate
+            drawDepthLens(lensState.position, lensState.radius(LENS_RADIUS_DP * density),
+                lensState.shown, accent)
         }
     }
 }
@@ -335,7 +379,7 @@ private fun LivingSkyLayer(
     alpha: Float,
     modifier: Modifier,
     mask: Bitmap? = null,
-    hole: DrawScope.(origin: Offset) -> Path? = { null },
+    hole: DrawScope.(origin: Offset) -> LensVeil? = { null },
 ) {
     val info = layers.skyInfo ?: return
     val sky = layers.sky ?: return
@@ -358,7 +402,11 @@ private fun LivingSkyLayer(
     Canvas(
         modifier
             .onGloballyPositioned { origin = it.positionInWindow() }
-            .graphicsLayer { this.alpha = alpha }
+            .graphicsLayer {
+                this.alpha = alpha
+                compositingStrategy =
+                    androidx.compose.ui.graphics.CompositingStrategy.Offscreen
+            }
     ) {
         // Read while drawing: every frame of motion draws again.
         LivingSkyFrame.frame.longValue
@@ -366,16 +414,13 @@ private fun LivingSkyLayer(
             now.options.intensity / 100f, w, h, density, LivingSkyFrame.time,
             LivingSkyFrame.flash, now.weather, subject)
         clipRect(left = -origin.x, top = 0f, right = -origin.x + 100_000f, bottom = 100_000f) {
-            val path = hole(origin)
-            val draw: DrawScope.() -> Unit = {
-                translate(-origin.x, -origin.y) {
-                    drawIntoCanvas {
-                        if (mask != null) painter.drawMasked(it.nativeCanvas, w, h, mask)
-                        else painter.draw(it.nativeCanvas, w, h)
-                    }
+            translate(-origin.x, -origin.y) {
+                drawIntoCanvas {
+                    if (mask != null) painter.drawMasked(it.nativeCanvas, w, h, mask)
+                    else painter.draw(it.nativeCanvas, w, h)
                 }
             }
-            if (path != null) clipPath(path, ClipOp.Difference) { draw() } else draw()
+            hole(origin)?.let { drawLensVeil(it) }
         }
     }
 }
@@ -392,25 +437,25 @@ private fun WindowImage(
     modifier: Modifier,
     colorFilter: ColorFilter? = null,
     shift: () -> Offset = { Offset.Zero },
-    hole: DrawScope.(origin: Offset) -> Path? = { null },
+    hole: DrawScope.(origin: Offset) -> LensVeil? = { null },
 ) {
     val image = remember(bitmap) { bitmap.asImageBitmap() }
     var origin by remember { mutableStateOf(Offset.Zero) }
     Canvas(
         modifier
             .onGloballyPositioned { origin = it.positionInWindow() }
-            .graphicsLayer { this.alpha = alpha }
+            .graphicsLayer {
+                this.alpha = alpha
+                // The lens's veil erases from this layer only.
+                compositingStrategy =
+                    androidx.compose.ui.graphics.CompositingStrategy.Offscreen
+            }
     ) {
         // Nothing above this box (the status bar's icons stay in front); below and beside it the
         // picture may spill, where it is the backdrop's own pixels anyway.
         clipRect(left = -origin.x, top = 0f, right = -origin.x + 100_000f, bottom = 100_000f) {
-            val path = hole(origin)
-            val at = origin - shift()
-            if (path != null) {
-                clipPath(path, ClipOp.Difference) { drawAtWindowOrigin(image, at, colorFilter) }
-            } else {
-                drawAtWindowOrigin(image, at, colorFilter)
-            }
+            drawAtWindowOrigin(image, origin - shift(), colorFilter)
+            hole(origin)?.let { drawLensVeil(it) }
         }
     }
 }
