@@ -1563,6 +1563,20 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
                 }
             }
             FILL_GLASS -> {
+                // IchthysOS: with X-ray on the clock stands behind the subject; glass digits
+                // bent the subject through themselves (the car "morphing" through the time).
+                // Behind a subject the face is the solid one.
+                if (depthMode == DEPTH_XRAY && depthApplies) {
+                    paint.color = primary
+                    paint.setShadowLayer(dp(12f), 0f, dp(5f),
+                        Color.argb((120 * alpha).toInt(), 0, 20, 24))
+                    paint.shader = fillShader()
+                    paint.alpha = (Color.alpha(primary) * alpha).toInt()
+                    canvas.drawPath(path, paint)
+                    paint.shader = null
+                    paint.clearShadowLayer()
+                    return
+                }
                 val bright = ClockBackdrop.brightness()
                 // A soft lift off the picture, more over a bright one.
                 paint.color = Color.WHITE

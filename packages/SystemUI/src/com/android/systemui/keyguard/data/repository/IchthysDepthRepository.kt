@@ -641,6 +641,9 @@ constructor(
      */
     fun cutoutKeepsClockReadable(layers: DepthLayers): Boolean {
         if (mode == com.android.settingslib.ichthys.clock.DepthClockView.DEPTH_SHAPE) return true
+        // IchthysOS: X-ray is made for a subject in front of the clock: the finger opens the
+        // lens and the time shows through it. The readability cap is Overlap's (no lens there).
+        if (mode == DEPTH_XRAY) return true
         val grid = layers.subject ?: return true
         val box = clockBounds
         if (box.isEmpty || layers.gridWidth <= 0) return true
