@@ -746,20 +746,25 @@ half4 main(float2 p) {
     float3 skyNew = mix(grad, cloudLight, cloud) * pow(rel, 0.6);
     float3 skyOut = mix(lin, skyNew, skyAmount);
 
-    // The weather's clouds, in the photo's own sky: drifting banks, squashed and smaller toward
-    // the horizon, lit on the side facing the sun, darker underneath; overcast closes them up.
+    // The weather's clouds, made of the photo's own sky: wide soft banks drifting across it,
+    // flatter toward the horizon, lit on the side facing the sun; overcast closes them up.
     float deck = 0.0;
     if (cover > 0.01 && s > 0.01) {
-        // A cloud layer seen in perspective: the higher up the screen, the nearer the clouds
-        // (big puffs overhead), shrinking and flattening toward the picture's horizon.
-        float z = 1.0 / (1.0 - v + 0.12);
-        float2 uv = float2((p.x / size.x - 0.5) * z * 1.7 + time * 0.01, z * 1.1 + time * 0.002);
-        float n = fbm(uv) * 0.8 + fbm(uv * 3.1 + 4.3) * 0.2;
-        float thr = mix(0.78, 0.26, cover);
-        deck = smoothstep(thr, thr + mix(0.22, 0.12, cover), n) * smoothstep(0.0, 0.08, 1.0 - v + 0.02);
-        float2 toSun = normalize(sunPos - p + float2(0.0, 0.001)) * 0.05;
-        float lit = clamp((n - fbm(uv + toSun) * 0.8 - fbm((uv + toSun) * 3.1 + 4.3) * 0.2) * 6.0
-            + 0.55, 0.0, 1.0);
+        // No perspective projection (it bent the noise into fans and swirls): the banks only
+        // compress vertically toward the picture's horizon, on a log scale of the height above
+        // it (in screen widths), and stay wide. Low frequencies only: soft shapes, no grain.
+        float h = max((horizon * size.y - p.y) / size.x, 0.0);
+        float2 uv = float2(p.x / size.x * 1.25 + time * 0.008,
+            -log(h + 0.08) * 1.5 + time * 0.002);
+        float n = fbm(uv) * 0.82 + fbm(uv * 2.3 + 4.3) * 0.18;
+        float thr = mix(0.74, 0.3, cover);
+        deck = smoothstep(thr, thr + mix(0.3, 0.2, cover), n) * smoothstep(0.0, 0.1, h);
+        // The photo's own clouds stay its own: the weather thickens them rather than painting
+        // over them.
+        deck *= 1.0 - 0.6 * cloud;
+        float2 toSun = normalize(sunPos - p + float2(0.0, 0.001)) * 0.06;
+        float lit = clamp((n - fbm(uv + toSun) * 0.82 - fbm((uv + toSun) * 2.3 + 4.3) * 0.18)
+            * 5.0 + 0.55, 0.0, 1.0);
         float3 base = mix(cloudLight * 0.5, grad * 0.4, 0.35) * (1.0 - 0.5 * storm);
         float3 top3 = mix(cloudLight * 1.05, sunColor * exposure, 0.35 * sunGlow);
         float3 cc = mix(base, top3, lit);
@@ -767,7 +772,10 @@ half4 main(float2 p) {
         float heavy = smoothstep(0.55, 1.0, cover);
         cc = mix(cc, luma(cc) * float3(0.94, 0.98, 1.06), heavy * 0.75) * (1.0 - 0.3 * heavy);
         cc += float3(0.85, 0.89, 1.0) * (flash * 1.6 * lit);
-        skyOut = mix(skyOut, cc, deck * 0.94);
+        // The photo's texture runs through the cloud (its grain, glow and own cloud detail,
+        // relative to its mean sky), so the cloud sits in the picture instead of on it.
+        cc *= mix(1.0, clamp(pow(rel, 0.5), 0.75, 1.3), 0.6);
+        skyOut = mix(skyOut, cc, deck * mix(0.6, 0.92, cover));
     }
 
     float3 land = lin * light * exposure;
