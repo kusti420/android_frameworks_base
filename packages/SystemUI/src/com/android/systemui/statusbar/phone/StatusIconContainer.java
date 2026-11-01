@@ -109,6 +109,11 @@ public class StatusIconContainer extends AlphaOptimizedLinearLayout {
     private final Paint mZzDiscPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint mZzRingPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint mZzGlyphPaint = new Paint();
+    /**
+     * IchthysOS: re-measure, posted when a layout pass places an icon the last measure pass did
+     * not count (see {@link #calculateZigzagTranslations}).
+     */
+    private final Runnable mZzRemeasure = this::requestLayout;
     private final ContentObserver mLayoutObserver =
             new ContentObserver(new Handler(Looper.getMainLooper())) {
                 @Override
@@ -431,21 +436,42 @@ public class StatusIconContainer extends AlphaOptimizedLinearLayout {
         // top row gets ceil(n / 2) icons and the bottom row sits half a pitch towards the end.
         // Icons are placed from the end, so the row of the i-th from the end depends on n.
         int total = 0;
+        // IchthysOS: an icon whose glyph arrived after the last measure pass (a freshly bound
+        // Wi-Fi / mobile view sets its drawable asynchronously) is placeable now, but this
+        // container was measured, and so sized, without it. Its own requestLayout() can be
+        // swallowed on the way up: when it lands while an ancestor still has its layout request
+        // pending (inside an AndroidView, between Compose's measure and layout of the holder), the
+        // propagation stops there and nothing re-measures this container afterwards. The lattice
+        // then filled the stale width from the end and silently dropped the leftmost icon (the
+        // shade header's mute icon) until some unrelated relayout. Re-measure in that case.
+        boolean missedByMeasure = false;
         for (int i = getChildCount() - 1; i >= 0; i--) {
             View child = getChildAt(i);
             StatusIconDisplayable iconView = (StatusIconDisplayable) child;
             if (getViewStateFromChild(child) == null) {
                 continue;
             }
-            final float cx = width - getPaddingEnd() - cell / 2f - total * mZzHalfPitch;
             if (!iconView.isIconVisible() || iconView.isIconBlocked()
                     || mIgnoredSlots.contains(iconView.getSlot())
                     || isBtReplacedByPill(iconView)
-                    || total >= ZZ_MAX_ICONS || cx - cell / 2f < contentStart
                     || !IchthysZigzag.glyphRect(child, mZzGlyph)) {
                 continue;
             }
+            if (!mMeasureViews.contains(child)) {
+                missedByMeasure = true;
+            }
+            final float cx = width - getPaddingEnd() - cell / 2f - total * mZzHalfPitch;
+            // IchthysOS: the width limit (never drawn over the clock) only where icons are
+            // restricted; the shade header shows all of them (setShouldRestrictIcons(false)).
+            if (total >= ZZ_MAX_ICONS
+                    || (mShouldRestrictIcons && cx - cell / 2f < contentStart)) {
+                continue;
+            }
             total++;
+        }
+        if (missedByMeasure) {
+            removeCallbacks(mZzRemeasure);
+            post(mZzRemeasure);
         }
         int shown = 0;
         for (int i = getChildCount() - 1; i >= 0; i--) {
@@ -462,7 +488,8 @@ public class StatusIconContainer extends AlphaOptimizedLinearLayout {
             if (!iconView.isIconVisible() || iconView.isIconBlocked()
                     || mIgnoredSlots.contains(iconView.getSlot())
                     || isBtReplacedByPill(iconView)
-                    || shown >= ZZ_MAX_ICONS || cx - cell / 2f < contentStart
+                    || shown >= ZZ_MAX_ICONS
+                    || (mShouldRestrictIcons && cx - cell / 2f < contentStart)
                     || !IchthysZigzag.glyphRect(child, mZzGlyph)) {
                 state.visibleState = STATE_HIDDEN;
                 continue;

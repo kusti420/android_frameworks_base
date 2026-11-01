@@ -53,6 +53,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -515,7 +516,15 @@ private fun ContentScope.ShoalShadeHeader(
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier.element(ShadeHeader.Elements.CollapsedContentEnd),
+            modifier =
+                Modifier.element(ShadeHeader.Elements.CollapsedContentEnd)
+                    // IchthysOS: the content always takes its natural width, pinned to the end.
+                    // During a Shade <-> Quick Settings swipe STL measures this shared element at
+                    // a size interpolated between its idle sizes in the two scenes; squeezing the
+                    // row to that size took the difference out of the status icon lattice, which
+                    // then dropped the icon(s) that no longer fit. The element's end edge is the
+                    // header's end in both scenes, so the content never moves.
+                    .wrapContentWidth(Alignment.End, unbounded = true),
         ) {
             // Inside the shared element, so it stays put between the Shade and Quick Settings
             // scenes like the icons beside it.
@@ -542,12 +551,14 @@ private fun ContentScope.ShoalShadeHeader(
                 // One format in both scenes, so the icons keep their size during the transition.
                 // One container too, composed in one scene at a time (see ShoalSharedStatusIcons),
                 // so the icon set and the lattice cannot differ between the scenes.
+                // IchthysOS: not weighted: the icons are measured at their natural width (the row
+                // above is unbounded), so which icons show never depends on the width left over.
                 StatusIcons(
                     viewModel = viewModel,
                     useExpandedFormat = false,
                     foregroundColor = textColor.toArgb(),
                     backgroundColor = ShadeHeader.Colors.inverseTextColor.toArgb(),
-                    modifier = Modifier.padding(end = paddingEnd).weight(1f, fill = false),
+                    modifier = Modifier.padding(end = paddingEnd),
                     shareBetweenShadeAndQs = true,
                 )
                 BatteryInfo(
@@ -655,6 +666,15 @@ private fun ContentScope.ShoalSharedStatusIcons(
         remember(layoutState, contentKey) {
             derivedStateOf { shoalStatusIconsScene(layoutState) == contentKey }
         }
+    // IchthysOS: the header shows every status icon, as the stock QS header did
+    // (setShouldRestrictIcons(false)): the zig-zag lattice then never hides an icon for lack of
+    // width, so the icon set is the StatusBarIconController's alone, in every scene and transition.
+    SideEffect {
+        if (iconContainer.isRestrictingIcons) {
+            iconContainer.setShouldRestrictIcons(false)
+            iconContainer.requestLayout()
+        }
+    }
     if (composeHere) {
         icons(
             modifier.layout { measurable, constraints ->
