@@ -16,6 +16,7 @@
 
 package com.android.systemui.keyguard.ui.composable.elements
 
+import com.android.compose.animation.scene.ElementKey
 import android.app.Notification
 import android.content.Context
 import android.graphics.Bitmap
@@ -96,6 +97,9 @@ import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+
+/** IchthysOS: the dock as a scene element, so the unlock transitions can fade it. */
+val IchthysDockElementKey = ElementKey("IchthysNotificationDock")
 
 /**
  * IchthysOS lock screen notifications, the Quiet dock (tracker#58, concept G): what the lock screen

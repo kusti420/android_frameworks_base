@@ -1,5 +1,6 @@
 package com.android.systemui.scene.ui.composable.transitions
 
+import com.android.systemui.keyguard.ui.composable.elements.IchthysDockElementKey
 import androidx.compose.ui.unit.dp
 import com.android.compose.animation.Easings
 import com.android.compose.animation.scene.TransitionBuilder
@@ -19,6 +20,7 @@ fun TransitionBuilder.lockscreenToBouncerTransition(
         fade(LockscreenElementKeys.AmbientIndicationArea)
         fade(LockscreenElementKeys.Region.Lower)
         fade(LockscreenElementKeys.SettingsMenu)
+        fade(IchthysDockElementKey)
         translate(LockscreenElementKeys.Region.Upper, y = (-48).dp)
         translate(LockscreenElementKeys.Notifications.Stack, y = (-72).dp)
     }

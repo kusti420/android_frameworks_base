@@ -15,6 +15,7 @@
  */
 package com.android.systemui.scene.ui.composable.transitions
 
+import com.android.systemui.keyguard.ui.composable.elements.IchthysDockElementKey
 import androidx.compose.animation.core.AnimationVector
 import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.FiniteAnimationSpec
@@ -92,9 +93,14 @@ fun TransitionBuilder.lockscreenToGoneWithAnimationOverLockscreenTransition() {
         fade(LockscreenElementKeys.LockIcon)
         fade(LockscreenElementKeys.AmbientIndicationArea)
         fade(LockscreenElementKeys.Region.Lower)
-        fade(LockscreenElementKeys.SettingsMenu)
 
         fade(LockscreenElementKeys.BehindScrim)
+    }
+    // IchthysOS: the notification dock and the "Customize lock screen" button are chrome, not
+    // part of the depth reveal: they go first, before the layers start to move.
+    fractionRange(end = 0.25f) {
+        fade(IchthysDockElementKey)
+        fade(LockscreenElementKeys.SettingsMenu)
     }
 }
 

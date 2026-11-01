@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.android.compose.animation.scene.BaseContentScope
 import com.android.compose.animation.scene.ContentScope
+import com.android.compose.animation.scene.element
 import com.android.compose.animation.scene.ElementContentScope
 import com.android.compose.modifiers.thenIf
 import com.android.systemui.dagger.SysUISingleton
@@ -302,7 +303,7 @@ private fun LockscreenScope<ContentScope>.LockscreenSceneLayout(
         content = {
             Box { depth() }
             LockscreenElement(StatusBar)
-            Box { dock() }
+            Box(Modifier.element(IchthysDockElementKey)) { dock() }
             LockscreenElement(Region.Upper)
             Box { depthCutout() }
             LockscreenElement(LockIcon)
