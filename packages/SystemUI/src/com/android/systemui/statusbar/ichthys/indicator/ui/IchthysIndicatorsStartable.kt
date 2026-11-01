@@ -439,7 +439,10 @@ constructor(
                                 dotSettings.onAod &&
                                 light != null &&
                                 device.dozing,
-                        color = dotColor(dotSettings.color, light?.argb, device, darkState),
+                        // The light's colour is already the service's resolution of what the
+                        // notification asked for (its LED colour, else the device default).
+                        color =
+                            dotColor(dotSettings.color, light?.argb, light?.argb, device, darkState),
                     )
                 } else {
                     // Dozing: what the always-on display may show. Awake: what the status bar
@@ -456,33 +459,54 @@ constructor(
                         }
                     DotUiState(
                         visible = model != null && !device.shadeExpanded,
-                        color = dotColor(dotSettings.color, model?.appColor, device, darkState),
+                        color =
+                            dotColor(
+                                dotSettings.color,
+                                model?.appColor,
+                                model?.lightColor,
+                                device,
+                                darkState,
+                            ),
                     )
                 }
             }
             .distinctUntilChanged()
 
+    /**
+     * The dot's colour. [appColor] is the notification's own colour (Notification.color),
+     * [lightColor] the LED colour it asks for (IchthysOS, the Default source); either may be null.
+     */
     private fun dotColor(
         source: NotificationDotColor,
         appColor: Int?,
+        lightColor: Int?,
         device: DeviceState,
         darkState: DarkState,
     ): Int =
         when (source) {
             NotificationDotColor.ACCENT -> IchthysIndicatorTokens.accent(context)
-            NotificationDotColor.WHITE ->
-                // The home status bar's icon tint; the lock screen and the always-on display are
-                // always light-on-dark.
-                if (device.dozing || device.keyguardShowing) {
-                    Color.WHITE
-                } else if (DarkIconDispatcher.isInAreas(darkState.areas, dotBounds)) {
-                    darkState.tint
-                } else {
-                    DarkIconDispatcher.DEFAULT_ICON_TINT
-                }
+            NotificationDotColor.WHITE -> iconTint(device, darkState)
             NotificationDotColor.APP ->
                 appColor?.let { ContrastColorUtil.ensureTextContrastOnBlack(it) }
                     ?: IchthysIndicatorTokens.accent(context)
+            // IchthysOS Default (Sony): an Xperia lights its LED in the colour the notification
+            // names, white when it names none. The notification's own colour first (the one it
+            // paints its icon with), then the LED colour it or its channel asks for, then white
+            // (the icon tint, so the dot still shows on a light status bar). Never the accent.
+            NotificationDotColor.DEFAULT ->
+                (appColor ?: lightColor)?.let {
+                    ContrastColorUtil.ensureTextContrastOnBlack(it or 0xFF000000.toInt())
+                } ?: iconTint(device, darkState)
+        }
+
+    /** White on the lock screen and the always-on display, the home status bar's tint otherwise. */
+    private fun iconTint(device: DeviceState, darkState: DarkState): Int =
+        if (device.dozing || device.keyguardShowing) {
+            Color.WHITE
+        } else if (DarkIconDispatcher.isInAreas(darkState.areas, dotBounds)) {
+            darkState.tint
+        } else {
+            DarkIconDispatcher.DEFAULT_ICON_TINT
         }
 
     private fun renderDot(state: DotUiState) {

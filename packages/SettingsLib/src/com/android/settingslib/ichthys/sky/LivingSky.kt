@@ -287,12 +287,17 @@ object LivingSky {
         val darkSky: Boolean = false,
         val flatSky: Boolean = false,
         val landLuma: Float = 0.1f,
+        /**
+         * IchthysOS: the sky's mean colour (linear RGB), [skyLuma] spread over its channels when
+         * unknown: what the grade's sky is compared against ([colourBehindClock]).
+         */
+        val skyColour: FloatArray = floatArrayOf(skyLuma, skyLuma, skyLuma),
     ) {
         /** This, with [darkSky] as [KEY_DEBUG]'s third field says (-1: as it is). */
         fun withDarkOverride(override: Int): SkyInfo =
             when (override) {
                 0, 1 -> SkyInfo(hasSky, reason, share, horizon, skyLuma, moonX, moonY,
-                    override == 1, flatSky, landLuma)
+                    override == 1, flatSky, landLuma, skyColour)
                 else -> this
             }
 
@@ -316,6 +321,10 @@ object LivingSky {
         var lumaN = 0f
         var landSum = 0f
         var landN = 0f
+        // IchthysOS: the sky's mean colour too (linear), for the Depth face's glass tint.
+        var skyR = 0f
+        var skyG = 0f
+        var skyB = 0f
         val skyL = FloatArray(w * h) { -1f }
         for (y in 0 until h) for (x in 0 until w) {
             val i = y * w + x
@@ -331,6 +340,9 @@ object LivingSky {
                 lumaSq += a * l * l
                 lumaN += a
                 skyL[i] = l
+                skyR += a * r * r
+                skyG += a * g * g
+                skyB += a * b * b
             } else if (a < 0.5f) {
                 // IchthysOS: the land's mean, for the day relight of a night picture.
                 landSum += (1f - a) * l
@@ -390,8 +402,12 @@ object LivingSky {
                 moonY = fy
             }
         }
+        val skyColour =
+            if (lumaN > 0f) floatArrayOf(max(skyR / lumaN, 0.001f), max(skyG / lumaN, 0.001f),
+                max(skyB / lumaN, 0.001f))
+            else floatArrayOf(0.004f, 0.004f, 0.004f)
         return SkyInfo(reason == REASON_OK, reason, share, horizon, max(skyLuma, 0.004f), moonX, moonY,
-            darkSky = dark, flatSky = flat, landLuma = max(landLuma, 0.004f))
+            darkSky = dark, flatSky = flat, landLuma = max(landLuma, 0.004f), skyColour = skyColour)
     }
 
     private fun pixels(b: Bitmap): IntArray {
@@ -525,17 +541,37 @@ object LivingSky {
      * night picture's sky follows its day relight: as dark as the photo at night, the grade's
      * brightness by day, [darkDay] of the way between; a flat sky moves only a tint's worth.
      */
-    fun brightnessBehindClock(grade: Grade, intensity: Float, info: SkyInfo? = null): Float {
-        fun l(c: FloatArray) = 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2]
+    fun brightnessBehindClock(grade: Grade, intensity: Float, info: SkyInfo? = null): Float =
+        lumaOf(colourBehindClock(grade, intensity, info))
+
+    /**
+     * IchthysOS: [brightnessBehindClock] per channel: about the graded sky's mean colour (linear
+     * RGB) behind the clock, the same mix the shader's sky path makes of the photo's own sky
+     * ([SkyInfo.skyColour]) and the palette. Its luma is [brightnessBehindClock]. One value for
+     * the Depth face: its contrast from the luma, its glass's tint from the colour.
+     */
+    fun colourBehindClock(grade: Grade, intensity: Float, info: SkyInfo? = null): FloatArray {
         val k = intensity.coerceIn(0f, 1f)
-        val graded = (l(grade.top) * 0.6f + l(grade.hor) * 0.4f)
+        val graded = FloatArray(3) { grade.top[it] * 0.6f + grade.hor[it] * 0.4f }
         if (info == null || !info.darkSky) {
-            val sky = if (info != null) mix(info.skyLuma, graded, grade.skyAmount * flatAmount(info)) else graded
-            return sky * k + (1f - k) * 0.3f
+            val sky =
+                if (info != null) mixC(info.skyColour, graded, grade.skyAmount * flatAmount(info))
+                else graded
+            return FloatArray(3) { sky[it] * k + (1f - k) * 0.3f }
         }
-        val sky = mix(info.skyLuma, graded, darkDay(grade, info))
-        return sky * k + (1f - k) * info.skyLuma
+        val sky = mixC(info.skyColour, graded, darkDay(grade, info))
+        return FloatArray(3) { sky[it] * k + (1f - k) * info.skyColour[it] }
     }
+
+    /**
+     * IchthysOS: the light the grade puts on the land (linear RGB multiplier: the shader's
+     * `light * exposure`, before its moonlight desaturation), for whatever paints on the land
+     * outside the shader (the projected clock's wall) so it is lit like the graded picture.
+     */
+    fun landLight(grade: Grade): FloatArray = FloatArray(3) { grade.light[it] * grade.exposure }
+
+    /** Linear luma of a linear RGB triple. */
+    fun lumaOf(c: FloatArray): Float = 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2]
 
     /** top, horizon, light (sRGB 0..255) and exposure at elevation [e]. */
     private fun keyAt(e: Float): Array<FloatArray> {

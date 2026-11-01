@@ -330,7 +330,13 @@ internal fun ShoalBrightnessSlider(
                     }
                     .pointerInput(enabled, isRestricted, minGamma, maxGamma, rtl) {
                         fun fracAt(x: Float): Float {
-                            val f = (x / size.width.toFloat()).coerceIn(0f, 1f)
+                            // IchthysOS: 0 % and 100 % are where the knob stops (a corner radius
+                            // in from the pill's ends), not the pill's edges: the last few percent
+                            // were out of reach and the knob could not go there anyway.
+                            val edge =
+                                maxOf(trackCorner.toPx(), MarkerInset.toPx() + MarkerWidth.toPx() / 2f)
+                            val span = (size.width - 2f * edge).coerceAtLeast(1f)
+                            val f = ((x - edge) / span).coerceIn(0f, 1f)
                             return if (rtl) 1f - f else f
                         }
                         fun gammaAt(x: Float): Int = minGamma + (fracAt(x) * range).roundToInt()
@@ -360,7 +366,13 @@ internal fun ShoalBrightnessSlider(
                     }
                     .pointerInput(enabled, isRestricted, minGamma, maxGamma, rtl) {
                         fun fracAt(x: Float): Float {
-                            val f = (x / size.width.toFloat()).coerceIn(0f, 1f)
+                            // IchthysOS: 0 % and 100 % are where the knob stops (a corner radius
+                            // in from the pill's ends), not the pill's edges: the last few percent
+                            // were out of reach and the knob could not go there anyway.
+                            val edge =
+                                maxOf(trackCorner.toPx(), MarkerInset.toPx() + MarkerWidth.toPx() / 2f)
+                            val span = (size.width - 2f * edge).coerceAtLeast(1f)
+                            val f = ((x - edge) / span).coerceIn(0f, 1f)
                             return if (rtl) 1f - f else f
                         }
                         fun gammaAt(x: Float): Int = minGamma + (fracAt(x) * range).roundToInt()
@@ -527,8 +539,9 @@ private fun drawnFloorX(
 ): Float {
     val w = width.toFloat()
     val f = ((floorGamma - minGamma).toFloat() / range).coerceIn(0f, 1f)
-    val x = if (rtl) w - f * w else f * w
-    return x.coerceIn(knobEdge, (w - knobEdge).coerceAtLeast(knobEdge))
+    val span = (w - 2f * knobEdge).coerceAtLeast(0f)
+    val x = knobEdge + f * span
+    return if (rtl) w - x else x
 }
 
 private enum class DragMode {
@@ -562,15 +575,25 @@ private fun DrawScope.drawShoalTrack(
 ) {
     val w = size.width
     val h = size.height
+    // IchthysOS: the value's x runs between the knob stops (see the pointer code), so 100 % is
+    // where the floor knob stops, not the pill's edge.
+    val stopEdge = maxOf(corner, MarkerInset.toPx() + MarkerWidth.toPx() / 2f)
     fun xOf(frac: Float): Float {
-        val x = frac.coerceIn(0f, 1f) * w
+        val x = stopEdge + frac.coerceIn(0f, 1f) * (w - 2f * stopEdge).coerceAtLeast(0f)
         return if (rtl) w - x else x
     }
     // Track.
     drawRoundRect(color = colors.track, cornerRadius = CornerRadius(corner), alpha = alpha)
     // Filled part (accent fill tint). The box is clipped to the track shape, so a plain rect is
     // enough.
-    val valueX = xOf(valueFrac)
+    // The fill runs from the pill's start to the value; at 100 % it covers the whole pill, at 0 %
+    // nothing shows (the stops only apply to the knob / finger mapping).
+    val valueX =
+        when {
+            valueFrac >= 0.999f -> if (rtl) 0f else w
+            valueFrac <= 0.001f -> if (rtl) w else 0f
+            else -> xOf(valueFrac)
+        }
     val fillLeft = if (rtl) valueX else 0f
     val fillRight = if (rtl) w else valueX
     if (fillRight > fillLeft) {

@@ -133,6 +133,25 @@ private fun NoteEditor(
     onUnpin: (suspend () -> Boolean)?,
     onClose: () -> Unit,
 ) {
+    // IchthysOS: the platform's floating text toolbar (select / copy / paste) is a PopupWindow
+    // anchored to this dialog's window token, which SystemUI's dialog windows cannot host: it
+    // crashed SystemUI on the first long-press in the field. No toolbar here.
+    val noToolbar = remember {
+        object : androidx.compose.ui.platform.TextToolbar {
+            override val status = androidx.compose.ui.platform.TextToolbarStatus.Hidden
+            override fun hide() {}
+            override fun showMenu(
+                rect: androidx.compose.ui.geometry.Rect,
+                onCopyRequested: (() -> Unit)?,
+                onPasteRequested: (() -> Unit)?,
+                onCutRequested: (() -> Unit)?,
+                onSelectAllRequested: (() -> Unit)?,
+            ) {}
+        }
+    }
+    androidx.compose.runtime.CompositionLocalProvider(
+        androidx.compose.ui.platform.LocalTextToolbar provides noToolbar
+    ) {
     val scope = rememberCoroutineScope()
     var kind by remember { mutableStateOf(initial?.kind ?: IchthysNoteKind.NOTE) }
     var color by remember { mutableStateOf(initial?.color ?: 0) }
@@ -312,5 +331,6 @@ private fun NoteEditor(
                 )
             }
         }
+    }
     }
 }

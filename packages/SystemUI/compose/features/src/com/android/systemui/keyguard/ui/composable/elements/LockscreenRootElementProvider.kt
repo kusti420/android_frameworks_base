@@ -302,7 +302,7 @@ private fun LockscreenScope<ContentScope>.LockscreenSceneLayout(
         content = {
             Box { depth() }
             LockscreenElement(StatusBar)
-            Box(Modifier.element(IchthysDockElementKey)) { dock() }
+            Box(with(contentScope) { Modifier.element(IchthysDockElementKey) }) { dock() }
             LockscreenElement(Region.Upper)
             Box { depthCutout() }
             LockscreenElement(LockIcon)

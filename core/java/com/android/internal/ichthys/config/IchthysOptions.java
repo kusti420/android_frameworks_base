@@ -179,10 +179,15 @@ final class IchthysOptions {
                 "Keep the notification dot on the always-on display (dimmed, with burn-in "
                         + "drift). With logic = light this is the only place it shows.",
                 setting(SYSTEM, "ichthys_notif_dot_aod")));
+        // IchthysOS: "default" (3) is what a Sony Xperia's notification LED does and the default.
         s.add(Option.enumeration("statusBar.notificationDot.color",
-                new String[] {"accent", "white", "app"}, new String[] {"0", "1", "2"}, "accent",
-                "Notification dot colour: the theme accent, white (the status bar icon tint), or "
-                        + "the newest notifying app's colour.",
+                new String[] {"default", "accent", "white", "app"},
+                new String[] {"3", "0", "1", "2"}, "default",
+                "Notification dot colour. \"default\": like a Sony Xperia's notification LED, the "
+                        + "newest notification's own colour (else the LED colour it asks for), "
+                        + "white when it has none; \"accent\": the theme accent; \"white\": the "
+                        + "status bar icon tint; \"app\": the newest notifying app's colour, the "
+                        + "accent when it has none.",
                 setting(SYSTEM, "ichthys_notif_dot_color")));
         s.add(Option.bool("statusBar.notificationDot.replaceIcons", Boolean.FALSE,
                 "Hide the status bar notification icons and show only the dot.",

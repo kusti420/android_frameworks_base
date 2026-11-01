@@ -38,6 +38,12 @@ data class NotificationDotModel(
     val packageName: String,
     /** The notification's own colour ([Notification.color]), null when the app set none. */
     val appColor: Int?,
+    /**
+     * IchthysOS: the colour the notification asks of a notification LED ([Notification.ledARGB]
+     * with [Notification.FLAG_SHOW_LIGHTS], else its channel's light colour when the channel may
+     * blink the light), null when it asks for none. The "Default (Sony)" dot colour.
+     */
+    val lightColor: Int? = null,
 )
 
 /**
@@ -97,7 +103,14 @@ constructor(
                         .flatMap { store.notificationsBehind(it) }
                         .filter { it.key in unseen && !it.isSilent && !it.isAmbient }
                         .maxByOrNull { it.whenTime }
-                        ?.let { NotificationDotModel(it.key, it.packageName, appColorOf(it.key)) }
+                        ?.let {
+                            NotificationDotModel(
+                                it.key,
+                                it.packageName,
+                                appColorOf(it.key),
+                                lightColorOf(it.key),
+                            )
+                        }
                 }
             }
             .distinctUntilChanged()
@@ -119,4 +132,18 @@ constructor(
         notifCollection.getEntry(key)?.sbn?.notification?.color?.takeIf {
             it != Notification.COLOR_DEFAULT
         }
+
+    /**
+     * IchthysOS: the LED colour the notification asks for, the way the notification service
+     * resolves it (NotificationAttentionHelper): the legacy [Notification.ledARGB] when the
+     * notification carries [Notification.FLAG_SHOW_LIGHTS], else the channel's light colour when
+     * the channel may blink the light. Null when neither says anything.
+     */
+    private fun lightColorOf(key: String): Int? {
+        val entry = notifCollection.getEntry(key) ?: return null
+        val n = entry.sbn.notification
+        if (n.flags and Notification.FLAG_SHOW_LIGHTS != 0 && n.ledARGB != 0) return n.ledARGB
+        val channel = entry.channel ?: return null
+        return channel.lightColor.takeIf { channel.shouldShowLights() && it != 0 }
+    }
 }

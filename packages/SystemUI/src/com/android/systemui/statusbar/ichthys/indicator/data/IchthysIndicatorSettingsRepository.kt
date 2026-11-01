@@ -45,6 +45,12 @@ enum class NotificationDotColor {
     WHITE,
     /** The colour of the newest unseen notification, the accent if it has none. */
     APP,
+    /**
+     * IchthysOS "Default (Sony)": what a Sony Xperia's notification LED does. The newest
+     * notification's own colour (Notification.color), else the LED colour it or its channel asks
+     * for, else white (the status bar icon tint on a light bar). Never the theme accent.
+     */
+    DEFAULT,
 }
 
 /** How the camera / microphone / location indicator is drawn (statusBar.privacyIndicator.style). */
@@ -80,15 +86,16 @@ constructor(systemSettings: SystemSettingsRepository, secureSettings: SecureSett
     val notificationDotOnAod: Flow<Boolean> =
         systemSettings.boolSetting(KEY_NOTIF_DOT_AOD, defaultValue = true)
 
-    /** statusBar.notificationDot.color */
+    /** statusBar.notificationDot.color. IchthysOS: 3 = Default (Sony) is the default. */
     val notificationDotColor: Flow<NotificationDotColor> =
         systemSettings
-            .intSetting(KEY_NOTIF_DOT_COLOR, defaultValue = 0)
+            .intSetting(KEY_NOTIF_DOT_COLOR, defaultValue = NOTIF_DOT_COLOR_DEFAULT)
             .map {
                 when (it) {
+                    0 -> NotificationDotColor.ACCENT
                     1 -> NotificationDotColor.WHITE
                     2 -> NotificationDotColor.APP
-                    else -> NotificationDotColor.ACCENT
+                    else -> NotificationDotColor.DEFAULT
                 }
             }
             .distinctUntilChanged()
@@ -130,6 +137,8 @@ constructor(systemSettings: SystemSettingsRepository, secureSettings: SecureSett
         const val KEY_NOTIF_DOT_LOGIC = "ichthys_notif_dot_logic"
         const val KEY_NOTIF_DOT_AOD = "ichthys_notif_dot_aod"
         const val KEY_NOTIF_DOT_COLOR = "ichthys_notif_dot_color"
+        /** IchthysOS: the stored value of [NotificationDotColor.DEFAULT], and the default. */
+        const val NOTIF_DOT_COLOR_DEFAULT = 3
         const val KEY_NOTIF_DOT_REPLACE_ICONS = "ichthys_notif_dot_replace_icons"
         const val KEY_PRIVACY_STYLE = "ichthys_privacy_indicator_style"
         const val KEY_PRIVACY_COLOR_BY_TYPE = "ichthys_privacy_indicator_color_by_type"
