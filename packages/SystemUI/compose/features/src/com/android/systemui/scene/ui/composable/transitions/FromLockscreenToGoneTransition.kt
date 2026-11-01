@@ -90,7 +90,6 @@ fun TransitionBuilder.lockscreenToGoneWithAnimationOverLockscreenTransition() {
     fractionRange(end = UNLOCK_FADE_END, easing = IchthysUnlockFade) {
         // Fade out all lock screen elements, except the status bar.
         fade(LockscreenElementKeys.Region.Upper)
-        fade(LockscreenElementKeys.LockIcon)
         fade(LockscreenElementKeys.AmbientIndicationArea)
         fade(LockscreenElementKeys.Region.Lower)
 
@@ -101,6 +100,9 @@ fun TransitionBuilder.lockscreenToGoneWithAnimationOverLockscreenTransition() {
     fractionRange(end = 0.08f) {
         fade(IchthysDockElementKey)
         fade(LockscreenElementKeys.SettingsMenu)
+        // The fingerprint icon and the media player are not part of the reveal either.
+        fade(LockscreenElementKeys.LockIcon)
+        fade(LockscreenElementKeys.MediaCarousel)
     }
 }
 

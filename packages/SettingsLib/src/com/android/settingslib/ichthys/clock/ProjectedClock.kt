@@ -653,7 +653,19 @@ object ProjectedClock {
         val sunX: Float = 0.3f,
         val sunY: Float = 0.15f,
         val lowSun: Float = 0.3f,
+        /**
+         * IchthysOS: Living Sky's light on the land (linear RGB multiplier, LivingSky.landLight):
+         * the wall the digits lie on is sampled from the raw picture, and this is what the grade
+         * does to it, so the styles' wall colours (the engraved face, the plate's tint, the
+         * paint's dimming) match the graded picture around them. Null: no grade (the hour's
+         * [exposure] stands in for it).
+         */
+        val land: FloatArray? = null,
     ) {
+        /** What [paintOnWall]'s light scale is: the grade is already in the wall, else the hour. */
+        val wallScale: Float
+            get() = if (land != null) 1f else exposure
+
         /** Unit direction from the digits towards the light, on the screen (y down). */
         fun dir(): FloatArray {
             val dx = sunX - 0.5f
@@ -729,8 +741,10 @@ object ProjectedClock {
         private val warps = HashMap<Long, Path>()
         private var warpsFor = 0
 
-        /** The wall's light under each face: mean sRGB colour, 0..1 per channel. */
+        /** The wall's light under each face: mean sRGB colour, 0..1 per channel, as lit now. */
         private val light = arrayOf(floatArrayOf(0.5f, 0.5f, 0.5f), floatArrayOf(0.5f, 0.5f, 0.5f))
+        /** IchthysOS: the same as sampled from the raw picture, before the grade ([gradeWall]). */
+        private val sampled = arrayOf(floatArrayOf(0.5f, 0.5f, 0.5f), floatArrayOf(0.5f, 0.5f, 0.5f))
         private var wallFor: Bitmap? = null
         private var wallSurface = 0
         private val region = Region()
@@ -790,6 +804,7 @@ object ProjectedClock {
 
             if (awake > 0.003f) {
                 sampleWall(sample, m)
+                gradeWall(light)
                 when (shownStyle) {
                     STYLE_LIGHT -> drawLight(canvas, warped, colour, awake, nearH, light, wall, w, h, m)
                     STYLE_ENGRAVED -> drawEngraved(canvas, warped, awake, nearH, light, wall, w, h, m)
@@ -822,7 +837,7 @@ object ProjectedClock {
         /** P1: paint on the wall: contact shadow in the plane, spill, paint, the wall's grain. */
         private fun drawPainted(canvas: Canvas, warped: Path, colour: Int, awake: Float, nearH: Float,
                 light: Light, wall: Bitmap?, w: Int, h: Int, m: Mapper) {
-            val paint = paintOnWall(colour, light.exposure, 0)
+            val paint = paintOnWall(colour, light.wallScale, 0)
             val wallLuma = luma(0)
             // The contact shadow: the digits moved down and a little right IN THE SURFACE'S PLANE
             // (block space, then warped), blurred by a share of the height; darker on a dark wall.
@@ -922,7 +937,7 @@ object ProjectedClock {
             // The wall's grain in the matte, lightly.
             wallTexture(canvas, plate, wall, w, h, awake * 0.35f, m, screenOnDark = false)
             // The digits, crisp and matte.
-            fillPaint.color = withAlpha(paintOnWall(colour, light.exposure, 0), 0.97f * awake)
+            fillPaint.color = withAlpha(paintOnWall(colour, light.wallScale, 0), 0.97f * awake)
             canvas.drawPath(warped, fillPaint)
         }
 
@@ -1068,6 +1083,31 @@ object ProjectedClock {
             return 0.2126f * l[0] + 0.7152f * l[1] + 0.0722f * l[2]
         }
 
+        /**
+         * IchthysOS: the wall as the grade lights it: the raw sample ([sampled]) through Living
+         * Sky's land path (linear: times [Light.land], desaturated toward moonlight by the night),
+         * back to sRGB. Without a grade the sample as it is. Six multiplies a frame.
+         */
+        private fun gradeWall(moment: Light) {
+            val land = moment.land
+            for (f in 0 until 2) {
+                val raw = sampled[f]
+                val out = light[f]
+                if (land == null) {
+                    out[0] = raw[0]; out[1] = raw[1]; out[2] = raw[2]
+                    continue
+                }
+                val r = raw[0] * raw[0] * land[0]
+                val g = raw[1] * raw[1] * land[1]
+                val b = raw[2] * raw[2] * land[2]
+                val n = moment.night.coerceIn(0f, 1f) * 0.55f
+                val ll = 0.2126f * r + 0.7152f * g + 0.0722f * b
+                out[0] = sqrt((r + (ll * 0.72f - r) * n).coerceIn(0f, 1f))
+                out[1] = sqrt((g + (ll * 0.84f - g) * n).coerceIn(0f, 1f))
+                out[2] = sqrt((b + (ll * 1.3f - b) * n).coerceIn(0f, 1f))
+            }
+        }
+
         private fun wallColour(face: Int): Int {
             val l = light[face]
             return Color.rgb((l[0] * 255).toInt(), (l[1] * 255).toInt(), (l[2] * 255).toInt())
@@ -1081,7 +1121,7 @@ object ProjectedClock {
             wallSurface = hash
             val faces = if (m.surface.kind == KIND_FOLD) 2 else 1
             for (f in 0 until faces) {
-                val l = light[f]
+                val l = sampled[f]
                 if (sample == null || sample.isRecycled || sample.config == Bitmap.Config.HARDWARE) {
                     l[0] = 0.5f; l[1] = 0.5f; l[2] = 0.5f
                     continue
@@ -1120,7 +1160,7 @@ object ProjectedClock {
                     l[0] = r / n; l[1] = g / n; l[2] = b / n
                 }
             }
-            if (faces == 1) light[1].let { it[0] = light[0][0]; it[1] = light[0][1]; it[2] = light[0][2] }
+            if (faces == 1) sampled[1].let { it[0] = sampled[0][0]; it[1] = sampled[0][1]; it[2] = sampled[0][2] }
         }
 
         // ---- the warp ----

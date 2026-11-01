@@ -192,6 +192,11 @@ fun IchthysDepthBackdrop(
                 if (sky != null) {
                     LivingSkyLayer(repository, current, sky, alpha, Modifier.matchParentSize())
                 } else {
+                    // IchthysOS: no grade on this picture (Living Sky off, or no sky in it): the
+                    // Depth face reads the picture's own brightness, not the last grade's.
+                    androidx.compose.runtime.SideEffect {
+                        com.android.settingslib.ichthys.clock.ClockBackdrop.clearGrade()
+                    }
                     WindowImage(repository, current.backdrop, alpha, Modifier.matchParentSize())
                 }
             }
@@ -461,6 +466,9 @@ private fun ProjectedClockLayer(
                     sunX = g.sunX,
                     sunY = g.sunY,
                     lowSun = (1f - sky.sun.elevation / 40f).coerceIn(0f, 1f),
+                    // IchthysOS: the wall is lit as the graded land around it, not as the
+                    // daylight picture it is sampled from.
+                    land = LivingSky.landLight(g),
                 )
             }
         }
@@ -536,12 +544,17 @@ private fun LivingSkyLayer(
     val subject = remember(layers) { layers.cutout?.let { LivingSky.fitted(it, w, h) } }
     val grade = remember(now, info) { LivingSky.grade(now.sun, now.weather, info.horizon, now.moonPhase) }
     // IchthysOS: the Depth face's contrast follows the graded sky (bright at midday, none at night;
-    // a night picture's sky as far as its day relight takes it).
+    // a night picture's sky as far as its day relight takes it), and its glass's tint the graded
+    // sky's colour over the picture's own: one grade for the picture and the time on it. Keyed on
+    // the grade, so it is republished whenever the moment changes (every minute).
     if (mask == null) {
+        val behind =
+            remember(grade, now.options.intensity, now.options.debugDark, info) {
+                val inf = info.withDarkOverride(now.options.debugDark)
+                LivingSky.colourBehindClock(grade, now.options.intensity / 100f, inf) to inf.skyColour
+            }
         androidx.compose.runtime.SideEffect {
-            com.android.settingslib.ichthys.clock.ClockBackdrop.publish(
-                LivingSky.brightnessBehindClock(grade, now.options.intensity / 100f,
-                    info.withDarkOverride(now.options.debugDark)))
+            com.android.settingslib.ichthys.clock.ClockBackdrop.publish(behind.first, behind.second)
         }
     }
     var origin by remember { mutableStateOf(Offset.Zero) }

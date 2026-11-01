@@ -675,11 +675,13 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         frostMatrix.postTranslate(-drawShift, 0f)
         shader.setLocalMatrix(frostMatrix)
         // Lifted like light through frosted glass, and dimmed with Living Sky's grade.
+        // IchthysOS: and tinted with it (ClockBackdrop.tint), so the veil shows the graded sky.
         val m = (ClockBackdrop.frostDim() * 1.12f).coerceIn(0.06f, 1.7f)
-        val c = (255 * m.coerceAtMost(1f)).toInt()
+        val m3 = ClockBackdrop.frostDim3(1.12f, 0.06f, 1.7f)
+        fun ch(v: Float) = (255 * v.coerceAtMost(1f)).toInt().coerceIn(0, 255)
         val add = (255 * ((m - 1f).coerceAtLeast(0f) * 0.35f + 0.06f)).toInt().coerceIn(0, 120)
-        frostPaint.colorFilter = android.graphics.LightingColorFilter(Color.rgb(c, c, c),
-            Color.rgb(add, add, add))
+        frostPaint.colorFilter = android.graphics.LightingColorFilter(
+            Color.rgb(ch(m3[0]), ch(m3[1]), ch(m3[2])), Color.rgb(add, add, add))
         frostPaint.shader = shader
         frostPaint.alpha = (255 * alpha).toInt()
         canvas.drawPath(path, frostPaint)
@@ -751,13 +753,16 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         // Column-major for the shader.
         for (r in 0 until 3) for (c in 0 until 3) glassColumns[c * 3 + r] = glassValues[r * 3 + c]
         val m = (ClockBackdrop.frostDim() * 1.06f).coerceIn(0.06f, 1.7f)
+        // IchthysOS: the grade's dimming per channel (its colour too, ClockBackdrop.tint).
+        val m3 = ClockBackdrop.frostDim3(1.06f, 0.06f, 1.7f)
         val sh = clearGlass ?: return false
         sh.setInputShader("picture", picture)
         sh.setInputShader("mask", mask)
         sh.setFloatUniform("toFrost", glassColumns)
         sh.setFloatUniform("maskMul", MASK_SCALE)
         sh.setFloatUniform("bend", dp(9f))
-        sh.setFloatUniform("dim", m.coerceAtMost(1f))
+        sh.setFloatUniform("dim", m3[0].coerceAtMost(1f), m3[1].coerceAtMost(1f),
+            m3[2].coerceAtMost(1f))
         sh.setFloatUniform("add", (m - 1f).coerceAtLeast(0f) * 0.35f)
         // Apple's slider position from the picture's lightness: milk over a bright one, smoke
         // over a dark one, and a faint glow when it is nearly black (smoke would erase the glass).
@@ -2080,7 +2085,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
             uniform float3x3 toFrost;
             uniform float maskMul;
             uniform float bend;
-            uniform float dim;
+            uniform float3 dim;
             uniform float add;
             uniform float milk;
             uniform float2 lightDir;
@@ -2144,7 +2149,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
                     q = cc + (p - cc) * (1.0 - faceMag);
                 }
                 half3 c = half3(scene(q + off * 1.06).r, scene(q + off).g, scene(q + off * 0.94).b);
-                c = c * half(dim) + half(add);
+                c = c * half3(dim) + half(add);
                 // Apple's slider: a touch of milk over a bright picture, smoke over a dark one
                 c = milk >= 0.0 ? 1.0 - (1.0 - c) * half(1.0 - milk) : c * half(1.0 + milk);
                 // over a dark picture the glass takes the picture's accent, pale to full
@@ -2335,6 +2340,48 @@ object ClockBackdrop {
         listeners.forEach { it() }
     }
 
+    /**
+     * IchthysOS: the grade's colour shift behind the clock (sRGB multiplier per channel, luma
+     * neutral: 1,1,1 is none): the graded sky's mean colour over the picture's own. The glass
+     * digits show the frost (the raw picture) through them, dimmed by [frostDim] and tinted by
+     * this, so what is seen through the time is the graded sky, not the daylight photo.
+     */
+    @Volatile
+    var tint: FloatArray = floatArrayOf(1f, 1f, 1f)
+        private set
+
+    /**
+     * [publish] with the graded sky's mean colour ([graded], linear RGB) over the picture's own
+     * sky colour ([photo], linear RGB): the luma from the first, the tint from their ratio.
+     */
+    fun publish(graded: FloatArray, photo: FloatArray) {
+        fun l(c: FloatArray) = 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2]
+        val lg = l(graded).coerceAtLeast(1e-4f)
+        val lp = l(photo).coerceAtLeast(1e-4f)
+        // Chroma only (each channel over its luma), in sRGB terms, within reason.
+        val t = FloatArray(3) {
+            kotlin.math.sqrt(((graded[it] / lg) / (photo[it].coerceAtLeast(1e-4f) / lp))
+                .coerceIn(0.25f, 4f))
+        }
+        val changed = (0..2).any { kotlin.math.abs(t[it] - tint[it]) >= 0.01f }
+        if (changed) tint = t
+        val v = lg.coerceIn(0f, 1f)
+        if (!changed && kotlin.math.abs(v - luma) < 0.01f) return
+        luma = v
+        listeners.forEach { it() }
+    }
+
+    /** The grade is gone (Living Sky off, no sky): the picture's own brightness, no tint. */
+    fun clearGrade() {
+        val t = tint
+        val hadTint = t[0] != 1f || t[1] != 1f || t[2] != 1f
+        if (hadTint) tint = floatArrayOf(1f, 1f, 1f)
+        val v = photoLuma
+        if (!hadTint && kotlin.math.abs(v - luma) < 0.01f) return
+        luma = v
+        listeners.forEach { it() }
+    }
+
     /** The picture's own brightness behind the clock (before any Living Sky grade). */
     @Volatile
     var photoLuma = 0f
@@ -2343,6 +2390,7 @@ object ClockBackdrop {
     /** [publish] for the picture itself: its brightness is also the frost's reference. */
     fun publishPhoto(value: Float) {
         photoLuma = value.coerceIn(0f, 1f)
+        tint = floatArrayOf(1f, 1f, 1f)
         publish(value)
     }
 
@@ -2425,6 +2473,13 @@ object ClockBackdrop {
     /** How much darker or lighter the graded picture is than the frost's copy (Living Sky). */
     fun frostDim(): Float =
         if (photoLuma <= 0.002f) 1f else (luma / photoLuma).coerceIn(0.06f, 1.6f)
+
+    /** IchthysOS: [frostDim] per channel: the grade's dimming and its colour ([tint]) together. */
+    fun frostDim3(scale: Float, lo: Float, hi: Float): FloatArray {
+        val m = (frostDim() * scale).coerceIn(lo, hi)
+        val t = tint
+        return floatArrayOf(m * t[0], m * t[1], m * t[2])
+    }
 
     /** 0 (dark enough as it is) .. 1 (a bright midday sky). */
     fun brightness(): Float {
