@@ -42,6 +42,9 @@ object IchthysQsSettings {
 
     /** LineageSettings.Secure: 0 = top, 1 = bottom of the QS panel. */
     const val BRIGHTNESS_SLIDER_POSITION = LineageSettings.Secure.QS_BRIGHTNESS_SLIDER_POSITION
+
+    /** Settings.System: 1 = the notes page left of the tiles (IchthysQsNotesPage), default on. */
+    const val NOTES_PAGE = "qs_notes_page"
 }
 
 /** IchthysOS: observes a Settings.System int for the current user. */

@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    IchthysOS: strings of the quick settings notes page (IchthysQsNotesPage.kt), the page left of
+    the tiles in expanded quick settings. Kept in their own file so the feature can be lifted out
+    (or rebased over an AOSP strings.xml) without a merge conflict.
+-->
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+    <!-- Page title. [CHAR LIMIT=20] -->
+    <string name="ichthys_qs_notes_title">Notes</string>
+    <!-- Header, unlocked: how many notes are pinned. [CHAR LIMIT=30] -->
+    <string name="ichthys_qs_notes_pinned_count">{count, plural,
+        =1 {1 pinned}
+        other {# pinned}
+    }</string>
+    <!-- Header, locked: how many notes there are and that unlocking shows them. [CHAR LIMIT=40] -->
+    <string name="ichthys_qs_notes_locked_count">{count, plural,
+        =1 {1 note · unlock to read}
+        other {# notes · unlock to read}
+    }</string>
+    <!-- Shown instead of the grid when nothing is pinned. [CHAR LIMIT=60] -->
+    <string name="ichthys_qs_notes_empty">Nothing pinned yet. Notes stay here until you unpin them.</string>
+    <!-- Accent button: opens the editor for a new note. [CHAR LIMIT=20] -->
+    <string name="ichthys_qs_notes_new">New note</string>
+    <!-- Secondary button: opens the p!n app (only shown when it is installed). [CHAR LIMIT=20] -->
+    <string name="ichthys_qs_notes_open_pin">open p!n</string>
+    <!-- Locked: the only button; dismisses the lock screen, then opens this page. [CHAR LIMIT=24] -->
+    <string name="ichthys_qs_notes_unlock">Unlock to open</string>
+    <!-- Content description of the page indicator's pin glyph: tapping it shows the notes page. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_qs_notes_indicator">Notes page</string>
+    <!-- Content description of a tile-page dot in the page indicator. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_qs_notes_indicator_tiles">Quick settings tiles</string>
+    <!-- Content description of a frosted note card while locked. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_qs_notes_card_locked">Note, unlock to read</string>
+    <!-- Accessibility: what a long press on a card does. [CHAR LIMIT=20] -->
+    <string name="ichthys_qs_notes_unpin">Unpin</string>
+
+    <!-- Note labels (card header and editor chips). [CHAR LIMIT=12] -->
+    <string name="ichthys_qs_notes_kind_note">note</string>
+    <string name="ichthys_qs_notes_kind_list">list</string>
+    <string name="ichthys_qs_notes_kind_idea">idea</string>
+
+    <!-- Editor dialog title for a new note. [CHAR LIMIT=24] -->
+    <string name="ichthys_qs_notes_editor_new">New note</string>
+    <!-- Editor dialog title for an existing note. [CHAR LIMIT=24] -->
+    <string name="ichthys_qs_notes_editor_edit">Edit note</string>
+    <!-- Hint of the editor's empty text field. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_qs_notes_editor_hint">Write here. In a list, start lines with [ ] and tick them with [x].</string>
+    <!-- Editor: save button. [CHAR LIMIT=12] -->
+    <string name="ichthys_qs_notes_editor_pin">Pin</string>
+    <!-- Editor: shown when the note could not be stored (too many notes or too much text). [CHAR LIMIT=NONE] -->
+    <string name="ichthys_qs_notes_editor_full">No room left: unpin a note or shorten this one.</string>
+    <!-- Editor: the colour dot row's accessibility label. [CHAR LIMIT=20] -->
+    <string name="ichthys_qs_notes_editor_colour">Colour</string>
+</resources>

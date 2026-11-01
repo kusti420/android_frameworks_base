@@ -23,6 +23,7 @@ import androidx.compose.foundation.OverscrollEffect
 import androidx.compose.foundation.clipScrollableContainer
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -84,6 +85,7 @@ import com.android.systemui.notifications.ui.composable.HeadsUpNotificationPlace
 import com.android.systemui.notifications.ui.composable.ScrollingNotificationPanel
 import com.android.systemui.qs.composefragment.ui.GridAnchor
 import com.android.systemui.qs.footer.ui.compose.FooterActionsWithAnimatedVisibility
+import com.android.systemui.qs.notes.IchthysQsNotesViewModel
 import com.android.systemui.qs.panels.ui.compose.EditMode
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalQsEnabled
 import com.android.systemui.qs.shared.ui.QuickSettings
@@ -119,6 +121,8 @@ constructor(
     private val contentViewModelFactory: QuickSettingsSceneContentViewModel.Factory,
     private val notificationRulesParentViewModelFactory: NotificationRulesParentViewModel.Factory,
     private val jankMonitor: InteractionJankMonitor,
+    // IchthysOS: the notes page left of the tiles (IchthysQsNotesPage).
+    private val notesViewModel: IchthysQsNotesViewModel,
 ) : ExclusiveActivatable(), Scene {
     override val key = Scenes.QuickSettings
 
@@ -182,6 +186,7 @@ constructor(
                     .thenIf(brightnessMirrorShowing) { Modifier.gesturesDisabled() },
             shadeSession = shadeSession,
             jankMonitor = jankMonitor,
+            notesViewModel = notesViewModel,
         )
     }
 
@@ -213,6 +218,7 @@ private fun ContentScope.QuickSettingsScene(
     modifier: Modifier = Modifier,
     shadeSession: SaveableSession,
     jankMonitor: InteractionJankMonitor,
+    notesViewModel: IchthysQsNotesViewModel,
 ) {
     val targetBlur by
         remember(layoutState) {
@@ -277,6 +283,7 @@ private fun ContentScope.QuickSettingsScene(
                         viewModel,
                         headerViewModel,
                         this@QuickSettingsScene.verticalOverscrollEffect,
+                        notesViewModel,
                     )
                 }
             }
@@ -380,6 +387,7 @@ private fun ContentScope.QuickSettingsContent(
     viewModel: QuickSettingsSceneContentViewModel,
     headerViewModel: ShadeHeaderViewModel,
     verticalOverscrollEffect: OverscrollEffect,
+    notesViewModel: IchthysQsNotesViewModel,
 ) {
     val cutoutLocation = LocalDisplayCutout.current().location
 
@@ -433,8 +441,26 @@ private fun ContentScope.QuickSettingsContent(
             // started. Inside the scrolling column below (verticalScroll + unbounded height) they
             // settled about 11 px off, and the transition's end moved them there.
             val shoalHeader = com.android.systemui.shade.ui.ShoalShade.isActive(LocalContext.current)
+            // IchthysOS: the notes page (crDroid "Notes page" switch, default on). With it the
+            // scrolling tile content sits in a two-page pager, and the header must not page with
+            // it: the grid style's header is hoisted up here too, where the Shoal header already is.
+            val notesPage = rememberIchthysSystemInt(IchthysQsSettings.NOTES_PAGE, 1) != 0
+            val usesCollapsedHeader =
+                LocalWindowSizeClass.current.isWidthAtLeastBreakpoint(
+                    WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND
+                )
+            val fixedHeader = shoalHeader || notesPage
             if (shoalHeader) {
                 ExpandedShadeHeader(viewModel = headerViewModel)
+            } else if (notesPage) {
+                if (usesCollapsedHeader) {
+                    CollapsedShadeHeader(viewModel = headerViewModel, isSplitShade = false)
+                } else {
+                    ExpandedShadeHeader(
+                        viewModel = headerViewModel,
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
+                }
             }
             // IchthysOS "Shoal": the media player is a strip docked between the scrolling part and
             // the footer actions, in the non-scrolling part, instead of a carousel at the end of
@@ -448,38 +474,47 @@ private fun ContentScope.QuickSettingsContent(
                 horizontalPadding =
                     shadeHorizontalPadding + dimensionResource(id = R.dimen.qs_horizontal_margin),
             ) {
-                Column(
-                    modifier =
-                        Modifier.disableSwipesWhenScrolling()
-                            .verticalScroll(scrollState, enabled = isScrollable)
-                            .clipScrollableContainer(Orientation.Horizontal)
-                            .fillMaxWidth()
-                            .wrapContentHeight(unbounded = true)
-                            .align(Alignment.TopCenter)
-                            .sysuiResTag("expanded_qs_scroll_view")
+                // IchthysOS: with the notes page on, the scrolling tile content is the second page
+                // of a horizontal pager whose first page is the notes; otherwise it is hosted as
+                // it was. The header, media dock and footer are outside the pager either way.
+                IchthysQsTilesHost(
+                    notesViewModel = notesViewModel,
+                    enabled = notesPage,
+                    isScrollable = isScrollable,
+                    modifier = Modifier.fillMaxSize(),
                 ) {
-                    val usesCollapsedHeader =
-                        LocalWindowSizeClass.current.isWidthAtLeastBreakpoint(
-                            WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND
-                        )
-                    // IchthysOS "Shoal": the header is above this scrolling column (see the
-                    // Column that holds it); only the stock headers are drawn here.
-                    if (!shoalHeader) {
-                        if (usesCollapsedHeader) {
-                            CollapsedShadeHeader(viewModel = headerViewModel, isSplitShade = false)
-                        } else {
-                            ExpandedShadeHeader(
-                                viewModel = headerViewModel,
-                                modifier = Modifier.padding(horizontal = 16.dp),
-                            )
+                    Column(
+                        modifier =
+                            Modifier.disableSwipesWhenScrolling()
+                                .verticalScroll(scrollState, enabled = isScrollable)
+                                .clipScrollableContainer(Orientation.Horizontal)
+                                .fillMaxWidth()
+                                .wrapContentHeight(unbounded = true)
+                                .align(Alignment.TopCenter)
+                                .sysuiResTag("expanded_qs_scroll_view")
+                    ) {
+                        // IchthysOS "Shoal": the header is above this scrolling column (see the
+                        // Column that holds it); only the stock headers are drawn here.
+                        if (!fixedHeader) {
+                            if (usesCollapsedHeader) {
+                                CollapsedShadeHeader(
+                                    viewModel = headerViewModel,
+                                    isSplitShade = false,
+                                )
+                            } else {
+                                ExpandedShadeHeader(
+                                    viewModel = headerViewModel,
+                                    modifier = Modifier.padding(horizontal = 16.dp),
+                                )
+                            }
                         }
+                        Spacer(modifier = Modifier.height(16.dp))
+                        QuickSettingsContent(
+                            viewModel.qsContainerViewModel,
+                            mediaInRow,
+                            Modifier.padding(horizontal = shadeHorizontalPadding),
+                        )
                     }
-                    Spacer(modifier = Modifier.height(16.dp))
-                    QuickSettingsContent(
-                        viewModel.qsContainerViewModel,
-                        mediaInRow,
-                        Modifier.padding(horizontal = shadeHorizontalPadding),
-                    )
                 }
             }
 
@@ -493,5 +528,29 @@ private fun ContentScope.QuickSettingsContent(
                         .padding(horizontal = shadeHorizontalPadding),
             )
         }
+    }
+}
+
+/**
+ * IchthysOS: hosts the scrolling tile content either directly (notes page off) or as the tiles
+ * page of [IchthysQsNotesPagerHost].
+ */
+@Composable
+private fun ContentScope.IchthysQsTilesHost(
+    notesViewModel: IchthysQsNotesViewModel,
+    enabled: Boolean,
+    isScrollable: Boolean,
+    modifier: Modifier = Modifier,
+    tiles: @Composable BoxScope.() -> Unit,
+) {
+    if (enabled) {
+        IchthysQsNotesPagerHost(
+            viewModel = notesViewModel,
+            isScrollable = isScrollable,
+            modifier = modifier,
+            tiles = tiles,
+        )
+    } else {
+        Box(modifier = modifier, content = tiles)
     }
 }

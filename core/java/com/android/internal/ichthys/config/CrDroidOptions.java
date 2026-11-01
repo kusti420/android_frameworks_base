@@ -100,6 +100,7 @@ final class CrDroidOptions {
         s.add(Option.integer("quickSettings.layout.tilesColumnsLandscape", 8L, 2L, 10L, "Columns (landscape)", Binding.setting(Binding.Store.SYSTEM, "qs_tiles_columns_landscape")));
         s.add(Option.integer("quickSettings.layout.tilesRows", 3L, 2L, 8L, "Rows (portrait)", Binding.setting(Binding.Store.SYSTEM, "qs_tiles_rows")));
         s.add(Option.integer("quickSettings.layout.tilesRowsLandscape", 2L, 1L, 5L, "Rows (landscape)", Binding.setting(Binding.Store.SYSTEM, "qs_tiles_rows_landscape")));
+        s.add(Option.bool("quickSettings.notesPage", Boolean.TRUE, "Notes page", Binding.setting(Binding.Store.SYSTEM, "qs_notes_page")));
         s.add(Option.enumeration("quickSettings.panelStyle", new String[] {"cardStyle", "classicStyle"}, new String[] {"0", "1"}, "cardStyle", "QS Panel style", Binding.setting(Binding.Store.SYSTEM, "qs_panel_style")));
         s.add(Option.bool("quickSettings.showAutoBrightness", Boolean.TRUE, "Auto brightness icon", Binding.setting(Binding.Store.LINEAGE_SECURE, "qs_show_auto_brightness")));
         s.add(Option.bool("quickSettings.showBatteryEstimate", Boolean.TRUE, "Battery estimate", Binding.setting(Binding.Store.SYSTEM, "qs_show_battery_estimate")));

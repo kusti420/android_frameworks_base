@@ -86,7 +86,10 @@ fun ContentScope.QuickSettingsContent(
                                     ContainerColors.defaultContainerColor,
                                 ),
                             modifier =
-                                Modifier.padding(
+                                // IchthysOS: a horizontal drag that starts on the brightness row
+                                // (beside the thumb) must not swipe to the notes page.
+                                Modifier.ichthysKeepsHorizontalDrags()
+                                    .padding(
                                         vertical =
                                             dimensionResource(id = R.dimen.qs_brightness_margin_top)
                                     )

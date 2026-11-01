@@ -62,6 +62,8 @@ import com.android.systemui.qs.panels.ui.compose.toolbar.rememberEditModeButtonS
 import com.android.systemui.qs.panels.ui.viewmodel.PaginatedGridViewModel
 import com.android.systemui.qs.panels.ui.viewmodel.TileViewModel
 import com.android.systemui.qs.panels.ui.viewmodel.toolbar.EditModeButtonViewModel
+import com.android.systemui.qs.ui.composable.ReportIchthysTilePager
+import com.android.systemui.qs.ui.composable.ichthysNotesHostDrawsDots
 import javax.inject.Inject
 
 class PaginatedGridLayout
@@ -155,6 +157,11 @@ constructor(
             snapshotFlow { pagerState.currentPage == 0 }.collect { viewModel.inFirstPage = it }
         }
 
+        // IchthysOS: the notes page host draws the page indicator (pin + one dot per tile page);
+        // tell it this pager's pages and leave the dots out of the footer below.
+        ReportIchthysTilePager(pagerState)
+        val hostDrawsDots = ichthysNotesHostDrawsDots()
+
         Column(modifier) {
             val contentPaddingValue =
                 if (pages.size > 1) {
@@ -213,6 +220,7 @@ constructor(
                     showArrowsInPager = viewModel.showArrowsInPagerDots,
                     editButtonViewModel = editButtonViewModel,
                     isVisible = { listening() && layoutState.isIdle() },
+                    showDots = !hostDrawsDots,
                 )
             }
         }
@@ -236,6 +244,8 @@ private fun FooterBar(
     showArrowsInPager: Boolean,
     editButtonViewModel: EditModeButtonViewModel,
     isVisible: () -> Boolean = { true },
+    // IchthysOS: false when the notes page host shows the dots in its own indicator.
+    showDots: Boolean = true,
 ) {
 
     // Use requiredHeight so it won't be squished if the view doesn't quite fit. As this is
@@ -261,19 +271,21 @@ private fun FooterBar(
             if (!shoal) BuildNumber(viewModelFactory = buildNumberViewModelFactory)
             Spacer(modifier = Modifier.weight(1f))
         }
-        PagerDots(
-            pagerState = pagerState,
-            activeColor =
-                if (shoal) shoalAccent else MaterialTheme.colorScheme.onSurfaceVariant,
-            nonActiveColor =
-                if (shoal) ShoalQsColors.DotInactive
-                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .5f),
-            modifier = Modifier.wrapContentWidth(),
-            showArrows = showArrowsInPager,
-            clickToCyclePages = !showArrowsInPager,
-            spaceSize = if (shoal) 6.dp else 4.dp,
-            activeDotWidth = if (shoal) 18.dp else 12.dp,
-        )
+        if (showDots) {
+            PagerDots(
+                pagerState = pagerState,
+                activeColor =
+                    if (shoal) shoalAccent else MaterialTheme.colorScheme.onSurfaceVariant,
+                nonActiveColor =
+                    if (shoal) ShoalQsColors.DotInactive
+                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .5f),
+                modifier = Modifier.wrapContentWidth(),
+                showArrows = showArrowsInPager,
+                clickToCyclePages = !showArrowsInPager,
+                spaceSize = if (shoal) 6.dp else 4.dp,
+                activeDotWidth = if (shoal) 18.dp else 12.dp,
+            )
+        }
         Row(Modifier.weight(1f)) {
             Spacer(modifier = Modifier.weight(1f))
             EditModeButton(
