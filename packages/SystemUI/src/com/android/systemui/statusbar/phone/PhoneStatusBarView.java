@@ -171,7 +171,7 @@ public class PhoneStatusBarView extends FrameLayout {
                     @Override
                     public boolean onDoubleTap(MotionEvent e) {
                         if (LineageSettings.System.getIntForUser(context.getContentResolver(),
-                                LineageSettings.System.DOUBLE_TAP_SLEEP_GESTURE, 1,
+                                LineageSettings.System.DOUBLE_TAP_SLEEP_GESTURE, 0,
                                 UserHandle.USER_CURRENT) == 1) {
                             PowerManager pm = context.getSystemService(PowerManager.class);
                             if (pm != null) {

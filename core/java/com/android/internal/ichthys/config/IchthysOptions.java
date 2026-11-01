@@ -96,7 +96,13 @@ final class IchthysOptions {
                 setting(SECURE, "ichthys_theme_shape")));
         s.removed("theme.density", "nothing ever read it");
         s.add(Option.packageName("theme.font.body", null,
-                "System font overlay package (android.theme.customization.font), null for default.",
+                "System font overlay package (android.theme.customization.font), null for "
+                        + "default. The Theme Studio \"System font\" row: com.android.theme.font."
+                        + "{inter, manrope, plusjakartasans, sourcesans3, nunitosans, lexend, "
+                        + "atkinsonhyperlegiblenext, figtree, dmsans, publicsans, instrumentsans, "
+                        + "outfit, ibmplexsans, notoserifsource}. When set, it owns the whole "
+                        + "system's body and headline faces and theme.font.text/display only "
+                        + "style IchthysOS' own UI.",
                 Binding.themeJson("font")));
         // Font families: named families from fonts_customization.xml. Unset means the koi faces
         // (the defaults below, which are also the android:string/ichthys_font_* resource
@@ -108,8 +114,12 @@ final class IchthysOptions {
                 setting(SECURE, "ichthys_theme_font_display")));
         s.add(Option.string("theme.font.text", "instrument-sans",
                 "Font family for body text (e.g. \"instrument-sans\", \"ibm-plex-sans\", "
-                        + "\"sans-serif\"). Unless theme.surface = \"stock\" or theme.font.body "
-                        + "is set, it is also the system body font.",
+                        + "\"inter\", \"manrope\", \"plus-jakarta-sans\", \"source-sans-3\", "
+                        + "\"nunito-sans\", \"lexend\", \"atkinson-hyperlegible-next\", "
+                        + "\"figtree\", \"dm-sans\", \"public-sans\", \"outfit\" or a system "
+                        + "family such as \"sans-serif\"; see fonts_customization.xml). Unless "
+                        + "theme.surface = \"stock\" or theme.font.body is set, it is also the "
+                        + "system body font.",
                 setting(SECURE, "ichthys_theme_font_text")));
         s.add(Option.string("theme.font.mono", "jetbrains-mono",
                 "Font family for numbers in IchthysOS UI (e.g. \"jetbrains-mono\").",
@@ -208,7 +218,7 @@ final class IchthysOptions {
                 setting(SYSTEM, "ichthys_battery_percent_charging_only")));
         s.add(Option.bool("statusBar.battery.percentBold", Boolean.FALSE,
                 "Bold percentage text.", setting(SYSTEM, "ichthys_battery_percent_bold")));
-        s.add(Option.bool("statusBar.battery.chargingIndicator", Boolean.TRUE,
+        s.add(Option.bool("statusBar.battery.chargingIndicator", Boolean.FALSE,
                 "Show the charging bolt.", setting(SYSTEM, "ichthys_battery_charging_indicator")));
         s.add(Option.bool("statusBar.battery.powerSaveIndicator", Boolean.TRUE,
                 "Show the power-save mark.",
@@ -405,9 +415,13 @@ final class IchthysOptions {
         s.add(Option.bool("background.unrestrictedPersist", Boolean.FALSE,
                 "Keep the unrestricted mode across reboots.",
                 setting(GLOBAL, "ichthys_unrestricted_bg_persist")));
-        s.add(Option.integer("background.backstageMaxHours", 0L, 0, 12,
-                "Stop Backstage apps automatically after this many hours (0 = never).",
+        s.add(Option.integer("background.backstageMaxHours", 0L, -1, 24,
+                "Stop Backstage apps automatically after this many hours (0 = never, "
+                        + "-1 = background.backstageMaxMinutes).",
                 setting(SECURE, "ichthys_backstage_max_hours")));
+        s.add(Option.integer("background.backstageMaxMinutes", 90L, 5, 2880,
+                "The custom Backstage limit in minutes, used while backstageMaxHours is -1.",
+                setting(SECURE, "ichthys_backstage_max_minutes")));
         // The Miscellaneous page had the same two keys as generated options. One key, one
         // option: two made a declarative apply set the key through one path and reset it through
         // the other, so applying the same file twice flipped the setting.
@@ -524,6 +538,14 @@ final class IchthysOptions {
                 "Set by Ichthys Apps' first-boot screen once the app list is confirmed; until "
                         + "then it offers the Recommended list instead of installing.",
                 setting(SECURE, "ichthys_apps_confirmed")).preserved());
+
+        // Apps > Install & compatibility. Its switches are generated (apps.compat.*, plus the
+        // older system.misc.pmDowngradeAllowed); the app list is picked on the device, so it is
+        // preserved like background.unrestrictedApps. WindowManagerService reads the key.
+        s.add(Option.packageList("apps.compat.secureWindowBypassApps",
+                "Apps whose own screenshot protection (FLAG_SECURE) is ignored, so screenshots, "
+                        + "screen recording and the recents preview show them.",
+                setting(SECURE, "ichthys_secure_window_bypass_pkgs")).preserved());
     }
 
     // ---------------------------------------------------------------------------------------------

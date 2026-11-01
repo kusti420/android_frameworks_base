@@ -471,7 +471,7 @@ constructor(
                     int(c.KEY_QS_STYLE, c.QS_STYLE_FOLLOW),
                     int(c.KEY_PERCENT_CHARGING_ONLY, 0),
                     int(c.KEY_PERCENT_BOLD, 0),
-                    int(c.KEY_CHARGING_INDICATOR, 1),
+                    int(c.KEY_CHARGING_INDICATOR, 0),
                     int(c.KEY_POWER_SAVE_INDICATOR, 1),
                     int(c.KEY_FILL_MODE, c.FILL_MODE_TINT),
                     int(c.KEY_FILL_COLOR, c.FILL_COLOR_UNSET),

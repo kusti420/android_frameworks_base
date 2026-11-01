@@ -14,6 +14,8 @@ final class CrDroidOptions {
     private CrDroidOptions() {}
 
     static void register(OptionSchema s) {
+        s.add(Option.bool("apps.compat.allowLowTargetSdk", Boolean.FALSE, "Allow apps built for old Android", Binding.setting(Binding.Store.GLOBAL, "pm_low_target_sdk_allowed")));
+        s.add(Option.bool("apps.compat.disableSecureWindows", Boolean.FALSE, "Allow screenshots in every app", Binding.setting(Binding.Store.SECURE, "disable_secure_windows")));
         s.add(Option.integer("lockscreen.ambient.gestureVibrate", 0L, 0L, 2000L, "Ambient display: vibrate", Binding.setting(Binding.Store.SECURE, "doze_gesture_vibrate")));
         s.add(Option.bool("lockscreen.ambient.handwaveGesture", Boolean.FALSE, "Hand wave", Binding.setting(Binding.Store.SECURE, "doze_handwave_gesture")));
         s.add(Option.enumeration("lockscreen.ambient.notificationIcons", new String[] {"default", "hidden", "1", "2", "3", "5", "8", "12"}, new String[] {"-1", "0", "1", "2", "3", "5", "8", "12"}, "default", "Notification icons on always-on display", Binding.setting(Binding.Store.SYSTEM, "ichthys_aod_notif_icons")));
@@ -32,7 +34,7 @@ final class CrDroidOptions {
         s.add(Option.enumeration("lockscreen.clock.dotShape", new String[] {"round", "square", "diamond"}, new String[] {"0", "1", "2"}, "round", "Dot shape", Binding.setting(Binding.Store.SECURE, "ichthys_clock_dot_shape")));
         s.add(Option.bool("lockscreen.clock.showDate", Boolean.TRUE, "Show date", Binding.setting(Binding.Store.SECURE, "ichthys_clock_show_date")));
         s.add(Option.bool("lockscreen.clock.unlitDots", Boolean.TRUE, "Show unlit dots", Binding.setting(Binding.Store.SECURE, "ichthys_clock_unlit_dots")));
-        s.add(Option.bool("lockscreen.doubleTapSleepLockscreen", Boolean.TRUE, "Tap to sleep", Binding.setting(Binding.Store.SYSTEM, "double_tap_sleep_lockscreen")));
+        s.add(Option.bool("lockscreen.doubleTapSleepLockscreen", Boolean.FALSE, "Tap to sleep", Binding.setting(Binding.Store.SYSTEM, "double_tap_sleep_lockscreen")));
         s.add(Option.enumeration("lockscreen.edgeLight.animationEffect", new String[] {"standard", "breathing", "wave", "sparkle", "chase", "comet"}, new String[] {"none", "breathing", "wave", "sparkle", "chase", "comet"}, "standard", "Animation effect", Binding.setting(Binding.Store.SYSTEM, "edge_light_animation_effect")));
         s.add(Option.enumeration("lockscreen.edgeLight.colorMode", new String[] {"accentColor", "notificationColor", "wallpaperColor", "rainbowColor", "customColor"}, new String[] {"accent", "notification", "wallpaper", "rainbow", "custom"}, "accentColor", "Color mode", Binding.setting(Binding.Store.SYSTEM, "edge_light_color_mode")));
         s.add(Option.color("lockscreen.edgeLight.customColor", null, "Edge light: custom color", Binding.setting(Binding.Store.SYSTEM, "edge_light_custom_color")).storedAsInt());
@@ -45,8 +47,8 @@ final class CrDroidOptions {
         s.add(Option.bool("lockscreen.fingerprint.animBp", Boolean.TRUE, "In app prompts", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_anim_bp")));
         s.add(Option.color("lockscreen.fingerprint.animColor", null, "Fingerprint: custom color", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_anim_color")).storedAsInt());
         s.add(Option.enumeration("lockscreen.fingerprint.animColorMode", new String[] {"accent", "white", "custom", "rainbow"}, new String[] {"0", "1", "2", "3"}, "accent", "Animation color", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_anim_color_mode")));
-        s.add(Option.enumeration("lockscreen.fingerprint.animEffect", new String[] {"none", "animationPack", "rippleRings", "radarSweep", "particleBurst", "shoalLattice", "pulse", "auroraArcs", "spinner", "scanlines"}, new String[] {"-1", "0", "1", "2", "3", "4", "5", "6", "7", "8"}, "animationPack", "Animation", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_anim_effect")));
-        s.add(Option.bool("lockscreen.fingerprint.animEnroll", Boolean.FALSE, "While enrolling", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_anim_enroll")));
+        s.add(Option.enumeration("lockscreen.fingerprint.animEffect", new String[] {"none", "animationPack", "rippleRings", "radarSweep", "particleBurst", "shoalLattice", "pulse", "auroraArcs", "spinner", "scanlines"}, new String[] {"-1", "0", "1", "2", "3", "4", "5", "6", "7", "8"}, "shoalLattice", "Animation", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_anim_effect")));
+        s.add(Option.bool("lockscreen.fingerprint.animEnroll", Boolean.TRUE, "While enrolling", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_anim_enroll")));
         s.add(Option.integer("lockscreen.fingerprint.animOffsetX", 0L, -40L, 40L, "Horizontal offset", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_anim_offset_x")));
         s.add(Option.integer("lockscreen.fingerprint.animOffsetY", 0L, -40L, 40L, "Vertical offset", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_anim_offset_y")));
         s.add(Option.integer("lockscreen.fingerprint.animScale", 100L, 50L, 250L, "Animation size", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_anim_scale")));
@@ -58,7 +60,7 @@ final class CrDroidOptions {
         s.add(Option.color("lockscreen.fingerprint.iconColor", "#ffffff", "Fingerprint: custom color", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_icon_color")).storedAsInt());
         s.add(Option.enumeration("lockscreen.fingerprint.iconColorMode", new String[] {"followTheme", "accent", "custom"}, new String[] {"0", "1", "2"}, "followTheme", "Fingerprint: color", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_icon_color_mode")));
         s.add(Option.integer("lockscreen.fingerprint.iconOpacity", 100L, 10L, 100L, "Opacity", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_icon_opacity")));
-        s.add(Option.enumeration("lockscreen.fingerprint.iconStyle", new String[] {"system", "classic", "minimal", "dotted", "ring", "split", "radar", "pulseRing", "shoal"}, new String[] {"0", "1", "2", "3", "4", "5", "6", "7", "8"}, "system", "Icon style", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_icon_style")));
+        s.add(Option.enumeration("lockscreen.fingerprint.iconStyle", new String[] {"system", "classic", "minimal", "dotted", "ring", "split", "radar", "pulseRing", "shoal"}, new String[] {"0", "1", "2", "3", "4", "5", "6", "7", "8"}, "shoal", "Icon style", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_icon_style")));
         s.add(Option.color("lockscreen.fingerprint.pressedColor", null, "Fingerprint: custom color", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_pressed_color")).storedAsInt());
         s.add(Option.enumeration("lockscreen.fingerprint.pressedColorMode", new String[] {"accent", "white", "custom"}, new String[] {"0", "1", "2"}, "accent", "Fingerprint: color", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_pressed_color_mode")));
         s.add(Option.integer("lockscreen.fingerprint.pressedSize", 120L, 100L, 200L, "Size", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_pressed_size")));
@@ -136,7 +138,7 @@ final class CrDroidOptions {
         s.add(Option.bool("statusBar.clock.seconds", Boolean.TRUE, "Clock seconds", Binding.setting(Binding.Store.SYSTEM, "status_bar_clock_seconds")));
         s.add(Option.bool("statusBar.coloredIcons", Boolean.FALSE, "Colored icons", Binding.setting(Binding.Store.SYSTEM, "statusbar_colored_icons")));
         s.add(Option.bool("statusBar.dataDisabledIcon", Boolean.FALSE, "Data disabled icon", Binding.setting(Binding.Store.SYSTEM, "data_disabled_icon")));
-        s.add(Option.bool("statusBar.doubleTapSleepGesture", Boolean.TRUE, "Tap to sleep", Binding.setting(Binding.Store.LINEAGE_SYSTEM, "double_tap_sleep_gesture")));
+        s.add(Option.bool("statusBar.doubleTapSleepGesture", Boolean.FALSE, "Tap to sleep", Binding.setting(Binding.Store.LINEAGE_SYSTEM, "double_tap_sleep_gesture")));
         s.add(Option.bool("statusBar.enableCameraPrivacyIndicator", Boolean.TRUE, "Mic and camera privacy indicator", Binding.setting(Binding.Store.SECURE, "enable_camera_privacy_indicator")));
         s.add(Option.bool("statusBar.enableLocationPrivacyIndicator", Boolean.TRUE, "Location privacy indicator", Binding.setting(Binding.Store.SECURE, "enable_location_privacy_indicator")));
         s.add(Option.bool("statusBar.enableProjectionPrivacyIndicator", Boolean.TRUE, "Media projection privacy indicator", Binding.setting(Binding.Store.SECURE, "enable_projection_privacy_indicator")));
@@ -170,6 +172,7 @@ final class CrDroidOptions {
         s.add(Option.bool("system.misc.enableRotationButton", Boolean.TRUE, "Floating rotate button", Binding.setting(Binding.Store.SYSTEM, "enable_rotation_button")));
         s.add(Option.bool("system.misc.pmDowngradeAllowed", Boolean.FALSE, "Allow app downgrade", Binding.setting(Binding.Store.GLOBAL, "pm_downgrade_allowed")));
         s.add(Option.bool("system.misc.screenOnMemoryReclaim", Boolean.FALSE, "Screen-on memory reclaim", Binding.setting(Binding.Store.SYSTEM, "screen_on_memory_reclaim")));
+        s.add(Option.bool("system.misc.spoofPifPhotos", Boolean.FALSE, "Spoof Google Photos", Binding.setting(Binding.Store.SECURE, "spoof_pif_photos")));
         s.add(Option.bool("system.navigation.backGestureArrow", Boolean.TRUE, "Back gesture animation", Binding.setting(Binding.Store.SECURE, "back_gesture_arrow")));
         s.add(Option.bool("system.navigation.backGestureHaptic", Boolean.TRUE, "Back gesture haptic", Binding.setting(Binding.Store.SECURE, "back_gesture_haptic")));
         s.add(Option.integer("system.navigation.backGestureHeight", 0L, 0L, 3L, "Back gesture height", Binding.setting(Binding.Store.SYSTEM, "back_gesture_height")));

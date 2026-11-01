@@ -375,7 +375,7 @@ public class IchthysShoalBatteryView extends View implements DarkReceiver {
         mPercentChargingOnly = systemInt(cr, BatteryCustomization.KEY_PERCENT_CHARGING_ONLY, 0)
                 != 0;
         mPercentBold = systemInt(cr, BatteryCustomization.KEY_PERCENT_BOLD, 0) != 0;
-        mChargingIndicator = systemInt(cr, BatteryCustomization.KEY_CHARGING_INDICATOR, 1) != 0;
+        mChargingIndicator = systemInt(cr, BatteryCustomization.KEY_CHARGING_INDICATOR, 0) != 0;
         mPowerSaveIndicator = systemInt(cr, BatteryCustomization.KEY_POWER_SAVE_INDICATOR, 1)
                 != 0;
         mFillMode = systemInt(cr, BatteryCustomization.KEY_FILL_MODE, FILL_MODE_UNSET);

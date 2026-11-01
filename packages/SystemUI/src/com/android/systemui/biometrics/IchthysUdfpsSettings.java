@@ -35,7 +35,7 @@ public final class IchthysUdfpsSettings {
     // ---- Press animation (played around the sensor while the finger is down) ----
     /** -1 none, 0 crDroid animation pack (udfps_anim_style), 1..8 built-in effects. */
     public static final String ANIM_EFFECT = "ichthys_udfps_anim_effect";
-    public static final int ANIM_EFFECT_DEFAULT = 0;
+    public static final int ANIM_EFFECT_DEFAULT = 4; // IchthysOS: Shoal lattice (owner default)
     public static final int EFFECT_NONE = -1;
     public static final int EFFECT_PACK = 0;
     public static final int EFFECT_RIPPLE = 1;
@@ -65,7 +65,7 @@ public final class IchthysUdfpsSettings {
     public static final int ANIM_IN_PROMPT_DEFAULT = 1;
     /** Also play while enrolling a fingerprint. */
     public static final String ANIM_IN_ENROLL = "ichthys_udfps_anim_enroll";
-    public static final int ANIM_IN_ENROLL_DEFAULT = 0;
+    public static final int ANIM_IN_ENROLL_DEFAULT = 1;
 
     // ---- Pressed icon (drawn around the illumination disc while pressing) ----
     /** 0 none, 1 solid disc, 2 ring, 3 glow. */
@@ -91,7 +91,7 @@ public final class IchthysUdfpsSettings {
     // ---- Idle icon (lock screen / AOD) ----
     /** 0 system (or crDroid icon pack), 1..8 built-in styles. */
     public static final String ICON_STYLE = "ichthys_udfps_icon_style";
-    public static final int ICON_STYLE_DEFAULT = 0;
+    public static final int ICON_STYLE_DEFAULT = 8; // IchthysOS: Shoal (owner default)
     /** 0 follow theme, 1 accent, 2 custom. */
     public static final String ICON_COLOR_MODE = "ichthys_udfps_icon_color_mode";
     public static final int ICON_COLOR_MODE_DEFAULT = 0;
