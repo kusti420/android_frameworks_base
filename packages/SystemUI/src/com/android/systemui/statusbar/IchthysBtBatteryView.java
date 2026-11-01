@@ -258,6 +258,11 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
         if (getVisibility() != visibility) {
             setVisibility(visibility);
         }
+        // IchthysOS: what the device reports, kept across the pills' attach/detach (see
+        // sQsLevelKnown).
+        if (mQsHeader) {
+            setQsLevelKnown(show);
+        }
         // The pill replaces the stock Bluetooth-with-battery icon in the lattice next to it.
         if (mShowing != show) {
             mShowing = show;
@@ -320,9 +325,24 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
         }
     }
 
-    /** Whether a QS header pill shows a level. */
+    /**
+     * IchthysOS: whether the connected device reported a level, as the QS header pills last read
+     * it. Not tied to a pill being attached: on the first frame of a QS -> Shade swipe the pill
+     * of the scene being left detaches before the other scene's pill has read the level, the set
+     * above was empty for a frame or two and the lattice drew the stock "[BT] 83" icon over the
+     * pill. A device that stops reporting a level clears it on the next read.
+     */
+    private static volatile boolean sQsLevelKnown;
+
+    private static void setQsLevelKnown(boolean known) {
+        if (sQsLevelKnown == known) return;
+        sQsLevelKnown = known;
+        for (Runnable r : QS_LISTENERS) r.run();
+    }
+
+    /** Whether a QS header pill shows (or is about to show) a level. */
     public static boolean isQsPillShowing() {
-        return !QS_SHOWING.isEmpty();
+        return sQsLevelKnown || !QS_SHOWING.isEmpty();
     }
 
     public static void addQsListener(Runnable r) {
