@@ -55,6 +55,8 @@ fun Modifier.ichthysDepthLens(repository: IchthysDepthRepository): Modifier = co
                 val down =
                     awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                 val at = down.position + origin
+                // IchthysOS: a new touch, no travel yet (the unlock planes read it while drawing).
+                repository.swipe = Offset.Zero
                 // Every finger on the lock screen glows in the Depth face's touch heat (live only,
                 // never counted); one on the subject also gets the X-ray lens.
                 pulse(at)
@@ -70,6 +72,9 @@ fun Modifier.ichthysDepthLens(repository: IchthysDepthRepository): Modifier = co
                 // where there is something to draw into; elsewhere a held finger stays a swipe.
                 val canPaint = paintable.value && repository.clockBounds.contains(at)
                 var drawing = false
+                // A swipe is the scene's; only its travel is kept here, for the depth layers to
+                // follow while unlocking (IchthysDepthUnlock.kt).
+                var swiping = false
                 try {
                     while (true) {
                         // Main pass: the scene's swipe handling (an ancestor) comes after this, so
@@ -77,11 +82,14 @@ fun Modifier.ichthysDepthLens(repository: IchthysDepthRepository): Modifier = co
                         val event = awaitPointerEvent(PointerEventPass.Main)
                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
                         if (!change.pressed) break
+                        repository.swipe = change.position - down.position
+                        if (swiping) continue
                         val moved = (change.position - down.position).getDistance()
                         if (!drawing && !lens) {
                             if (moved > viewConfiguration.touchSlop) {
-                                // A swipe: leave it to the scene.
-                                return@awaitEachGesture finish(lens, repository)
+                                // A swipe: leave it to the scene (its travel is still followed).
+                                swiping = true
+                                continue
                             } else if (
                                 canPaint && change.uptimeMillis - down.uptimeMillis >= HOLD_MS
                             ) {
@@ -116,11 +124,6 @@ private fun androidx.compose.ui.input.pointer.PointerInputScope.pulse(at: Offset
 
 /** How long a finger rests on the clock before it draws instead of swiping. */
 private const val HOLD_MS = 180L
-
-/** The lens ends with the gesture (the finally block does the same for every other way out). */
-private fun finish(lens: Boolean, repository: IchthysDepthRepository) {
-    if (lens) repository.setLens(null)
-}
 
 /**
  * The lens over the veil the cut-out opens: a soft halo of pond light fading out past the rim,

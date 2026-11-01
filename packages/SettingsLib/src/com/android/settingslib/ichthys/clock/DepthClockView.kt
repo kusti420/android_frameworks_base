@@ -86,6 +86,12 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
 
     /** IchthysOS editor v2: depth mode, shape flow (0..100), font, date line place. */
     private var depthMode = 0
+    /**
+     * IchthysOS: [KEY_PLACEMENT]. Projected, the digits are not drawn by this view at all: the
+     * depth layers paint them onto the wallpaper's wall plane ([ProjectedClock]), under the
+     * subject; this view keeps the date line and reports only that as its content.
+     */
+    private var placement = PLACEMENT_FLAT
     private var shapeStyle = SHAPE_STRETCH
     private var font = FONT_TALL
     private var datePos = DATE_ABOVE
@@ -266,7 +272,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         context.contentResolver.registerContentObserver(
             Settings.Secure.getUriFor(KEY_DETAILS), false, fillObserver, UserHandle.USER_ALL)
         for (key in arrayOf(KEY_DEPTH, KEY_SHAPE_STYLE, KEY_FONT, KEY_DATE_POS, KEY_DATE_ALIGN,
-                KEY_GLASS_FROST, KEY_GLASS_OPACITY)) {
+                KEY_GLASS_FROST, KEY_GLASS_OPACITY, KEY_PLACEMENT)) {
             context.contentResolver.registerContentObserver(
                 Settings.Secure.getUriFor(key), false, fillObserver, UserHandle.USER_ALL)
         }
@@ -393,6 +399,13 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
             field = v
             readFill()
         }
+    /** IchthysOS: the editor's draft of [KEY_PLACEMENT] (null: the setting). */
+    var previewProjected: Int? = null
+        set(v) {
+            if (field == v) return
+            field = v
+            readFill()
+        }
     var previewShapeStyle: Int? = null
         set(v) {
             if (field == v) return
@@ -480,6 +493,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         details = previewDetails ?: (secure(KEY_DETAILS, 0) != 0)
         fill = previewFill ?: secure(KEY_FILL, FILL_SOLID)
         depthMode = previewDepth ?: secure(KEY_DEPTH, 0)
+        placement = previewProjected ?: secure(KEY_PLACEMENT, PLACEMENT_FLAT)
         glassFrost = previewGlassFrost ?: secure(KEY_GLASS_FROST, 0)
         glassOpacity = previewGlassOpacity ?: secure(KEY_GLASS_OPACITY, -1)
         shapeStyle = previewShapeStyle ?: secure(KEY_SHAPE_STYLE, SHAPE_STRETCH)
@@ -994,7 +1008,8 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         // subject (shrinking, sliding it aside, reflowing the digits) made it change size and
         // move by itself; with depth on, the subject now just stands in front of it. Only the
         // Shape mode, which asks for it, still fits the clock to the outline.
-        val fit = depthMode == DEPTH_SHAPE
+        // IchthysOS: projected onto a wall, the digits aren't this view's to fit.
+        val fit = depthMode == DEPTH_SHAPE && placement != PLACEMENT_PROJECTED
         val place = if (fit && profile != null) placement() else null
         if (place == null || place[2] <= 0f || profile == null) {
             if (context.packageName == "com.android.systemui") {
@@ -1431,6 +1446,24 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
      *   is drawn in front of the subject).
      */
     private fun updateAnchors(path: Path) {
+        if (placement == PLACEMENT_PROJECTED) {
+            // IchthysOS: the digits are on the wall (ProjectedClock): this view shows only its
+            // date line, and the weather line under the clock goes under that.
+            if (showDate && !dateRect.isEmpty) {
+                contentRect.set(dateRect)
+                underTop = dateRect.bottom + dp(4f)
+            } else {
+                contentRect.setEmpty()
+                underTop = digitTop
+            }
+            if (context.packageName == "com.android.systemui") DepthFaceAnchor.publish(this, underTop)
+            val cb = onFaceLayout ?: return
+            if (underTop == reportedUnder && contentRect == reportedContent) return
+            reportedUnder = underTop
+            reportedContent.set(contentRect)
+            cb(RectF(contentRect), underTop)
+            return
+        }
         val k = if (path === shaped) max(shownK[0], shownK[1]) else 1f
         // IchthysOS: the shaped digits as drawn (beside the subject the columns differ in height).
         if (path === shaped) shaped.computeBounds(shapedBounds, true)
@@ -1502,9 +1535,12 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         reportWeather()
         paint.shader = null
         // IchthysOS polish: awake and dozing looks cross-fade with the doze amount (SystemUI's
-        // doze animation); without one, it is one or the other.
-        if (doze < 1f) drawAwake(canvas, path, 1f - doze)
-        if (doze > 0f) drawDozing(canvas, path, doze)
+        // doze animation); without one, it is one or the other. IchthysOS: projected onto the
+        // wallpaper's wall, the digits are the depth layers' (ProjectedClock); only the date here.
+        if (placement != PLACEMENT_PROJECTED) {
+            if (doze < 1f) drawAwake(canvas, path, 1f - doze)
+            if (doze > 0f) drawDozing(canvas, path, doze)
+        }
         canvas.restore()
         if (!dateRect.isEmpty) dateRect.offset(shift, 0f)
         updateAnchors(path)
@@ -1998,6 +2034,16 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         const val DEPTH_OVERLAP = 2
         const val DEPTH_SHAPE = 3
         /**
+         * IchthysOS: Settings.Secure, where the Depth face's digits stand: [PLACEMENT_FLAT]
+         * upright over the picture (as always), [PLACEMENT_PROJECTED] painted onto a wall plane of
+         * the wallpaper ([ProjectedClock]: a four-corner quad per wallpaper, ProjectedClock.KEY_QUADS;
+         * SystemUI's depth layers draw it under the subject, this view keeps only the date line).
+         * Orthogonal to [KEY_DEPTH]: X-ray's lens cuts through the subject over it as before.
+         */
+        const val KEY_PLACEMENT = "ichthys_clock_placement"
+        const val PLACEMENT_FLAT = 0
+        const val PLACEMENT_PROJECTED = 1
+        /**
          * IchthysOS: the smallest the depth fit shrinks the clock; needing more, depth steps back
          * and the clock stands whole in front.
          */
@@ -2163,6 +2209,10 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         const val FONT_COMPACT = 12      // Archivo Condensed Black
         const val FONT_GROTESK = 13      // Inter Tight Black
         const val FONT_HEAVY = 14        // Archivo Black
+        /** IchthysOS: display faces from /product/fonts (frameworks/base/data/fonts/ichthys). */
+        const val FONT_BUBBLE = 15       // Rubik Bubbles, inflated rounded digits
+        const val FONT_BLOCK = 16        // Bowlby One, chunky rounded black
+        const val FONT_INLINE = 17       // Bungee Inline, striped inline digits
         private val CONDENSED = setOf(FONT_TALL, FONT_FLEX, FONT_THIN, FONT_TEKO, FONT_CONDENSED,
             FONT_POSTER, FONT_COMPACT)
 
@@ -2222,6 +2272,9 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
                         FONT_COMPACT -> variable(FONTS + "Archivo-VF.ttf", "'wdth' 62, 'wght' 900")
                         FONT_GROTESK -> variable(FONTS + "InterTight-VF.ttf", "'wght' 900")
                         FONT_HEAVY -> variable(FONTS + "ArchivoBlack-Regular.ttf", "")
+                        FONT_BUBBLE -> variable(PRODUCT_FONTS + "RubikBubbles-Regular.ttf", "")
+                        FONT_BLOCK -> variable(PRODUCT_FONTS + "BowlbyOne-Regular.ttf", "")
+                        FONT_INLINE -> variable(PRODUCT_FONTS + "BungeeInline-Regular.ttf", "")
                         else ->
                             // Big Shoulders Display Black (IchthysDepth ships it), else Roboto
                             // Flex at its narrowest.
@@ -2235,6 +2288,7 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         private const val ROBOTO_FLEX = "/system/fonts/RobotoFlex-Regular.ttf"
         private const val NUNITO = "/system/fonts/Nunito-VF.ttf"
         private const val FONTS = "/system/fonts/"
+        private const val PRODUCT_FONTS = "/product/fonts/"
 
         private fun monoTypeface(): Typeface =
             variable("/system/fonts/JetBrainsMono-VF.ttf", "'wght' 450") ?: Typeface.MONOSPACE

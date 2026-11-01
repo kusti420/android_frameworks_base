@@ -323,7 +323,7 @@ public final class IchthysConfigService extends SystemService {
                 Slog.w(TAG, "rollback to " + target + ": " + note);
             }
             return applyTarget(mPlanner.target(declared, ConfigPlanner.Mode.SNAPSHOT),
-                    ConfigPlanner.Mode.SNAPSHOT, "rollback to " + target, userId);
+                    ConfigPlanner.Mode.SNAPSHOT, SOURCE_ROLLBACK + target, userId);
         }
     }
 
@@ -520,7 +520,26 @@ public final class IchthysConfigService extends SystemService {
     static boolean coalesces(String source) {
         return source != null && !source.isEmpty() && !"shell".equals(source)
                 && !"api".equals(source) && !SOURCE_DEFAULT.equals(source)
-                && !source.startsWith("rollback");
+                && !source.startsWith(SOURCE_ROLLBACK);
+    }
+
+    /** The source a rollback applies with; its detail is the generation restored. */
+    static final String SOURCE_ROLLBACK = "rollback to ";
+
+    /**
+     * IchthysOS: the generation a rollback restored, from its source ("rollback to 7" is 7), or
+     * -1 for any other apply. Kept in the meta file so the UI can say "Rolled back to #7" and
+     * mark #7 as the one restored.
+     */
+    static int rollbackTarget(String source) {
+        if (source == null || !source.startsWith(SOURCE_ROLLBACK)) {
+            return -1;
+        }
+        try {
+            return Integer.parseInt(source.substring(SOURCE_ROLLBACK.length()).trim());
+        } catch (NumberFormatException e) {
+            return -1;
+        }
     }
 
     /** Who applied: the source without its detail ("Theme Studio: theme.preset"). */
@@ -644,6 +663,10 @@ public final class IchthysConfigService extends SystemService {
             p.setProperty("time", String.valueOf(System.currentTimeMillis()));
             p.setProperty("summary", summary == null ? "" : summary);
             p.setProperty("source", source == null ? "" : source);
+            final int rollbackTo = rollbackTarget(source);
+            if (rollbackTo >= 0) {
+                p.setProperty("rollback_to", String.valueOf(rollbackTo));
+            }
             if (origin != null) {
                 p.setProperty("origin", origin);
                 p.setProperty("started", String.valueOf(started));
@@ -687,7 +710,11 @@ public final class IchthysConfigService extends SystemService {
         }
     }
 
-    /** "N\ttime\tsummary\tsource\tcurrent" per generation, newest first. */
+    /**
+     * "N\ttime\tsummary\tsource\tcurrent\trollbackTo" per generation, newest first. rollbackTo
+     * is the generation a rollback restored, else empty (IchthysOS: generations saved before the
+     * meta file had it fall back to their source, "rollback to N").
+     */
     String[] describeGenerations(int userId) {
         final Generations gens = generations(userId);
         final List<Integer> list = gens.list();
@@ -695,10 +722,22 @@ public final class IchthysConfigService extends SystemService {
         for (int i = 0; i < list.size(); i++) {
             final int g = list.get(i);
             final Properties m = gens.meta(g);
+            final String source = m.getProperty("source", "");
+            final int rollbackTo = m.containsKey("rollback_to")
+                    ? parseInt(m.getProperty("rollback_to")) : rollbackTarget(source);
             out[i] = g + "\t" + m.getProperty("time", "0") + "\t" + m.getProperty("summary", "")
-                    + "\t" + m.getProperty("source", "") + "\t" + (i == 0 ? "1" : "0");
+                    + "\t" + source + "\t" + (i == 0 ? "1" : "0")
+                    + "\t" + (rollbackTo >= 0 ? String.valueOf(rollbackTo) : "");
         }
         return out;
+    }
+
+    private static int parseInt(String s) {
+        try {
+            return Integer.parseInt(s);
+        } catch (NumberFormatException e) {
+            return -1;
+        }
     }
 
     static String now() {

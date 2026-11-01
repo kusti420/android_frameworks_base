@@ -49,8 +49,6 @@ final class CrDroidOptions {
         s.add(Option.enumeration("lockscreen.fingerprint.animColorMode", new String[] {"accent", "white", "custom", "rainbow"}, new String[] {"0", "1", "2", "3"}, "accent", "Animation color", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_anim_color_mode")));
         s.add(Option.enumeration("lockscreen.fingerprint.animEffect", new String[] {"none", "animationPack", "rippleRings", "radarSweep", "particleBurst", "shoalLattice", "pulse", "auroraArcs", "spinner", "scanlines"}, new String[] {"-1", "0", "1", "2", "3", "4", "5", "6", "7", "8"}, "shoalLattice", "Animation", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_anim_effect")));
         s.add(Option.bool("lockscreen.fingerprint.animEnroll", Boolean.TRUE, "While enrolling", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_anim_enroll")));
-        s.add(Option.integer("lockscreen.fingerprint.animOffsetX", 0L, -40L, 40L, "Horizontal offset", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_anim_offset_x")));
-        s.add(Option.integer("lockscreen.fingerprint.animOffsetY", 0L, -40L, 40L, "Vertical offset", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_anim_offset_y")));
         s.add(Option.integer("lockscreen.fingerprint.animScale", 100L, 50L, 250L, "Animation size", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_anim_scale")));
         s.add(Option.integer("lockscreen.fingerprint.animSpeed", 100L, 25L, 300L, "Animation speed", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_anim_speed")));
         s.add(Option.enumeration("lockscreen.fingerprint.failEffect", new String[] {"none", "shake", "redFlash"}, new String[] {"0", "1", "2"}, "redFlash", "On failure", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_fail_effect")));
@@ -172,7 +170,6 @@ final class CrDroidOptions {
         s.add(Option.bool("system.misc.enableRotationButton", Boolean.TRUE, "Floating rotate button", Binding.setting(Binding.Store.SYSTEM, "enable_rotation_button")));
         s.add(Option.bool("system.misc.pmDowngradeAllowed", Boolean.FALSE, "Allow app downgrade", Binding.setting(Binding.Store.GLOBAL, "pm_downgrade_allowed")));
         s.add(Option.bool("system.misc.screenOnMemoryReclaim", Boolean.FALSE, "Screen-on memory reclaim", Binding.setting(Binding.Store.SYSTEM, "screen_on_memory_reclaim")));
-        s.add(Option.bool("system.misc.spoofPifPhotos", Boolean.FALSE, "Spoof Google Photos", Binding.setting(Binding.Store.SECURE, "spoof_pif_photos")));
         s.add(Option.bool("system.navigation.backGestureArrow", Boolean.TRUE, "Back gesture animation", Binding.setting(Binding.Store.SECURE, "back_gesture_arrow")));
         s.add(Option.bool("system.navigation.backGestureHaptic", Boolean.TRUE, "Back gesture haptic", Binding.setting(Binding.Store.SECURE, "back_gesture_haptic")));
         s.add(Option.integer("system.navigation.backGestureHeight", 0L, 0L, 3L, "Back gesture height", Binding.setting(Binding.Store.SYSTEM, "back_gesture_height")));
@@ -208,6 +205,9 @@ final class CrDroidOptions {
         s.add(Option.bool("volume.customVolumeHorizontal", Boolean.FALSE, "Horizontal volume slider", Binding.setting(Binding.Store.SECURE, "custom_volume_horizontal")));
         s.add(Option.integer("volume.customVolumeSteps", 200L, 5L, 200L, "Media volume steps", Binding.setting(Binding.Store.SECURE, "custom_volume_steps")));
         s.add(Option.bool("volume.disableAllVibration", Boolean.FALSE, "Disable all vibration", Binding.setting(Binding.Store.SYSTEM, "disable_all_vibration")));
+        s.add(Option.enumeration("volume.horizontalLevel", new String[] {"hidden", "step", "percent"}, new String[] {"0", "1", "2"}, "step", "Level shown", Binding.setting(Binding.Store.SYSTEM, "volume_horizontal_level")));
+        s.add(Option.enumeration("volume.horizontalStyle", new String[] {"shoalPill", "thinLine", "segmented", "filledCard"}, new String[] {"0", "1", "2", "3"}, "shoalPill", "Horizontal panel look", Binding.setting(Binding.Store.SYSTEM, "volume_horizontal_style")));
+        s.add(Option.enumeration("volume.horizontalThickness", new String[] {"slim", "regular", "bold"}, new String[] {"0", "1", "2"}, "regular", "Track thickness", Binding.setting(Binding.Store.SYSTEM, "volume_horizontal_thickness")));
         s.add(Option.bool("volume.multiAudioFocusEnabled", Boolean.FALSE, "Disable audio focus", Binding.setting(Binding.Store.SYSTEM, "multi_audio_focus_enabled")));
         s.add(Option.bool("volume.screenshotShutterSound", Boolean.TRUE, "Screenshot sound", Binding.setting(Binding.Store.SYSTEM, "screenshot_shutter_sound")));
         s.add(Option.integer("volume.volumeDialogDismissTimeout", 3000L, 1000L, 10000L, "Volume panel timeout", Binding.setting(Binding.Store.SECURE, "volume_dialog_dismiss_timeout")));
@@ -236,6 +236,8 @@ final class CrDroidOptions {
 
         // Retired: no code reads these keys any more. Old configs and generations may
         // still mention them; that is a note, never an error.
+        s.removed("lockscreen.fingerprint.animOffsetX", "the fingerprint animation follows the sensor position");
+        s.removed("lockscreen.fingerprint.animOffsetY", "the fingerprint animation follows the sensor position");
         s.removed("lockscreen.smartspaceEnabled", "the lock screen smartspace switch was dropped");
         s.removed("theme.settingsIcons.settingsIconCornerStyle", "replaced by theme.iconBadges and theme.iconStyle");
         s.removed("theme.settingsIcons.settingsIconRandomColors", "replaced by theme.iconBadges and theme.iconStyle");

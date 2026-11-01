@@ -61,8 +61,12 @@ object LivingSky {
     /** Settings.Secure: 0..100, how far the picture moves (default 100). */
     const val KEY_INTENSITY = "ichthys_living_sky_intensity"
     /**
-     * Settings.Secure, for demos and tests only: "minute,code" pins the time of day (minutes after
-     * midnight, -1: real) and the weather (a condition code, -1: real). Unset: everything real.
+     * Settings.Secure, for demos and tests only: "minute,code[,dark]" pins the time of day
+     * (minutes after midnight, -1: real) and the weather (a condition code, -1: real). Unset:
+     * everything real. IchthysOS: the third field pins whether the picture's sky counts as a night
+     * one ([SkyInfo.darkSky]): 1 relights it by day whatever it is, 0 never does, -1 or absent:
+     * as analysed. E.g. `settings put secure ichthys_living_sky_debug 780,-1,1` shows the day
+     * relight of any picture at 13:00.
      */
     const val KEY_DEBUG = "ichthys_living_sky_debug"
     /** Settings.Global, from TwilightService: "HH:mm,HH:mm", today's sunset and sunrise. */
@@ -78,6 +82,8 @@ object LivingSky {
         /** [KEY_DEBUG]'s pinned minute of the day and condition code (-1: real). */
         val debugMinute: Int = -1,
         val debugCode: Int = -1,
+        /** IchthysOS: [KEY_DEBUG]'s third field, the night-sky override (-1 as analysed). */
+        val debugDark: Int = -1,
     )
 
     /** [KEY_DEBUG] as (minute, code); (-1, -1) when unset or unreadable. */
@@ -87,6 +93,10 @@ object LivingSky {
         val code = p.getOrNull(1)?.trim()?.toIntOrNull()?.takeIf { it in 0..47 } ?: -1
         return minute to code
     }
+
+    /** IchthysOS: [KEY_DEBUG]'s third field: 1 force the night-sky day relight, 0 never, -1 auto. */
+    fun readDebugDark(value: String?): Int =
+        value?.split(",")?.getOrNull(2)?.trim()?.toIntOrNull()?.takeIf { it in 0..1 } ?: -1
 
     fun readOptions(cr: ContentResolver, user: Int): Options =
         Options(
@@ -245,7 +255,11 @@ object LivingSky {
     const val REASON_OK = 0
     /** Not enough sky in the upper half of the screen. */
     const val REASON_NO_SKY = 1
-    /** A sky, but already a night one: it can't be lit by day without showing its noise. */
+    /**
+     * A sky, but already a night one. IchthysOS: no longer a refusal: such a picture has a sky
+     * ([SkyInfo.darkSky]) and is relit by day by the shader's day path (see [SHADER]); the
+     * constant stays for old callers and saved looks.
+     */
     const val REASON_DARK = 2
     /** No sky mask yet (IchthysDepth is making it), or a live wallpaper. */
     const val REASON_UNKNOWN = 3
@@ -255,6 +269,12 @@ object LivingSky {
      * ([hasSky], else [reason]), the sky's [share] of the screen's upper half, where it ends
      * ([horizon], 0..1 of the height, averaged over the columns), its mean linear luma
      * ([skyLuma]), and a clear patch of sky for the moon ([moonX], [moonY], fractions; -1: none).
+     * IchthysOS, the picture's own time and kind:
+     * - [darkSky]: the sky is a night one (mean luma under [DARK_SKY_LUMA]); by day the shader
+     *   cross-fades it to a clean sky of the grade instead of multiplying its noise up.
+     * - [flatSky]: a flat gradient (a render's sky, a poster), no clouds: only a tint shift toward
+     *   the grade, never a texture replacement, in either path.
+     * - [landLuma]: the mean linear luma of what isn't sky, for the day path's lift of the land.
      */
     class SkyInfo(
         val hasSky: Boolean,
@@ -264,7 +284,18 @@ object LivingSky {
         val skyLuma: Float,
         val moonX: Float,
         val moonY: Float,
+        val darkSky: Boolean = false,
+        val flatSky: Boolean = false,
+        val landLuma: Float = 0.1f,
     ) {
+        /** This, with [darkSky] as [KEY_DEBUG]'s third field says (-1: as it is). */
+        fun withDarkOverride(override: Int): SkyInfo =
+            when (override) {
+                0, 1 -> SkyInfo(hasSky, reason, share, horizon, skyLuma, moonX, moonY,
+                    override == 1, flatSky, landLuma)
+                else -> this
+            }
+
         companion object {
             val UNKNOWN = SkyInfo(false, REASON_UNKNOWN, 0f, 0.5f, 0.2f, -1f, -1f)
         }
@@ -281,21 +312,43 @@ object LivingSky {
         val h = GRID_H
         var upper = 0f
         var lumaSum = 0f
+        var lumaSq = 0f
         var lumaN = 0f
+        var landSum = 0f
+        var landN = 0f
+        val skyL = FloatArray(w * h) { -1f }
         for (y in 0 until h) for (x in 0 until w) {
             val i = y * w + x
             val a = (sk[i] ushr 24) / 255f
             if (y < h / 2) upper += a
+            val c = px[i]
+            val r = ((c shr 16) and 0xff) / 255f
+            val g = ((c shr 8) and 0xff) / 255f
+            val b = (c and 0xff) / 255f
+            val l = 0.2126f * r * r + 0.7152f * g * g + 0.0722f * b * b
             if (a > 0.5f) {
-                val c = px[i]
-                val r = ((c shr 16) and 0xff) / 255f
-                val g = ((c shr 8) and 0xff) / 255f
-                val b = (c and 0xff) / 255f
-                lumaSum += a * (0.2126f * r * r + 0.7152f * g * g + 0.0722f * b * b)
+                lumaSum += a * l
+                lumaSq += a * l * l
                 lumaN += a
+                skyL[i] = l
+            } else if (a < 0.5f) {
+                // IchthysOS: the land's mean, for the day relight of a night picture.
+                landSum += (1f - a) * l
+                landN += 1f - a
             }
         }
         val share = upper / (w * (h / 2))
+        val skyLuma = if (lumaN > 0f) lumaSum / lumaN else 0f
+        val landLuma = if (landN > 0f) landSum / landN else 0.1f
+        // IchthysOS: a flat sky (a render's gradient, a poster): little spread about its mean and
+        // nothing standing out bright (a cloud); the spread is measured over the sky's own mean,
+        // so a dark gradient counts as flat as a bright one.
+        var cloudN = 0
+        for (l in skyL) if (l >= 0f && l > skyLuma * 1.4f) cloudN++
+        val variance = if (lumaN > 0f) max(0f, lumaSq / lumaN - skyLuma * skyLuma) else 0f
+        val spread = if (skyLuma > 1e-4f) kotlin.math.sqrt(variance) / skyLuma else 0f
+        val flat = lumaN > 0f && spread < FLAT_SKY_SPREAD && cloudN < lumaN * FLAT_SKY_CLOUDS
+        val dark = lumaN > 0f && skyLuma < DARK_SKY_LUMA
         // The sky's bottom, column by column: the lowest row of the sky that reaches down from
         // the top (sky below a tree is not the horizon).
         var hz = 0f
@@ -309,13 +362,9 @@ object LivingSky {
             }
         }
         val horizon = if (hzN > 0) (hz / hzN).coerceIn(0.12f, 1f) else 0.5f
-        val skyLuma = if (lumaN > 0f) lumaSum / lumaN else 0f
-        val reason =
-            when {
-                share < MIN_SHARE -> REASON_NO_SKY
-                skyLuma < MIN_SKY_LUMA -> REASON_DARK
-                else -> REASON_OK
-            }
+        // IchthysOS: a night sky is a sky too (darkSky): by day the shader relights it instead of
+        // brightening its noise (REASON_DARK is history). Pictures with no sky stay refused.
+        val reason = if (share < MIN_SHARE) REASON_NO_SKY else REASON_OK
         // The moon: the clear spot nearest its usual place (upper right), all sky around it.
         var moonX = -1f
         var moonY = -1f
@@ -341,7 +390,8 @@ object LivingSky {
                 moonY = fy
             }
         }
-        return SkyInfo(reason == REASON_OK, reason, share, horizon, max(skyLuma, 0.004f), moonX, moonY)
+        return SkyInfo(reason == REASON_OK, reason, share, horizon, max(skyLuma, 0.004f), moonX, moonY,
+            darkSky = dark, flatSky = flat, landLuma = max(landLuma, 0.004f))
     }
 
     private fun pixels(b: Bitmap): IntArray {
@@ -361,7 +411,8 @@ object LivingSky {
      * the land's [light] tint and [exposure], [nightness] (land desaturated to moonlight),
      * [stars], how far the sky moves to the palette ([skyAmount]), the sun's glow ([sunGlow],
      * [sunColor], at [sunX], [sunY] as fractions of the screen) and the moon ([moonVis],
-     * [moonPhase]). Colours are linear (sRGB squared, like the shader).
+     * [moonPhase]). Colours are linear (sRGB squared, like the shader). IchthysOS: [dayness]
+     * (0 night .. 1 the sun well up) is how far a night picture's sky is relit by day.
      */
     class Grade(
         val top: FloatArray,
@@ -378,7 +429,28 @@ object LivingSky {
         val sunY: Float,
         val moonVis: Float,
         val moonPhase: Float,
+        val dayness: Float = 0f,
     )
+
+    /**
+     * IchthysOS: how far [info]'s sky is cross-faded to the grade's clean sky by day (the shader's
+     * `darkDay`): only a night sky, from civil twilight on, [DARK_SKY_AMOUNT] of the way; a flat
+     * one only a tint's worth. 0 for a day picture (its own path) and at night (unchanged).
+     */
+    fun darkDay(grade: Grade, info: SkyInfo): Float =
+        if (!info.darkSky) 0f else grade.dayness * DARK_SKY_AMOUNT * flatAmount(info)
+
+    /** IchthysOS: a flat gradient sky moves only this share of the way to any palette. */
+    fun flatAmount(info: SkyInfo): Float = if (info.flatSky) FLAT_SKY_AMOUNT else 1f
+
+    /**
+     * IchthysOS: the gain the day path lifts a night picture's land by: to a daylight mean
+     * ([DAY_LAND_LUMA]) from its own, at most [MAX_LAND_LIFT] (a black picture stays dim rather
+     * than turn to noise). 1 when nothing is relit.
+     */
+    fun landLift(grade: Grade, info: SkyInfo): Float =
+        if (darkDay(grade, info) <= 0f) 1f
+        else (DAY_LAND_LUMA / max(info.landLuma, 0.004f)).coerceIn(1f, MAX_LAND_LIFT)
 
     /**
      * The grade for [sun] under [weather] (null: none shown), on a picture whose sky ends at
@@ -441,17 +513,28 @@ object LivingSky {
             sunY = sunY,
             moonVis = smoothstep(-4f, -10f, e) * clear,
             moonPhase = moonPhase,
+            // IchthysOS: from civil twilight (-6°) to a sun clear of the horizon (2°): the night
+            // path below, the relit night picture above, a cross-fade between.
+            dayness = smoothstep(-6f, 2f, e),
         )
     }
 
     /**
      * IchthysOS: about how bright (linear luma) the graded sky is behind the lock screen clock,
-     * for the Depth face's contrast (ClockBackdrop); [intensity] as the grade's.
+     * for the Depth face's contrast (ClockBackdrop); [intensity] as the grade's. With [info], a
+     * night picture's sky follows its day relight: as dark as the photo at night, the grade's
+     * brightness by day, [darkDay] of the way between; a flat sky moves only a tint's worth.
      */
-    fun brightnessBehindClock(grade: Grade, intensity: Float): Float {
+    fun brightnessBehindClock(grade: Grade, intensity: Float, info: SkyInfo? = null): Float {
         fun l(c: FloatArray) = 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2]
-        val sky = (l(grade.top) * 0.6f + l(grade.hor) * 0.4f)
-        return sky * intensity.coerceIn(0f, 1f) + (1f - intensity.coerceIn(0f, 1f)) * 0.3f
+        val k = intensity.coerceIn(0f, 1f)
+        val graded = (l(grade.top) * 0.6f + l(grade.hor) * 0.4f)
+        if (info == null || !info.darkSky) {
+            val sky = if (info != null) mix(info.skyLuma, graded, grade.skyAmount * flatAmount(info)) else graded
+            return sky * k + (1f - k) * 0.3f
+        }
+        val sky = mix(info.skyLuma, graded, darkDay(grade, info))
+        return sky * k + (1f - k) * info.skyLuma
     }
 
     /** top, horizon, light (sRGB 0..255) and exposure at elevation [e]. */
@@ -520,7 +603,8 @@ object LivingSky {
         /**
          * The uniforms: [picture] (the photo, or the weather layer over it) and [sky] (its mask)
          * as shaders over the surface ([fitted]), [info] and [grade] for them, [intensity] 0..1,
-         * [time] (seconds, the stars' twinkle) and [flash] (lightning, 0..1).
+         * [time] (seconds, the stars' twinkle) and [flash] (lightning, 0..1). IchthysOS:
+         * [darkOverride] is [KEY_DEBUG]'s third field (see [SkyInfo.withDarkOverride]).
          */
         fun bind(
             picture: Shader,
@@ -535,7 +619,13 @@ object LivingSky {
             flash: Float,
             weather: Weather? = null,
             subject: Shader? = null,
+            darkOverride: Int = -1,
         ) {
+            val inf = info.withDarkOverride(darkOverride)
+            // IchthysOS: a night picture by day (the shader's day path), and a flat gradient sky
+            // that only takes a tint of the palette.
+            shader.setFloatUniform("darkDay", darkDay(grade, inf))
+            shader.setFloatUniform("lift", landLift(grade, inf))
             shader.setInputShader("picture", picture)
             shader.setInputShader("skyMask", sky)
             shader.setInputShader("subjectMask", subject ?: NO_SUBJECT)
@@ -556,7 +646,7 @@ object LivingSky {
             shader.setFloatUniform("size", w.toFloat(), h.toFloat())
             shader.setFloatUniform("density", density)
             shader.setFloatUniform("amount", intensity.coerceIn(0f, 1f))
-            shader.setFloatUniform("skyAmount", grade.skyAmount)
+            shader.setFloatUniform("skyAmount", grade.skyAmount * flatAmount(inf))
             shader.setFloatUniform("horizon", info.horizon)
             shader.setFloatUniform("skyLuma", info.skyLuma)
             shader.setFloatUniform("top", grade.top)
@@ -603,6 +693,28 @@ object LivingSky {
      * - Land: the photo times the light's tint and exposure, desaturated toward blue moonlight at
      *   night, with a breath of the sky's colour in its shadows.
      * - The sun's glow over both (less on the land), lightning, then [amount] of all of it.
+     *
+     * IchthysOS, a night picture by day (`darkDay` > 0, see [darkDay]): the reverse of the night
+     * grade. Multiplying a night sky up to a day one (the sky path above, `pow(rel, 0.6)`) shows
+     * the sensor's noise and its stars, so the sky is instead cross-faded to a clean sky of the
+     * grade, and the land is lifted through a filmic curve. The night path itself is untouched:
+     * at `darkDay` 0 every line below is what it was.
+     * - Stars go first: an erosion (the darkest of five taps in a 2 dp cross) removes specks a
+     *   few px wide; clouds and the horizon's glow are far wider and survive it.
+     * - The photo's own light relative to its mean sky (`relD`) is compressed hard, `pow(0.3)`:
+     *   noise (rel 0.7..1.4) becomes +-10 %, a moonlit cloud (rel 3) stays +40 %. That is the
+     *   luma-preserving part: the generated sky takes the photo's relative structure as its
+     *   shading, and nothing of its absolute (dark) level.
+     * - Bright structure takes the cloud light, as a day sky's clouds do; a flat gradient sky has
+     *   none and is only tinted (`skyAmount`, `darkDay` scaled down by [FLAT_SKY_AMOUNT]).
+     * - Silhouettes stay crisp because the edge is the sky MASK's, not the texture's: the land and
+     *   the sky are mixed by `s` exactly as before, and the land's lift is monotonic (a ridge
+     *   darker than the sky stays darker than the sky: no light rim, no halo).
+     * - Land: `lift` ([landLift]) brings its mean to a daylight level, through a Reinhard curve
+     *   with a white point (a toe that keeps black black, a shoulder that never clips), its
+     *   darkest parts smoothed with the five taps' mean (their noise would be lifted the most),
+     *   then a touch of desaturation in the light's own colour and some airlight from the
+     *   horizon: the inverse of the night path's blue moonlight.
      */
     const val SHADER = """
 uniform shader picture;
@@ -634,6 +746,10 @@ uniform float rain;
 uniform float snow;
 uniform float fogAmt;
 uniform float storm;
+// IchthysOS: a night picture by day: how far its sky is cross-faded to the grade's clean sky
+// (0: the night path, untouched) and the gain its land is lifted by (1: none).
+uniform float darkDay;
+uniform float lift;
 
 float luma(float3 c) {
     return dot(c, float3(0.2126, 0.7152, 0.0722));
@@ -742,9 +858,39 @@ half4 main(float2 p) {
     float v = clamp(p.y / max(horizon * size.y, 1.0), 0.0, 1.0);
     float3 grad = mix(top, hor, smoothstep(0.0, 1.0, pow(v, 1.3)));
     float rel = clamp(L / max(skyLuma, 0.004), 0.1, 3.0);
+
+    // IchthysOS: a night picture by day (see the comment above main): five taps in a 2 dp cross,
+    // their darkest for the sky (an erosion: the stars go), their mean for the land's shadows.
+    float3 tapMin = lin;
+    float3 tapMean = lin;
+    float relD = rel;
+    if (darkDay > 0.0) {
+        float r = 2.2 * density;
+        float3 c1 = float3(picture.eval(p + float2(r, 0.0)).rgb);
+        float3 c2 = float3(picture.eval(p - float2(r, 0.0)).rgb);
+        float3 c3 = float3(picture.eval(p + float2(0.0, r)).rgb);
+        float3 c4 = float3(picture.eval(p - float2(0.0, r)).rgb);
+        float3 mn = min(min(c, c1), min(min(c2, c3), c4));
+        tapMin = mn * mn;
+        float3 mean = (c + c1 + c2 + c3 + c4) * 0.2;
+        tapMean = mean * mean;
+        relD = clamp(luma(tapMin) / max(skyLuma, 0.002), 0.1, 4.0);
+        // The clouds and the overcast below read the denoised ratio by day.
+        rel = mix(rel, relD, darkDay);
+    }
+
     float cloud = smoothstep(1.08, 1.6, rel) * (1.0 - smoothstep(0.12, 0.35, sat));
     float3 skyNew = mix(grad, cloudLight, cloud) * pow(rel, 0.6);
     float3 skyOut = mix(lin, skyNew, skyAmount);
+    if (darkDay > 0.0 && s > 0.001) {
+        // The clean sky of the grade, shaded by the photo's own (compressed) structure; what
+        // stands out bright in it is cloud and takes the cloud light. Cross-faded over the night
+        // result, so a twilight picture moves smoothly between the two.
+        float structure = pow(relD, 0.3);
+        float cloudD = smoothstep(1.6, 3.0, relD);
+        float3 skyDay = mix(grad, cloudLight, cloudD) * structure;
+        skyOut = mix(skyOut, skyDay, darkDay);
+    }
 
     // The weather's clouds, as a grade of the photo's own sky: no painted cloud shapes (noise
     // over a real photo never stopped looking stuck on). Cover pulls the sky toward the cloud
@@ -763,6 +909,20 @@ half4 main(float2 p) {
     }
 
     float3 land = lin * light * exposure;
+    if (darkDay > 0.0 && s < 0.999) {
+        // The land of a night picture by day: its darkest parts smoothed (their noise would be
+        // lifted the most), lifted by the gain to a daylight mean through a Reinhard curve with
+        // a white point w (y(0) = 0 with unit slope, y(w) = 1, never above): no clipping. Then a
+        // touch of desaturation in the light's own colour and some airlight from the horizon,
+        // the day's haze: the inverse of the night path's blue moonlight.
+        float3 base = mix(lin, tapMean, 0.45 * (1.0 - smoothstep(0.01, 0.08, L)));
+        float3 x = base * light * exposure * lift;
+        float w = 1.6;
+        float3 y = x * (1.0 + x / (w * w)) / (1.0 + x);
+        y = mix(y, luma(y) * light, 0.18);
+        y += hor * 0.03;
+        land = mix(land, y, darkDay);
+    }
     float ll = luma(land);
     land = mix(land, ll * float3(0.72, 0.84, 1.3), nightness * 0.55);
     land += hor * 0.025;
@@ -872,12 +1032,36 @@ half4 main(float2 p) {
     private const val DEFAULT_LAT = 45.0
     /** At full day the sky moves this far to the palette (the photo is most likely a day one). */
     private const val DAY_SKY_AMOUNT = 0.6f
+    /**
+     * IchthysOS: by day a night picture's sky is cross-faded this far to the grade's clean sky:
+     * nearly all of it (a night sky has nothing to keep but its clouds, which stay as shading).
+     */
+    const val DARK_SKY_AMOUNT = 0.92f
+    /** IchthysOS: a flat gradient sky moves only this far to any palette (a tint, no texture). */
+    const val FLAT_SKY_AMOUNT = 0.45f
+    /** IchthysOS: the day path lifts a night picture's land to this mean linear luma ... */
+    const val DAY_LAND_LUMA = 0.16f
+    /** ... by at most this gain (sRGB: about 2.4x; more turns a black picture into noise). */
+    const val MAX_LAND_LIFT = 6f
     private const val NEW_MOON_MS = 947_182_440_000L
     private const val SYNODIC_DAYS = 29.530588853
     private const val GRID_W = 72
     private const val GRID_H = 160
     /** Below this share of the screen's upper half as sky, no Living Sky. */
     const val MIN_SHARE = 0.12f
-    /** A sky darker than this (mean linear luma) is a night sky already. */
+    /**
+     * A sky darker than this (mean linear luma) is a night sky already. IchthysOS: history: since
+     * the day relight ([DARK_SKY_LUMA]) such a sky is graded, not refused.
+     */
     const val MIN_SKY_LUMA = 0.012f
+    /**
+     * IchthysOS: a sky whose mean linear luma is under this (sRGB about 48/255) is a night or
+     * dusk one ([SkyInfo.darkSky]): dark enough that multiplying it up to a day sky would show
+     * its noise, so the shader cross-fades it to a clean sky instead.
+     */
+    const val DARK_SKY_LUMA = 0.035f
+    /** IchthysOS: a sky whose luma spread (standard deviation over its mean) is under this ... */
+    const val FLAT_SKY_SPREAD = 0.14f
+    /** ... with fewer bright (cloud) cells than this share is a flat gradient ([SkyInfo.flatSky]). */
+    const val FLAT_SKY_CLOUDS = 0.02f
 }

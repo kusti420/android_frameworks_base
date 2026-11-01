@@ -59,6 +59,7 @@ import com.android.systemui.plugins.keyguard.ui.composable.elements.LockscreenEl
 import com.android.systemui.plugins.statusbar.StatusBarStateController
 import com.android.systemui.pulse.PulseController
 import com.android.systemui.pulse.PulseView
+import com.android.systemui.scene.shared.model.Scenes
 import kotlin.math.min
 import kotlinx.coroutines.flow.first
 import platform.test.motion.compose.values.MotionTestValueKey
@@ -175,7 +176,20 @@ class LockscreenContent(
         }
         AndroidView(
             factory = { ctx -> PulseView(ctx).also { pulseController.attachToView(it) } },
-            modifier = Modifier.fillMaxSize(),
+            modifier =
+                Modifier.fillMaxSize().graphicsLayer {
+                    // IchthysOS: Pulse is not a lock screen element, so the unlock transition
+                    // never faded it: it sits under the depth backdrop and showed through for a
+                    // moment as the backdrop faded, until the scene went. Gone with the first
+                    // bit of the unlock (swipe or biometric; AOD to Gone too), back if cancelled.
+                    val unlock =
+                        layoutState.currentTransition?.takeIf {
+                            it.fromContent == Scenes.Lockscreen && it.toContent == Scenes.Gone
+                        }
+                    alpha =
+                        if (unlock == null) 1f
+                        else 1f - (unlock.progress / PULSE_UNLOCK_FADE).coerceIn(0f, 1f)
+                },
             onRelease = { pulseController.detach() },
         )
         DisposableEffect(pulseController) { onDispose { pulseController.detach() } }
@@ -203,6 +217,9 @@ class LockscreenContent(
         val Alpha = MotionTestValueKey<Float>("lockscreenContentAlpha")
     }
 }
+
+/** IchthysOS: share of the Lockscreen to Gone transition over which Pulse fades out. */
+private const val PULSE_UNLOCK_FADE = 0.15f
 
 private class KeyguardTransitionAnimationCallbackImpl(
     private val view: View,

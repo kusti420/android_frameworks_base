@@ -4,6 +4,11 @@
     Used by the "Shoal" design: Syne (display), Instrument Sans (body), JetBrains Mono
     (numerals); Outfit + IBM Plex Sans back the original "Abyss" preset. Referenced by name,
     e.g. Typeface.create("syne", Typeface.NORMAL) / android:fontFamily="syne".
+
+    The body faces (everything but syne and jetbrains-mono) are also the Theme Studio "System
+    font" options: packages/overlays/Font<Name>Overlay points config_bodyFontFamily at the
+    family and config_bodyFontFamilyMedium at its "<name>-medium" alias (weight 500), like
+    AOSP's source-sans-pro / source-sans-pro-semi-bold pair in fonts.xml.
 -->
 <fonts-modification version="1">
     <family customizationType="new-named-family" name="syne">
@@ -37,4 +42,91 @@
         <font weight="600" style="normal">IBMPlexSans-VF.ttf<axis tag="wght" stylevalue="600" /></font>
         <font weight="700" style="normal">IBMPlexSans-VF.ttf<axis tag="wght" stylevalue="700" /></font>
     </family>
+    <family customizationType="new-named-family" name="atkinson-hyperlegible-next">
+        <font weight="400" style="normal">AtkinsonHyperlegibleNext-VF.ttf<axis tag="wght" stylevalue="400" /></font>
+        <font weight="500" style="normal">AtkinsonHyperlegibleNext-VF.ttf<axis tag="wght" stylevalue="500" /></font>
+        <font weight="600" style="normal">AtkinsonHyperlegibleNext-VF.ttf<axis tag="wght" stylevalue="600" /></font>
+        <font weight="700" style="normal">AtkinsonHyperlegibleNext-VF.ttf<axis tag="wght" stylevalue="700" /></font>
+    </family>
+    <family customizationType="new-named-family" name="dm-sans">
+        <font weight="400" style="normal">DMSans-VF.ttf<axis tag="wght" stylevalue="400" /></font>
+        <font weight="500" style="normal">DMSans-VF.ttf<axis tag="wght" stylevalue="500" /></font>
+        <font weight="600" style="normal">DMSans-VF.ttf<axis tag="wght" stylevalue="600" /></font>
+        <font weight="700" style="normal">DMSans-VF.ttf<axis tag="wght" stylevalue="700" /></font>
+    </family>
+    <family customizationType="new-named-family" name="figtree">
+        <font weight="400" style="normal">Figtree-VF.ttf<axis tag="wght" stylevalue="400" /></font>
+        <font weight="500" style="normal">Figtree-VF.ttf<axis tag="wght" stylevalue="500" /></font>
+        <font weight="600" style="normal">Figtree-VF.ttf<axis tag="wght" stylevalue="600" /></font>
+        <font weight="700" style="normal">Figtree-VF.ttf<axis tag="wght" stylevalue="700" /></font>
+    </family>
+    <family customizationType="new-named-family" name="inter">
+        <font weight="400" style="normal">Inter-VF.ttf<axis tag="wght" stylevalue="400" /></font>
+        <font weight="500" style="normal">Inter-VF.ttf<axis tag="wght" stylevalue="500" /></font>
+        <font weight="600" style="normal">Inter-VF.ttf<axis tag="wght" stylevalue="600" /></font>
+        <font weight="700" style="normal">Inter-VF.ttf<axis tag="wght" stylevalue="700" /></font>
+    </family>
+    <family customizationType="new-named-family" name="lexend">
+        <font weight="400" style="normal">Lexend-VF.ttf<axis tag="wght" stylevalue="400" /></font>
+        <font weight="500" style="normal">Lexend-VF.ttf<axis tag="wght" stylevalue="500" /></font>
+        <font weight="600" style="normal">Lexend-VF.ttf<axis tag="wght" stylevalue="600" /></font>
+        <font weight="700" style="normal">Lexend-VF.ttf<axis tag="wght" stylevalue="700" /></font>
+    </family>
+    <family customizationType="new-named-family" name="manrope">
+        <font weight="400" style="normal">Manrope-VF.ttf<axis tag="wght" stylevalue="400" /></font>
+        <font weight="500" style="normal">Manrope-VF.ttf<axis tag="wght" stylevalue="500" /></font>
+        <font weight="600" style="normal">Manrope-VF.ttf<axis tag="wght" stylevalue="600" /></font>
+        <font weight="700" style="normal">Manrope-VF.ttf<axis tag="wght" stylevalue="700" /></font>
+    </family>
+    <family customizationType="new-named-family" name="nunito-sans">
+        <font weight="400" style="normal">NunitoSans-VF.ttf<axis tag="wght" stylevalue="400" /></font>
+        <font weight="500" style="normal">NunitoSans-VF.ttf<axis tag="wght" stylevalue="500" /></font>
+        <font weight="600" style="normal">NunitoSans-VF.ttf<axis tag="wght" stylevalue="600" /></font>
+        <font weight="700" style="normal">NunitoSans-VF.ttf<axis tag="wght" stylevalue="700" /></font>
+    </family>
+    <family customizationType="new-named-family" name="plus-jakarta-sans">
+        <font weight="400" style="normal">PlusJakartaSans-VF.ttf<axis tag="wght" stylevalue="400" /></font>
+        <font weight="500" style="normal">PlusJakartaSans-VF.ttf<axis tag="wght" stylevalue="500" /></font>
+        <font weight="600" style="normal">PlusJakartaSans-VF.ttf<axis tag="wght" stylevalue="600" /></font>
+        <font weight="700" style="normal">PlusJakartaSans-VF.ttf<axis tag="wght" stylevalue="700" /></font>
+    </family>
+    <family customizationType="new-named-family" name="public-sans">
+        <font weight="400" style="normal">PublicSans-VF.ttf<axis tag="wght" stylevalue="400" /></font>
+        <font weight="500" style="normal">PublicSans-VF.ttf<axis tag="wght" stylevalue="500" /></font>
+        <font weight="600" style="normal">PublicSans-VF.ttf<axis tag="wght" stylevalue="600" /></font>
+        <font weight="700" style="normal">PublicSans-VF.ttf<axis tag="wght" stylevalue="700" /></font>
+    </family>
+    <family customizationType="new-named-family" name="source-sans-3">
+        <font weight="400" style="normal">SourceSans3-VF.ttf<axis tag="wght" stylevalue="400" /></font>
+        <font weight="500" style="normal">SourceSans3-VF.ttf<axis tag="wght" stylevalue="500" /></font>
+        <font weight="600" style="normal">SourceSans3-VF.ttf<axis tag="wght" stylevalue="600" /></font>
+        <font weight="700" style="normal">SourceSans3-VF.ttf<axis tag="wght" stylevalue="700" /></font>
+    </family>
+
+    <!-- Lock screen clock display faces (single weight; DepthClockView loads the files by path,
+         the families are for android:fontFamily / Typeface.create). -->
+    <family customizationType="new-named-family" name="rubik-bubbles">
+        <font weight="400" style="normal">RubikBubbles-Regular.ttf</font>
+    </family>
+    <family customizationType="new-named-family" name="bowlby-one">
+        <font weight="400" style="normal">BowlbyOne-Regular.ttf</font>
+    </family>
+    <family customizationType="new-named-family" name="bungee-inline">
+        <font weight="400" style="normal">BungeeInline-Regular.ttf</font>
+    </family>
+
+    <!-- Medium faces for config_bodyFontFamilyMedium / config_headlineFontFamilyMedium. -->
+    <alias name="instrument-sans-medium" to="instrument-sans" weight="500" />
+    <alias name="outfit-medium" to="outfit" weight="500" />
+    <alias name="ibm-plex-sans-medium" to="ibm-plex-sans" weight="500" />
+    <alias name="atkinson-hyperlegible-next-medium" to="atkinson-hyperlegible-next" weight="500" />
+    <alias name="dm-sans-medium" to="dm-sans" weight="500" />
+    <alias name="figtree-medium" to="figtree" weight="500" />
+    <alias name="inter-medium" to="inter" weight="500" />
+    <alias name="lexend-medium" to="lexend" weight="500" />
+    <alias name="manrope-medium" to="manrope" weight="500" />
+    <alias name="nunito-sans-medium" to="nunito-sans" weight="500" />
+    <alias name="plus-jakarta-sans-medium" to="plus-jakarta-sans" weight="500" />
+    <alias name="public-sans-medium" to="public-sans" weight="500" />
+    <alias name="source-sans-3-medium" to="source-sans-3" weight="500" />
 </fonts-modification>

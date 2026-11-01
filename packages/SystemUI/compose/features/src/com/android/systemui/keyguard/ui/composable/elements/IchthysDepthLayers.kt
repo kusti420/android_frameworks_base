@@ -18,6 +18,8 @@ package com.android.systemui.keyguard.ui.composable.elements
 
 import android.graphics.Bitmap
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
@@ -50,6 +52,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.android.settingslib.ichthys.sky.LivingSky
 import com.android.systemui.keyguard.data.repository.IchthysDepthRepository
+import kotlin.math.hypot
+import kotlin.math.max
 
 /** Radius of the X-ray lens. */
 private const val LENS_RADIUS_DP = 110f
@@ -110,6 +114,47 @@ private const val LAYERS_FADE_MS = 420
  *   below the clock stay on top of it.
  */
 
+/**
+ * IchthysOS: how far the lock screen media art (MediaViewController, drawn under these layers)
+ * has taken the wallpaper's place (0..1, animated): the depth pictures fade out under it.
+ */
+@Composable
+private fun rememberMediaArtCover(): Float {
+    val showing by IchthysDepthRepository.mediaArtShowing.collectAsStateWithLifecycle()
+    val cover by
+        animateFloatAsState(
+            targetValue = if (showing) 1f else 0f,
+            animationSpec = tween(LAYERS_FADE_MS),
+            label = "IchthysDepthMediaArt",
+        )
+    return cover
+}
+
+/** Share of the unlock over which the reveal hole takes the subject (before the stock fade). */
+private const val REVEAL_END = 0.6f
+
+/**
+ * IchthysOS: a fingerprint, face or tap unlock has no swipe for the subject to follow, so it goes
+ * the way the screen itself comes on after a fingerprint (LightRevealScrim's circle from the
+ * sensor): a hole opening from the lock icon until nothing of the subject is left, over the first
+ * part of the unlock. Read while drawing, like the planes (IchthysDepthUnlock.kt); null otherwise.
+ */
+private fun unlockReveal(
+    repository: IchthysDepthRepository,
+    layers: IchthysDepthRepository.DepthLayers,
+    origin: Offset,
+): LensVeil? {
+    val p = repository.unlockProgress()
+    if (p <= 0f || repository.unlockBySwipe()) return null
+    val t = FastOutSlowInEasing.transform((p / REVEAL_END).coerceIn(0f, 1f))
+    val w = layers.backdrop.width.toFloat()
+    val h = layers.backdrop.height.toFloat()
+    val c = repository.lockIconCenter.takeIf { it != Offset.Zero } ?: Offset(w / 2f, h / 2f)
+    // To the picture's farthest corner: then the hole has all of it.
+    val reach = hypot(max(c.x, w - c.x), max(c.y, h - c.y))
+    return LensVeil(c - origin, reach * t, 1f)
+}
+
 /** The lock wallpaper, under everything. Fades out with [dozeAmount] (AOD shows no wallpaper). */
 @Composable
 fun IchthysDepthBackdrop(
@@ -122,9 +167,14 @@ fun IchthysDepthBackdrop(
     // IchthysOS Living Sky: the layers load for it too; then the backdrop is drawn graded.
     val depthOn by repository.enabled.collectAsStateWithLifecycle()
     val skyNow by repository.livingSky.collectAsStateWithLifecycle()
+    // IchthysOS projected clock: the Depth face's digits on the wallpaper's wall, drawn here
+    // (under the subject) while that placement is on.
+    val projected by repository.projected.collectAsStateWithLifecycle()
+    // IchthysOS: the media art is the wallpaper while it shows; these pictures fade under it.
+    val art = rememberMediaArtCover()
     // Weather and stars move only while awake (nothing on AOD) and out of battery saver.
-    LivingSkyMotion(layers, skyNow, moving = dozeAmount == 0f && !finger)
-    if (finger) return
+    LivingSkyMotion(layers, skyNow, moving = dozeAmount == 0f && !finger && art < 1f)
+    if (finger || art >= 1f) return
     Crossfade(
         targetState = layers,
         animationSpec = tween(LAYERS_FADE_MS),
@@ -133,21 +183,31 @@ fun IchthysDepthBackdrop(
     ) { shown ->
         val current = shown ?: return@Crossfade
         val sky = skyNow?.takeIf { current.livingSky }
-        if (!depthOn && sky == null) return@Crossfade
+        if (!depthOn && sky == null && projected == null) return@Crossfade
         Box(Modifier.fillMaxSize()) {
             if (dozeAmount < 1f) {
+                val alpha = (1f - dozeAmount) * (1f - art)
+                // (The projected clock too draws over our own copy of the wallpaper: its wall
+                // texture is sampled from it, so the two must lie exactly on each other.)
                 if (sky != null) {
-                    LivingSkyLayer(current, sky, alpha = 1f - dozeAmount, Modifier.matchParentSize())
+                    LivingSkyLayer(repository, current, sky, alpha, Modifier.matchParentSize())
                 } else {
-                    WindowImage(current.backdrop, alpha = 1f - dozeAmount, Modifier.matchParentSize())
+                    WindowImage(repository, current.backdrop, alpha, Modifier.matchParentSize())
                 }
+            }
+            // The clock on the wall, over the picture and under the subject; dozing, its outline
+            // (the backdrop fades out with the doze, the outline stays, moved against burn-in).
+            projected?.let { p ->
+                ProjectedClockLayer(repository, current, p, sky, depthOn, dozeAmount, 1f - art,
+                    Modifier.matchParentSize())
             }
             // AOD keeps the depth as the subject's faint outline, moved against burn-in.
             val night = current.night
             if (depthOn && night != null && dozeAmount > 0f) {
                 WindowImage(
+                    repository,
                     night,
-                    alpha = dozeAmount,
+                    alpha = dozeAmount * (1f - art),
                     Modifier.matchParentSize(),
                     shift = { repository.burnInShift() },
                 )
@@ -184,7 +244,9 @@ fun IchthysDepthCutout(
         com.android.settingslib.ichthys.clock.DepthFaceAnchor.addListener(listener)
         onDispose { com.android.settingslib.ichthys.clock.DepthFaceAnchor.removeListener(listener) }
     }
-    if (finger) return
+    // IchthysOS: the media art is the wallpaper while it shows; its subject goes with it.
+    val art = rememberMediaArtCover()
+    if (finger || art >= 1f) return
     // Awake: the subject in colour. On AOD: the subject in black, so the clock's outlines stop
     // behind it (its glowing edge is drawn with the backdrop). They cross-fade with the doze.
     Crossfade(
@@ -200,27 +262,31 @@ fun IchthysDepthCutout(
         if (!depthApplies || !repository.cutoutKeepsClockReadable(current)) return@Crossfade
         Box(Modifier.fillMaxSize()) {
             if (dozeAmount < 1f) {
+                // A fingerprint, face or tap unlock dissolves the subject from the lock icon
+                // (unlockReveal); otherwise a finger on it opens the X-ray lens.
                 val hole: DrawScope.(Offset) -> LensVeil? = { origin ->
-                    lensState.takeIf { it.shown > 0f }?.let {
-                        LensVeil(it.position - origin, it.radius(LENS_RADIUS_DP * density),
-                            it.shown)
-                    }
+                    unlockReveal(repository, current, origin)
+                        ?: lensState.takeIf { it.shown > 0f }?.let {
+                            LensVeil(it.position - origin, it.radius(LENS_RADIUS_DP * density),
+                                it.shown)
+                        }
                 }
+                val alpha = (1f - dozeAmount) * (1f - art)
                 // IchthysOS Living Sky: the graded picture (and its weather), only where the
                 // subject is, so it lies exactly on the graded backdrop.
                 val sky = skyNow?.takeIf { current.livingSky }
                 if (sky != null) {
-                    LivingSkyLayer(current, sky, alpha = 1f - dozeAmount, Modifier.matchParentSize(),
+                    LivingSkyLayer(repository, current, sky, alpha, Modifier.matchParentSize(),
                         mask = bitmap, hole = hole)
                 } else {
-                    WindowImage(bitmap, alpha = 1f - dozeAmount, Modifier.matchParentSize(),
-                        hole = hole)
+                    WindowImage(repository, bitmap, alpha, Modifier.matchParentSize(), hole = hole)
                 }
             }
             if (current.night != null && dozeAmount > 0f) {
                 WindowImage(
+                    repository,
                     bitmap,
-                    alpha = dozeAmount,
+                    alpha = dozeAmount * (1f - art),
                     Modifier.matchParentSize(),
                     colorFilter = ColorFilter.tint(Color.Black),
                     shift = { repository.burnInShift() },
@@ -358,17 +424,93 @@ private fun LivingSkyMotion(
 }
 
 /**
+ * IchthysOS projected clock (ProjectedClock, the concept's clock on a wall): the Depth face's
+ * digits painted onto a wall plane of the wallpaper, in window coordinates like the pictures. Drawn
+ * over the backdrop and under the subject: where the quad is, the cut-out is drawn once more over
+ * it (minus the X-ray lens's window, so the lens cuts through to the time there too; the cut-out
+ * element over the clock's own box draws the same pixels where they overlap). Dozing, the quad in
+ * outline, moved with the AOD's burn-in shift. Everything stays inside this box: no layer grows.
+ */
+@Composable
+private fun ProjectedClockLayer(
+    repository: IchthysDepthRepository,
+    layers: IchthysDepthRepository.DepthLayers,
+    now: IchthysDepthRepository.ProjectedNow,
+    sky: IchthysDepthRepository.SkyNow?,
+    depthOn: Boolean,
+    dozeAmount: Float,
+    shown: Float,
+    modifier: Modifier,
+) {
+    val renderer = remember { com.android.settingslib.ichthys.clock.ProjectedClock.Renderer() }
+    val w = layers.backdrop.width
+    val h = layers.backdrop.height
+    // The wall's light follows Living Sky's hour (its land exposure, back in sRGB terms).
+    val lightScale =
+        remember(sky, layers) {
+            val info = layers.skyInfo
+            if (sky == null || info == null) 1f
+            else kotlin.math.sqrt(
+                LivingSky.grade(sky.sun, sky.weather, info.horizon, sky.moonPhase).exposure)
+        }
+    var origin by remember { mutableStateOf(Offset.Zero) }
+    Canvas(modifier.onGloballyPositioned { origin = repository.windowOrigin(it, origin) }) {
+        val shift = repository.burnInShift()
+        translate(-origin.x + shift.x, -origin.y + shift.y) {
+            clipRect(0f, 0f, w.toFloat(), h.toFloat()) {
+                drawIntoCanvas {
+                    renderer.draw(it.nativeCanvas, w, h, now.quad, now.hour, now.minute, now.font,
+                        now.colour, now.alpha * shown, layers.backdrop, layers.thumb, lightScale,
+                        dozeAmount, density)
+                }
+            }
+        }
+    }
+    // The subject in front of the wall's clock (depth on), the lens's window cut out of it.
+    val cutout = layers.cutout
+    if (depthOn && cutout != null && dozeAmount < 1f) {
+        val lens by repository.lens.collectAsStateWithLifecycle()
+        val lensState = rememberLensState(lens)
+        val hole: DrawScope.(Offset) -> LensVeil? = { o ->
+            unlockReveal(repository, layers, o)
+                ?: lensState.takeIf { it.shown > 0f }?.let {
+                    LensVeil(it.position - o, it.radius(LENS_RADIUS_DP * density), it.shown)
+                }
+        }
+        val bounds =
+            remember(now.quad, w, h) {
+                val q = now.quad
+                Rect(
+                    minOf(q[0], q[6]) * w - 8f, minOf(q[1], q[3]) * h - 8f,
+                    maxOf(q[2], q[4]) * w + 8f, maxOf(q[5], q[7]) * h + 8f,
+                )
+            }
+        val alpha = (1f - dozeAmount) * shown
+        if (sky != null && layers.livingSky) {
+            LivingSkyLayer(repository, layers, sky, alpha, Modifier.matchParentSize(),
+                mask = cutout, hole = hole, bounds = bounds)
+        } else {
+            WindowImage(repository, cutout, alpha, Modifier.matchParentSize(), hole = hole,
+                bounds = bounds)
+        }
+    }
+}
+
+/**
  * The graded picture (with its weather while it moves) at the window's origin, like [WindowImage]
- * draws a bitmap; with [mask], only where its alpha is (the subject over the clock).
+ * draws a bitmap; with [mask], only where its alpha is (the subject over the clock); with
+ * [bounds] (window px), only inside them (the subject over the projected clock's quad).
  */
 @Composable
 private fun LivingSkyLayer(
+    repository: IchthysDepthRepository,
     layers: IchthysDepthRepository.DepthLayers,
     now: IchthysDepthRepository.SkyNow,
     alpha: Float,
     modifier: Modifier,
     mask: Bitmap? = null,
     hole: DrawScope.(origin: Offset) -> LensVeil? = { null },
+    bounds: Rect? = null,
 ) {
     val info = layers.skyInfo ?: return
     val sky = layers.sky ?: return
@@ -380,24 +522,26 @@ private fun LivingSkyLayer(
     // The subject (depth's cut-out) is the nearest thing: rain and snow behind it stay behind.
     val subject = remember(layers) { layers.cutout?.let { LivingSky.fitted(it, w, h) } }
     val grade = remember(now, info) { LivingSky.grade(now.sun, now.weather, info.horizon, now.moonPhase) }
-    // IchthysOS: the Depth face's contrast follows the graded sky (bright at midday, none at night).
+    // IchthysOS: the Depth face's contrast follows the graded sky (bright at midday, none at night;
+    // a night picture's sky as far as its day relight takes it).
     if (mask == null) {
         androidx.compose.runtime.SideEffect {
             com.android.settingslib.ichthys.clock.ClockBackdrop.publish(
-                LivingSky.brightnessBehindClock(grade, now.options.intensity / 100f))
+                LivingSky.brightnessBehindClock(grade, now.options.intensity / 100f,
+                    info.withDarkOverride(now.options.debugDark)))
         }
     }
     var origin by remember { mutableStateOf(Offset.Zero) }
     Canvas(
         modifier
-            .onGloballyPositioned { origin = it.positionInWindow() }
+            .onGloballyPositioned { origin = repository.windowOrigin(it, origin) }
             .graphicsLayer { this.alpha = alpha }
     ) {
         // Read while drawing: every frame of motion draws again.
         LivingSkyFrame.frame.longValue
         painter.bind(picture, skyShader, info, grade,
             now.options.intensity / 100f, w, h, density, LivingSkyFrame.time,
-            LivingSkyFrame.flash, now.weather, subject)
+            LivingSkyFrame.flash, now.weather, subject, now.options.debugDark)
         clipRect(left = -origin.x, top = 0f, right = -origin.x + 100_000f, bottom = 100_000f) {
             val veil = hole(origin)
             val draw: DrawScope.() -> Unit = {
@@ -408,7 +552,13 @@ private fun LivingSkyLayer(
                     }
                 }
             }
-            if (veil != null) clipPath(veil.path(), ClipOp.Difference) { draw() } else draw()
+            val inBounds: DrawScope.() -> Unit = {
+                if (bounds != null) {
+                    clipRect(bounds.left - origin.x, bounds.top - origin.y, bounds.right - origin.x,
+                        bounds.bottom - origin.y) { draw() }
+                } else draw()
+            }
+            if (veil != null) clipPath(veil.path(), ClipOp.Difference) { inBounds() } else inBounds()
         }
     }
 }
@@ -417,21 +567,24 @@ private fun LivingSkyLayer(
  * Draws [bitmap] (screen-sized) at the window's origin, clipped to this composable's bounds, minus
  * the [hole] (given this composable's window origin, returns a path in its own coordinates).
  * [shift] moves the picture off the window's origin (read while drawing: the AOD burn-in).
+ * With [bounds] (window px), only inside them.
  */
 @Composable
 private fun WindowImage(
+    repository: IchthysDepthRepository,
     bitmap: Bitmap,
     alpha: Float,
     modifier: Modifier,
     colorFilter: ColorFilter? = null,
     shift: () -> Offset = { Offset.Zero },
     hole: DrawScope.(origin: Offset) -> LensVeil? = { null },
+    bounds: Rect? = null,
 ) {
     val image = remember(bitmap) { bitmap.asImageBitmap() }
     var origin by remember { mutableStateOf(Offset.Zero) }
     Canvas(
         modifier
-            .onGloballyPositioned { origin = it.positionInWindow() }
+            .onGloballyPositioned { origin = repository.windowOrigin(it, origin) }
             .graphicsLayer { this.alpha = alpha }
     ) {
         // Nothing above this box (the status bar's icons stay in front); below and beside it the
@@ -439,14 +592,29 @@ private fun WindowImage(
         clipRect(left = -origin.x, top = 0f, right = -origin.x + 100_000f, bottom = 100_000f) {
             val at = origin - shift()
             val veil = hole(origin)
-            if (veil != null) {
-                clipPath(veil.path(), ClipOp.Difference) { drawAtWindowOrigin(image, at, colorFilter) }
-            } else {
-                drawAtWindowOrigin(image, at, colorFilter)
+            val draw: DrawScope.() -> Unit = {
+                if (bounds != null) {
+                    clipRect(bounds.left - origin.x, bounds.top - origin.y, bounds.right - origin.x,
+                        bounds.bottom - origin.y) { drawAtWindowOrigin(image, at, colorFilter) }
+                } else drawAtWindowOrigin(image, at, colorFilter)
             }
+            if (veil != null) clipPath(veil.path(), ClipOp.Difference) { draw() } else draw()
         }
     }
 }
+
+/**
+ * IchthysOS: where this picture's box is in the window, for drawing in window coordinates; while
+ * unlocking the last position before it. The unlock planes (IchthysDepthUnlock.kt) are
+ * graphicsLayers on the boxes, and a layer's scale and translation are part of positionInWindow:
+ * following it then re-anchored the picture every frame, so the subject scaled about its box's
+ * top-left corner instead of coming towards you. Nothing else moves the boxes while depth unlocks
+ * (the stock lift stands still then, FromLockscreenToGoneTransition.kt).
+ */
+private fun IchthysDepthRepository.windowOrigin(
+    coordinates: androidx.compose.ui.layout.LayoutCoordinates,
+    last: Offset,
+): Offset = if (unlockProgress() > 0f) last else coordinates.positionInWindow()
 
 private fun DrawScope.drawAtWindowOrigin(
     image: ImageBitmap,

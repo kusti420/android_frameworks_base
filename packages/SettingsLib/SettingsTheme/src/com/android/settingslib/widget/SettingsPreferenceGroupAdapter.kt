@@ -104,8 +104,15 @@ open class SettingsPreferenceGroupAdapter @JvmOverloads constructor(
 
     @SuppressLint("RestrictedApi")
     override fun onBindViewHolder(holder: PreferenceViewHolder, position: Int) {
+        // IchthysOS: a recycled row may still carry the card its last preference painted itself
+        // (ShoalOwnRowDrawable); start clean so a plain preference gets the plain surface.
+        if (holder.itemView.background is ShoalOwnRowDrawable) {
+            holder.itemView.background = null
+        }
         super.onBindViewHolder(holder, position)
 
+        // A preference that set its own card in onBindViewHolder keeps it (see updateBackground).
+        val ownRow = holder.itemView.background is ShoalOwnRowDrawable
         if (SettingsThemeHelper.isExpressiveTheme(holder.itemView.context)) {
             updateBackground(holder, position)
         }
@@ -121,7 +128,8 @@ open class SettingsPreferenceGroupAdapter @JvmOverloads constructor(
             ShoalSurfaces.styleRowText(
                 holder.findViewById(android.R.id.title) as? android.widget.TextView,
                 holder.findViewById(android.R.id.summary) as? android.widget.TextView,
-                preference.layoutResource == R.layout.settingslib_expressive_preference)
+                preference.layoutResource == R.layout.settingslib_expressive_preference,
+                recolor = !ownRow)
         }
         val footerData = preference?.key?.let { footerDataMap[it] }
         bindFooter(holder, footerData)
@@ -223,6 +231,19 @@ open class SettingsPreferenceGroupAdapter @JvmOverloads constructor(
     private fun updateBackground(holder: PreferenceViewHolder, position: Int) {
         val v = holder.itemView
         val drawableStateLayout = holder.itemView as? DrawableStateLayout
+        if (v.background is ShoalOwnRowDrawable) {
+            // IchthysOS: the preference painted its own card (the crDroid danger card). Only
+            // drive its corner state; no round-corner surface or Shoal slice over it.
+            if (drawableStateLayout != null && position < mItemPositionStates.size) {
+                val iconFrame =
+                    holder.findViewById(androidx.preference.R.id.icon_frame)
+                        ?: holder.findViewById(android.R.id.icon_frame)
+                drawableStateLayout.extraDrawableState = stateSetOf(
+                    mItemPositionStates[position],
+                    iconFrame != null && iconFrame.visibility != View.GONE)
+            }
+            return
+        }
         if (position < mItemPositionStates.size &&
                 drawableStateLayout != null && mItemPositionStates[position] != 0) {
             // IchthysOS: a recycled row may still carry a Shoal hairline slice; restore the

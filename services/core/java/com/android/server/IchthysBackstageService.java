@@ -119,12 +119,18 @@ public final class IchthysBackstageService {
 
     /** Settings.Secure, per user: comma-separated packages the user wants in Backstage. */
     public static final String KEY_PACKAGES = "ichthys_backstage_pkgs";
-    /** Settings.Secure, per user: stop an app automatically after this many hours (0 = never). */
+    /**
+     * Settings.Secure, per user: stop an app automatically after this many hours (0 = never,
+     * -1 = the custom duration in {@link #KEY_MAX_MINUTES}).
+     */
     public static final String KEY_MAX_HOURS = "ichthys_backstage_max_hours";
+    /** Settings.Secure, per user: the custom limit in minutes, used while KEY_MAX_HOURS is -1. */
+    public static final String KEY_MAX_MINUTES = "ichthys_backstage_max_minutes";
 
     private static final int MAX_APPS = 3;
     private static final float REFRESH_RATE = 5f;
     private static final long HOUR_MS = 60 * 60 * 1000L;
+    private static final long MINUTE_MS = 60 * 1000L;
     /** Task events for this long after one of our own moves are the move, not the user. */
     private static final long MOVE_SETTLE_MS = 1_500;
     /**
@@ -266,20 +272,25 @@ public final class IchthysBackstageService {
                         }
                     }
                 }, UserHandle.USER_ALL);
-        // IchthysOS: a new hour limit applies to the apps already in Backstage too.
-        mContext.getContentResolver().registerContentObserver(
-                Settings.Secure.getUriFor(KEY_MAX_HOURS), false,
-                new ContentObserver(mHandler) {
-                    @Override
-                    public void onChange(boolean selfChange, Collection<Uri> uris, int flags,
-                            int userId) {
-                        if (userId == mUserId) {
-                            for (Entry entry : new ArrayList<>(mEntries.values())) {
-                                scheduleAutoStop(entry);
-                            }
-                        }
+        // IchthysOS: a new limit (hours, or the custom minutes) applies to the apps already in
+        // Backstage too.
+        final ContentObserver limitObserver = new ContentObserver(mHandler) {
+            @Override
+            public void onChange(boolean selfChange, Collection<Uri> uris, int flags,
+                    int userId) {
+                if (userId == mUserId) {
+                    for (Entry entry : new ArrayList<>(mEntries.values())) {
+                        scheduleAutoStop(entry);
                     }
-                }, UserHandle.USER_ALL);
+                }
+            }
+        };
+        mContext.getContentResolver().registerContentObserver(
+                Settings.Secure.getUriFor(KEY_MAX_HOURS), false, limitObserver,
+                UserHandle.USER_ALL);
+        mContext.getContentResolver().registerContentObserver(
+                Settings.Secure.getUriFor(KEY_MAX_MINUTES), false, limitObserver,
+                UserHandle.USER_ALL);
 
         final IntentFilter actions = new IntentFilter();
         actions.addAction(ACTION_BRING_BACK);
@@ -518,7 +529,12 @@ public final class IchthysBackstageService {
                 if (kill) {
                     mAtm.removeTask(task.taskId);
                 } else {
-                    mAtm.moveRootTaskToDisplay(task.taskId, Display.DEFAULT_DISPLAY);
+                    // IchthysOS: taking an app out of Backstage is not opening it. The task
+                    // returns to the main screen at the bottom (behind whatever is on screen,
+                    // reachable from recents); only "Open" and the app's icon / recents bring
+                    // it to the front (show()).
+                    mAtm.moveRootTaskToDisplayOnTopOrBottom(task.taskId,
+                            Display.DEFAULT_DISPLAY, false /* onTop */);
                 }
             } catch (RemoteException | RuntimeException e) {
                 Slog.w(TAG, "taking " + pkg + " out of Backstage failed: " + e);
@@ -968,9 +984,8 @@ public final class IchthysBackstageService {
         // IchthysOS: one alarm per entry, set again (from when it entered Backstage) when the
         // limit changes, and cancelled when the entry goes.
         cancelAutoStop(entry);
-        final int hours = Settings.Secure.getIntForUser(mContext.getContentResolver(),
-                KEY_MAX_HOURS, 0, mUserId);
-        if (hours <= 0) {
+        final long limitMs = readLimitMs();
+        if (limitMs <= 0) {
             return;
         }
         // An elapsed-realtime alarm, not the handler's uptime clock: the hours have to pass
@@ -979,17 +994,36 @@ public final class IchthysBackstageService {
         final AlarmManager.OnAlarmListener expire = () -> {
             entry.limitAlarm = null;
             if (mEntries.get(entry.pkg) == entry) {
-                Slog.i(TAG, entry.pkg + " reached the " + hours + " h Backstage limit");
+                Slog.i(TAG, entry.pkg + " reached the " + (limitMs / MINUTE_MS)
+                        + " min Backstage limit");
                 stop(entry.pkg);
             }
         };
         if (alarms == null) {
-            mHandler.postDelayed(expire::onAlarm, hours * HOUR_MS);
+            mHandler.postDelayed(expire::onAlarm, limitMs);
             return;
         }
         entry.limitAlarm = expire;
-        alarms.set(AlarmManager.ELAPSED_REALTIME, entry.startedAt + hours * HOUR_MS,
+        alarms.set(AlarmManager.ELAPSED_REALTIME, entry.startedAt + limitMs,
                 "ichthys-backstage-limit", expire, mHandler);
+    }
+
+    /**
+     * IchthysOS: the auto-stop limit in ms, or 0 for none: KEY_MAX_HOURS in hours, or with
+     * KEY_MAX_HOURS == -1 the custom KEY_MAX_MINUTES.
+     */
+    private long readLimitMs() {
+        final int hours = Settings.Secure.getIntForUser(mContext.getContentResolver(),
+                KEY_MAX_HOURS, 0, mUserId);
+        if (hours > 0) {
+            return hours * HOUR_MS;
+        }
+        if (hours == -1) {
+            final int minutes = Settings.Secure.getIntForUser(mContext.getContentResolver(),
+                    KEY_MAX_MINUTES, 0, mUserId);
+            return minutes > 0 ? minutes * MINUTE_MS : 0;
+        }
+        return 0;
     }
 
     private void cancelAutoStop(Entry entry) {

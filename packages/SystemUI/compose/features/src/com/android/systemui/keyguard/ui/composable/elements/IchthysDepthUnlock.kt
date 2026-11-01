@@ -18,6 +18,7 @@ package com.android.systemui.keyguard.ui.composable.elements
 
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.TransformOrigin
@@ -37,6 +38,19 @@ enum class IchthysDepthPlane {
 /** Share of the unlock spent pulling the layers apart; the rest folds them into the home screen. */
 private const val SPLIT = 0.6f
 
+/** A swipe shorter than this has no direction of its own yet: the layers go straight up. */
+private const val SWIPE_DIR_DP = 24f
+
+/**
+ * IchthysOS: the swipe's unit direction, from where the finger went down to where it is (or was
+ * lifted: a fling keeps it). Straight up until it has travelled [SWIPE_DIR_DP].
+ */
+private fun IchthysDepthRepository.swipeDirection(density: Float): Offset {
+    val v = swipe
+    val d = v.getDistance()
+    return if (d < SWIPE_DIR_DP * density) Offset(0f, -1f) else v / d
+}
+
 
 /**
  * IchthysOS depth lock screen, layer unlock (kusti420/ichthysos-tracker#58). As the lock screen
@@ -45,6 +59,11 @@ private const val SPLIT = 0.6f
  * settles a little, the subject comes towards you, sharp; then everything dissolves into the home
  * screen (the transition fades the clock and the subject; the pond fades here). Draw phase only,
  * so it costs no recomposition. Nothing moves while depth is off.
+ *
+ * A swipe takes the clock and the subject along the finger's direction ([swipeDirection]). A
+ * fingerprint, face or tap unlock has no direction: the layers only rack focus, and the subject
+ * dissolves from the lock icon the way the screen itself comes on after a fingerprint (the reveal
+ * hole, IchthysDepthLayers.kt).
  */
 fun Modifier.ichthysDepthPlane(
     repository: IchthysDepthRepository,
@@ -54,6 +73,8 @@ fun Modifier.ichthysDepthPlane(
     if (p <= 0f || !repository.enabled.value) return@graphicsLayer
     val split = FastOutSlowInEasing.transform((p / SPLIT).coerceIn(0f, 1f))
     val fold = FastOutSlowInEasing.transform(((p - SPLIT) / (1f - SPLIT)).coerceIn(0f, 1f))
+    val swipe = repository.unlockBySwipe()
+    val dir = if (swipe) repository.swipeDirection(density) else Offset.Zero
     transformOrigin = TransformOrigin(0.5f, 0.5f)
     when (plane) {
         IchthysDepthPlane.BACK -> {
@@ -68,14 +89,23 @@ fun Modifier.ichthysDepthPlane(
             val sc = 1f - 0.03f * split
             scaleX = sc
             scaleY = sc
-            translationY = -size.height * 0.02f * split
+            translationX = dir.x * size.height * 0.02f * split
+            translationY = dir.y * size.height * 0.02f * split
         }
         IchthysDepthPlane.FRONT -> {
             transformOrigin = TransformOrigin(0.5f, 0.3f)
-            val sc = 1f + 0.10f * split + 0.04f * fold
-            scaleX = sc
-            scaleY = sc
-            translationY = -size.height * 0.05f * split
+            if (swipe) {
+                val sc = 1f + 0.10f * split + 0.04f * fold
+                scaleX = sc
+                scaleY = sc
+                translationX = dir.x * size.height * 0.08f * split
+                translationY = dir.y * size.height * 0.08f * split
+            } else {
+                // The reveal hole takes the subject away; a touch of lift so it still comes to you.
+                val sc = 1f + 0.04f * split
+                scaleX = sc
+                scaleY = sc
+            }
         }
     }
 }

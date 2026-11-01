@@ -69,6 +69,9 @@ RETIRED = {
     'settings_icon_random_colors': 'replaced by theme.iconBadges and theme.iconStyle',
     # SystemUI still reads it (default off); the row was dropped from Settings on purpose.
     'lockscreen_smartspace_enabled': 'the lock screen smartspace switch was dropped',
+    # The fingerprint animation is centred on the sensor; SystemUI no longer reads an offset.
+    'ichthys_udfps_anim_offset_x': 'the fingerprint animation follows the sensor position',
+    'ichthys_udfps_anim_offset_y': 'the fingerprint animation follows the sensor position',
 }
 # Keys that never become a generated option, with the reason (printed in the report).
 SKIP_KEYS = {}
@@ -84,6 +87,12 @@ for _reason, _keys in {
         'screenshot', 'onthego', 'airplane', 'users', 'lockdown', 'emergency', 'devicecontrols',
     ],
     'covered by theme.style / theme.accent': ['theme_style', 'color_source'],
+    # IchthysOS: moved from play_integrity_fix.xml (a SKIP_FILES page) to ichthys_apps.xml; it
+    # stays no option, like the rest of the integrity spoofing.
+    'secrets, not configuration': ['spoof_pif_photos'],
+    # IchthysOS: OmniJaws' icon pack, picked in Settings but stored by OmniJaws (its settings
+    # provider), so it is not a Settings key and not an ichthys.nix option.
+    'stored by the weather app, not a Settings key': ['weather_icon_pack'],
 }.items():
     for _k in _keys:
         SKIP_KEYS[_k] = _reason
@@ -115,6 +124,7 @@ NAMESPACE = {
     'monet_engine.xml': 'theme.monet',
     'ichthys_apps.xml': 'system.misc',
     'ichthys_background.xml': 'system.misc',
+    'ichthys_install.xml': 'apps.compat',
     'ichthys_system.xml': 'system.ui',
     'charging_control_settings.xml': 'system.chargingControl',
 }
@@ -145,6 +155,7 @@ PATHS = {
     'ichthys_lockscreen_hide_statusbar': 'lockscreen.hideStatusBar',
     'ichthys_statusbar_notif_icons': 'statusBar.notificationIcons',
     'ichthys_screenshot_preview_timeout': 'system.ui.screenshotPreviewTimeout',
+    'pm_low_target_sdk_allowed': 'apps.compat.allowLowTargetSdk',
 }
 # Old path -> new path. The old path stays valid as an alias, so configs written before the
 # rename still apply. (statusBar.clockEnabled was the clock *position*: the "option that is also
@@ -217,6 +228,8 @@ STRIP = ['status_bar_', 'statusbar_', 'qs_', 'lockscreen_', 'lock_screen_', 'net
 STORE_BY_CLASS = [
     ('LineageSystemSetting', 'LINEAGE_SYSTEM'), ('LineageSecureSetting', 'LINEAGE_SECURE'),
     ('LineageGlobalSetting', 'LINEAGE_GLOBAL'), ('DangerGlobal', 'GLOBAL'),
+    # IchthysOS: DangerSwitchPreference extends SecureSettingSwitchPreference (red card look).
+    ('DangerSwitch', 'SECURE'),
     ('SystemSetting', 'SYSTEM'), ('SecureSetting', 'SECURE'), ('GlobalSetting', 'GLOBAL'),
 ]
 # Preference classes that are navigation, decoration or custom pickers, never a plain setting.

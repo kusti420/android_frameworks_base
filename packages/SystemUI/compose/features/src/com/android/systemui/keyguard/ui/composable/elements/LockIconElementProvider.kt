@@ -20,11 +20,13 @@ import android.content.Context
 import android.util.DisplayMetrics
 import android.view.WindowManager
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
@@ -43,6 +45,7 @@ import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.dagger.qualifiers.Main
 import com.android.systemui.flags.FeatureFlagsClassic
 import com.android.systemui.flags.Flags
+import com.android.systemui.keyguard.data.repository.IchthysDepthRepository
 import com.android.systemui.keyguard.ui.binder.DeviceEntryIconViewBinder
 import com.android.systemui.keyguard.ui.view.DeviceEntryIconView
 import com.android.systemui.keyguard.ui.viewmodel.DeviceEntryBackgroundViewModel
@@ -86,6 +89,7 @@ constructor(
     private val vibratorHelper: Lazy<VibratorHelper>,
     private val msdlPlayer: Lazy<MSDLPlayer>,
     @LongPressTouchLog private val logBuffer: LogBuffer,
+    private val depthRepository: IchthysDepthRepository,
 ) : LockscreenElementProvider {
     override val elements: List<LockscreenElement> by lazy { listOf(LockIconElement()) }
 
@@ -103,6 +107,11 @@ constructor(
     @Composable
     fun LockIcon(modifier: Modifier = Modifier, overrideColor: Color? = null) {
         val lockIconBounds = rememberLockIconBounds()
+        // IchthysOS depth: a fingerprint or tap unlock dissolves the subject from here.
+        SideEffect {
+            depthRepository.lockIconCenter =
+                Offset(lockIconBounds.center.x.toFloat(), lockIconBounds.center.y.toFloat())
+        }
         val (disposable, setDisposable) = remember { mutableStateOf<DisposableHandle?>(null) }
 
         AndroidView(

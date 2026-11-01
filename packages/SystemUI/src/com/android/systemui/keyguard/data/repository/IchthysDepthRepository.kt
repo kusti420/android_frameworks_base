@@ -121,6 +121,13 @@ constructor(
         val land: Bitmap? = null,
         /** What Living Sky knows of this picture; null without a sky mask. */
         val skyInfo: LivingSky.SkyInfo? = null,
+        /**
+         * IchthysOS projected clock: the wallpaper's key (as IchthysDepth keys its masks, "L..S..";
+         * the saved quad is looked up by it) and a small software copy of the backdrop (the
+         * wall's light under the clock is sampled from it).
+         */
+        val wallpaperKey: String = "",
+        val thumb: Bitmap? = null,
     ) {
         /** Living Sky can grade this picture. */
         val livingSky: Boolean
@@ -189,6 +196,27 @@ constructor(
      * draw time: the depth layers come apart as it goes. Set by the lock screen root.
      */
     @Volatile var unlockProgress: () -> Float = { 0f }
+
+    /**
+     * Whether the unlock being drawn is the user's swipe (the layers follow its direction) rather
+     * than a fingerprint, face or tap unlock (the subject dissolves from the lock icon). Read at
+     * draw time; set by the lock screen root.
+     */
+    @Volatile var unlockBySwipe: () -> Boolean = { false }
+
+    /**
+     * How far the lock screen's current touch has travelled since it went down (window px), kept
+     * after it lifts so a fling keeps its direction. Set by the X-ray lens's touch watcher.
+     */
+    @Volatile
+    var swipe: androidx.compose.ui.geometry.Offset = androidx.compose.ui.geometry.Offset.Zero
+
+    /**
+     * The lock icon's centre (on UDFPS: the sensor's), window coordinates: where a fingerprint or
+     * tap unlock starts from. Set by the lock icon element; zero until it is placed.
+     */
+    @Volatile
+    var lockIconCenter: androidx.compose.ui.geometry.Offset = androidx.compose.ui.geometry.Offset.Zero
 
     /**
      * The AOD burn-in shift (window pixels, zero while awake), read at draw time: the AOD layers
@@ -274,11 +302,14 @@ constructor(
             )
             .onStart { emit(Unit) }
             .map {
-                val debug = LivingSky.readDebug(
-                    secureSettings.getStringForUser(LivingSky.KEY_DEBUG, UserHandle.USER_CURRENT))
+                val debugValue =
+                    secureSettings.getStringForUser(LivingSky.KEY_DEBUG, UserHandle.USER_CURRENT)
+                val debug = LivingSky.readDebug(debugValue)
                 LivingSky.Options(
                     debugMinute = debug.first,
                     debugCode = debug.second,
+                    // IchthysOS: the night-sky override (the day relight of any picture).
+                    debugDark = LivingSky.readDebugDark(debugValue),
                     enabled = secureSettings.getIntForUser(
                         LivingSky.KEY_ENABLED, 0, UserHandle.USER_CURRENT) != 0,
                     weather = secureSettings.getIntForUser(
@@ -291,12 +322,79 @@ constructor(
             .flowOn(bgDispatcher)
             .stateIn(scope, SharingStarted.WhileSubscribed(), LivingSky.Options())
 
-    /** The pictures, while depth or Living Sky is on; null while off or loading, or live. */
+    /**
+     * IchthysOS projected clock (ProjectedClock): the Depth face stands on a wall plane of the
+     * wallpaper. What the depth layers draw this minute, or null (flat, or another face): the
+     * quad for the current wallpaper, the digits' font and colour, the face's opacity, the time.
+     */
+    class ProjectedNow(
+        val quad: FloatArray,
+        val font: Int,
+        val colour: Int,
+        val alpha: Float,
+        val hour: Int,
+        val minute: Int,
+    )
+
+    private class ProjectedSettings(val quads: String?, val font: Int, val colour: Int, val alpha: Float)
+
+    /** The projected placement's settings, or null when the Depth face isn't projected. */
+    private val projectedSettings: StateFlow<ProjectedSettings?> =
+        merge(
+                secureSettings.observerFlow(
+                    names =
+                        arrayOf(
+                            Settings.Secure.LOCK_SCREEN_CUSTOM_CLOCK_STYLE,
+                            com.android.settingslib.ichthys.clock.DepthClockView.KEY_PLACEMENT,
+                            com.android.settingslib.ichthys.clock.ProjectedClock.KEY_QUADS,
+                            com.android.settingslib.ichthys.clock.DepthClockView.KEY_FONT,
+                            KEY_COLOR_MODE,
+                            KEY_CUSTOM_COLOR,
+                            KEY_OPACITY,
+                        ),
+                    userId = UserHandle.USER_ALL,
+                ),
+                userChanges(),
+            )
+            .onStart { emit(Unit) }
+            .map {
+                fun int(key: String, def: Int) = secureSettings.getIntForUser(key, def, UserHandle.USER_CURRENT)
+                val projected =
+                    int(Settings.Secure.LOCK_SCREEN_CUSTOM_CLOCK_STYLE, 0) == DEPTH_CLOCK_STYLE &&
+                        int(com.android.settingslib.ichthys.clock.DepthClockView.KEY_PLACEMENT,
+                            com.android.settingslib.ichthys.clock.DepthClockView.PLACEMENT_FLAT) ==
+                            com.android.settingslib.ichthys.clock.DepthClockView.PLACEMENT_PROJECTED
+                if (!projected) null
+                else {
+                    // The clock colour as KeyguardCustomClockView gives the faces (its primary).
+                    val colour =
+                        when (secureSettings.getStringForUser(KEY_COLOR_MODE, UserHandle.USER_CURRENT)) {
+                            "accent" -> context.getColor(android.R.color.system_accent1_100)
+                            "custom" -> int(KEY_CUSTOM_COLOR, android.graphics.Color.WHITE)
+                            else -> android.graphics.Color.WHITE
+                        }
+                    ProjectedSettings(
+                        secureSettings.getStringForUser(
+                            com.android.settingslib.ichthys.clock.ProjectedClock.KEY_QUADS,
+                            UserHandle.USER_CURRENT),
+                        int(com.android.settingslib.ichthys.clock.DepthClockView.KEY_FONT,
+                            com.android.settingslib.ichthys.clock.DepthClockView.FONT_ROUNDED),
+                        colour,
+                        int(KEY_OPACITY, 100).coerceIn(0, 100) / 100f,
+                    )
+                }
+            }
+            .flowOn(bgDispatcher)
+            .stateIn(scope, SharingStarted.WhileSubscribed(), null)
+
+    /** The pictures, while depth, Living Sky or the projected clock is on; null while off or loading, or live. */
     val layers: StateFlow<DepthLayers?> =
-        combine(enabled, skyOptions) { depth, sky -> depth to sky.enabled }
+        combine(enabled, skyOptions, projectedSettings) { depth, sky, proj ->
+                Triple(depth, sky.enabled, proj != null)
+            }
             .distinctUntilChanged()
-            .flatMapLatest { (depth, sky) ->
-                if (!depth && !sky) {
+            .flatMapLatest { (depth, sky, proj) ->
+                if (!depth && !sky && !proj) {
                     cached = null
                     flowOf(null)
                 } else {
@@ -314,6 +412,27 @@ constructor(
             .flowOn(bgDispatcher)
             // IchthysOS editor v2: the Depth face's Shape mode reads the outline from SettingsLib.
             .onEach { com.android.settingslib.ichthys.clock.SubjectOutline.set(it?.outline) }
+            .stateIn(scope, SharingStarted.WhileSubscribed(), null)
+
+    /** The projected clock this minute, for the layers; null while flat. */
+    val projected: StateFlow<ProjectedNow?> =
+        projectedSettings
+            .flatMapLatest { ps ->
+                if (ps == null) flowOf(null)
+                else
+                    combine(layers, clockTicks().onStart { emit(Unit) }) { l, _ ->
+                        val c = java.util.Calendar.getInstance()
+                        val h24 = c.get(java.util.Calendar.HOUR_OF_DAY)
+                        val hour =
+                            if (android.text.format.DateFormat.is24HourFormat(context)) h24
+                            else (h24 % 12).let { if (it == 0) 12 else it }
+                        ProjectedNow(
+                            com.android.settingslib.ichthys.clock.ProjectedClock.quadFor(
+                                ps.quads, l?.wallpaperKey),
+                            ps.font, ps.colour, ps.alpha, hour, c.get(java.util.Calendar.MINUTE))
+                    }
+            }
+            .flowOn(bgDispatcher)
             .stateIn(scope, SharingStarted.WhileSubscribed(), null)
 
     /**
@@ -626,9 +745,11 @@ constructor(
                     it, gridW, screen.y / SUBJECT_GRID, screen.x, screen.y, SUBJECT_HIT_ALPHA)
             } ?: skylineOutline
         Log.i(TAG, "depth layers for $key: ${screen.x}x${screen.y}, cut-out ${keep != null}")
+        // IchthysOS projected clock: the wall's light is sampled from a small software copy.
+        val thumb = Bitmap.createScaledBitmap(backdrop, 54, 120, true)
         val layers =
             DepthLayers(backdrop.toHardware(), keep?.toHardware(), subject, gridW, night, outline,
-                skyBitmap, land, skyInfo)
+                skyBitmap, land, skyInfo, key, thumb)
         cached = Cached(cacheKey, layers, hadMask = !depth || mask != null,
             hadSky = !wantSky || skyMask != null)
         return layers
@@ -759,6 +880,12 @@ constructor(
         @JvmField val fingerOnSensor = MutableStateFlow(false)
 
         /**
+         * The lock screen media art (MediaViewController) is on: it is the wallpaper then, and the
+         * depth pictures fade out under it until it goes.
+         */
+        @JvmField val mediaArtShowing = MutableStateFlow(false)
+
+        /**
          * The last [enabled] value, for code without the repository (the unlock transition's
          * easings). Current while the lock screen shows, which collects [enabled].
          */
@@ -797,6 +924,10 @@ constructor(
         private const val KEY_FILL = com.android.settingslib.ichthys.clock.DepthClockView.KEY_FILL
         /** The Depth face's index in KeyguardCustomClockView's LAYOUT_NAMES. */
         private const val DEPTH_CLOCK_STYLE = 80
+        /** KeyguardCustomClockView's colour and opacity keys (the projected clock reads them too). */
+        private const val KEY_COLOR_MODE = "lock_screen_custom_clock_color_mode"
+        private const val KEY_CUSTOM_COLOR = "lock_screen_custom_clock_custom_color"
+        private const val KEY_OPACITY = "lock_screen_custom_clock_opacity"
     }
 }
 

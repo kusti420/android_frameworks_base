@@ -38,7 +38,10 @@ interface IIchthysConfig {
     /** Re-applies generation {@code generation} (-1: the previous one) as a new generation. */
     int rollback(int generation, int userId);
 
-    /** "number\ttimeMillis\tsummary\tsource\tisCurrent(1|0)", newest first. */
+    /**
+     * "number\ttimeMillis\tsummary\tsource\tisCurrent(1|0)\trollbackTo", newest first.
+     * rollbackTo is the generation a rollback restored, else empty.
+     */
     String[] listGenerations(int userId);
 
     /** The ichthys.nix text of one generation. */

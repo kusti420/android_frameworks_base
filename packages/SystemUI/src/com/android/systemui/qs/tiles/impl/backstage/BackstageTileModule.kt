@@ -68,12 +68,16 @@ interface BackstageTileModule {
             mapper: BackstageTileMapper,
             stateInteractor: BackstageTileDataInteractor,
             userActionInteractor: BackstageTileUserActionInteractor,
+            detailsViewModel: BackstageDetailsViewModel,
         ): QSTileViewModel =
             factory.create(
                 TileSpec.create(BACKSTAGE_TILE_SPEC),
                 userActionInteractor,
                 stateInteractor,
                 mapper,
+                // Dual shade: a tap opens the details view (DetailsViewModel.onTileClicked)
+                // instead of reaching the user action interactor.
+                detailsViewModel,
             )
     }
 }

@@ -489,6 +489,15 @@ final class IchthysOptions {
         s.add(Option.string("lockscreen.shortcuts.end", null,
                 "Bottom-right lock screen shortcut (affordance id, e.g. \"calculator\"; null = none).",
                 Binding.keyguardSlot("bottom_end")));
+        // IchthysOS depth lock screen: where the Depth face's digits stand. The quad's corners
+        // (ichthys_clock_quads, one per wallpaper) are device state like a wallpaper's crop, set
+        // in the lock screen editor, not configuration.
+        s.add(Option.enumeration("lockscreen.clock.placement", new String[] {"flat", "projected"},
+                new String[] {"0", "1"}, "flat",
+                "Depth clock placement: flat (upright over the picture) or projected onto a wall "
+                        + "plane of the wallpaper (its corners are set per wallpaper in the lock "
+                        + "screen editor).",
+                setting(SECURE, "ichthys_clock_placement")));
     }
 
     // ---------------------------------------------------------------------------------------------

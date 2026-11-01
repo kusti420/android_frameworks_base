@@ -144,6 +144,16 @@ constructor(
             }
         }
 
+        // IchthysOS: the horizontal dialog (custom_volume_horizontal) sizes its row for the chosen
+        // look (HorizontalVolumeStyle) and drops the stock 1 dp white border around the slider;
+        // the row draws its own track. Second-stream rows below get the same treatment.
+        val horizontalConfig =
+            if (viewModel.isVolumeDialogVertical) null
+            else HorizontalVolumeStyle.read(view.context)
+        if (horizontalConfig != null) {
+            mainSliderContainer.applyHorizontalRowSize(horizontalConfig)
+        }
+
         launchTraced("VDSVB#addTouchableBounds") {
             dialogViewModel.addTouchableBounds(mainSliderContainer, floatingSlidersContainer)
         }
@@ -190,6 +200,8 @@ constructor(
                                     pill.resources.displayMetrics.density).toInt()
                             }
                         }
+                    } else if (horizontalConfig != null) {
+                        sliderContainer.applyHorizontalFloatingRow(horizontalConfig)
                     } else if (viewModel.showBlur) {
                         sliderContainer.updateBackground()
                     }
@@ -207,6 +219,36 @@ constructor(
                 }
             }
         }
+    }
+
+    /**
+     * IchthysOS: a horizontal slider row (the volume_dialog_slider_horizontal FrameLayout): no
+     * stock border, the width and height the chosen look wants.
+     */
+    private fun View.applyHorizontalRowSize(config: HorizontalVolumeStyle.Config) {
+        val density = resources.displayMetrics.density
+        background = null
+        layoutParams =
+            layoutParams.apply {
+                width = (HorizontalVolumeStyle.ROW_WIDTH_DP * density).toInt()
+                height = (HorizontalVolumeStyle.rowHeightDp(config) * density).toInt()
+            }
+    }
+
+    /**
+     * IchthysOS: a second-stream row of the horizontal dialog (volume_dialog_slider_floating_
+     * horizontal): the same Shoal panel and padding as the main row's dialog, or, for a look whose
+     * row is its own card, no panel and only a small gap.
+     */
+    private fun View.applyHorizontalFloatingRow(config: HorizontalVolumeStyle.Config) {
+        val density = resources.displayMetrics.density
+        val panel = HorizontalVolumeStyle.panelBackground(context, config)
+        background = panel
+        val padH = (if (panel != null) HORIZONTAL_PANEL_PADDING_H_DP else 0f) * density
+        val padV =
+            (if (panel != null) HORIZONTAL_PANEL_PADDING_V_DP else HORIZONTAL_CARD_GAP_DP) * density
+        setPadding(padH.toInt(), padV.toInt(), padH.toInt(), padV.toInt())
+        (this as? ViewGroup)?.getChildAt(0)?.applyHorizontalRowSize(config)
     }
 
     /**
@@ -330,6 +372,12 @@ constructor(
 // Custom Options: horizontal nudge (dp) that centres the One UI ringer button over the 36dp One UI
 // slider capsule. See the comment at its use site for the derivation.
 private const val ONEUI_RINGER_CENTERING_NUDGE_DP = 4f
+
+// IchthysOS: padding of a second-stream row's panel in the horizontal dialog, matching the main
+// dialog content's 16 x 12 dp (volume_dialog_horizontal.xml), and the gap between bare card rows.
+private const val HORIZONTAL_PANEL_PADDING_H_DP = 16f
+private const val HORIZONTAL_PANEL_PADDING_V_DP = 12f
+private const val HORIZONTAL_CARD_GAP_DP = 4f
 
 // IchthysOS: One UI 6 pill placement and background (ichthys-refs SPEC_VOLUME_ONEUI.md §2.2-2.4).
 private const val ONEUI_VERTICAL_BIAS = 0.34f

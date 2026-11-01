@@ -558,6 +558,10 @@ public class IchthysConfigTest {
         assertEquals("doze_always_on", mSchema.get("lockscreen.ambient.alwaysOn").binding.key);
         assertNotNull(mSchema.get("lockscreen.ambient.enabled"));
         assertNotNull(mSchema.get("lockscreen.ambient.pulseOnPickUp"));
+        // IchthysOS projected clock: the placement is an option; its per-wallpaper quads are not.
+        assertEquals("ichthys_clock_placement",
+                mSchema.get("lockscreen.clock.placement").binding.key);
+        assertNull(mSchema.get("lockscreen.clock.quads"));
         // The smartspace switch was dropped; a config that still has it applies.
         assertNull(mSchema.get("lockscreen.smartspaceEnabled"));
         final List<String> notes = new ArrayList<>();

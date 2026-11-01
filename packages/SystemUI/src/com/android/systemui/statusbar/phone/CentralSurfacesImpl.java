@@ -888,6 +888,12 @@ public class CentralSurfacesImpl implements CoreStartable, CentralSurfaces {
      * media-art-only overlay container so it does not collide with other custom overlays.
      */
     private void attachMediaArtOverlay() {
+        // IchthysOS: with the scene container the Compose lock screen hosts the art itself, under
+        // its depth pictures (LockscreenRootElementProvider); behind the scene container it was
+        // never seen.
+        if (SceneContainerFlag.isEnabled()) {
+            return;
+        }
         android.view.ViewGroup overlay = getMediaArtOverlayContainer();
         if (overlay == null) {
             return;

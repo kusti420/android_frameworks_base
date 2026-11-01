@@ -1681,6 +1681,12 @@ final class InstallPackageHelper {
         boolean bypassLowTargetSdkBlock =
                 ((installFlags & PackageManager.INSTALL_BYPASS_LOW_TARGET_SDK_BLOCK) != 0);
 
+        // IchthysOS: the owner's "Allow apps built for old Android" switch lifts the block for
+        // every install, as if --bypass-low-target-sdk-block had been passed.
+        if (!bypassLowTargetSdkBlock && isLowTargetSdkInstallAllowed()) {
+            bypassLowTargetSdkBlock = true;
+        }
+
         // Skip enforcement when the testOnly flag is set
         if (!bypassLowTargetSdkBlock && parsedPackage.isTestOnly()) {
             bypassLowTargetSdkBlock = true;
@@ -2947,11 +2953,6 @@ final class InstallPackageHelper {
                 mode);
     }
 
-    /**
-     * On successful install, executes remaining steps after commit completes and the package lock
-     * is released. These are typically more expensive or require calls to installd, which often
-     * locks on {@link com.android.server.pm.PackageManagerService.mLock}.
-     */
     // IchthysOS: crDroid "allow app downgrade" toggle (Global setting, default off). When on,
     // permit installing a lower versionCode for regular apps (equivalent to `adb install -d`).
     // Deliberately NOT consulted for APEX downgrades, which must stay blocked.
@@ -2961,6 +2962,21 @@ final class InstallPackageHelper {
                 "pm_downgrade_allowed", 0) == 1;
     }
 
+    // IchthysOS: "Allow apps built for old Android" (Settings > IchthysOS > Apps > Install &
+    // compatibility; Global pm_low_target_sdk_allowed, default off). When on, an APK whose
+    // targetSdkVersion is below MIN_INSTALLABLE_TARGET_SDK installs anyway. Global like the
+    // downgrade toggle: an install session has no user to read a Secure key for, and the block
+    // is one rule for the whole device. crDroidSettings repeats the key string.
+    private boolean isLowTargetSdkInstallAllowed() {
+        return android.provider.Settings.Global.getInt(mContext.getContentResolver(),
+                "pm_low_target_sdk_allowed", 0) == 1;
+    }
+
+    /**
+     * On successful install, executes remaining steps after commit completes and the package lock
+     * is released. These are typically more expensive or require calls to installd, which often
+     * locks on {@link com.android.server.pm.PackageManagerService.mLock}.
+     */
     @GuardedBy("mPm.mInstallLock")
     private void executePostCommitStepsLIF(List<ReconciledPackage> reconciledPackages) {
         final ArraySet<IncrementalStorage> incrementalStorages = new ArraySet<>();

@@ -17,11 +17,13 @@
 package com.android.systemui.keyguard.ui.composable.elements
 
 import android.content.Context
+import android.view.ViewGroup
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.HorizontalAlignmentLine
@@ -29,6 +31,7 @@ import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.VerticalAlignmentLine
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.viewinterop.AndroidView
 import com.android.compose.animation.scene.BaseContentScope
 import com.android.compose.animation.scene.ContentScope
 import com.android.compose.animation.scene.ElementContentScope
@@ -43,6 +46,7 @@ import com.android.systemui.keyguard.ui.viewmodel.AodBurnInViewModel
 import com.android.systemui.keyguard.ui.viewmodel.KeyguardClockViewModel
 import com.android.systemui.keyguard.ui.viewmodel.LockscreenRootViewModel
 import com.android.systemui.lifecycle.rememberViewModel
+import com.android.systemui.media.MediaViewController
 import com.android.systemui.scene.shared.model.Scenes
 import com.android.systemui.plugins.keyguard.ui.composable.elements.BaseLockscreenElement.ElementSource
 import com.android.systemui.plugins.keyguard.ui.composable.elements.LockscreenElement
@@ -75,6 +79,7 @@ constructor(
     private val keyguardClockViewModel: KeyguardClockViewModel,
     private val depthRepository: IchthysDepthRepository,
     private val keyguardInteractor: KeyguardInteractor,
+    private val mediaViewController: MediaViewController,
 ) : LockscreenElementProvider {
     override val elements: List<LockscreenElement> by lazy { listOf(RootElement()) }
 
@@ -128,11 +133,31 @@ constructor(
                         ?.progress
                         ?.coerceIn(0f, 1f) ?: 0f
                 }
+                // IchthysOS: a swipe takes the layers along its direction; a fingerprint, face or
+                // tap unlock (programmatic) dissolves the subject from the lock icon instead.
+                depthRepository.unlockBySwipe = {
+                    layoutState.currentTransition
+                        ?.takeIf { it.fromContent == Scenes.Lockscreen && it.toContent == Scenes.Gone }
+                        ?.isInitiatedByUserInput ?: false
+                }
                 depthRepository.burnInShift = { viewModel.burnIn.translation }
                 with(scopeFactory.create(contentScope, innerContext)) {
                     LockscreenSceneLayout(
                         viewModel.isUdfpsSupported,
                         depth = {
+                            // IchthysOS: the lock screen media art (crDroid's MediaViewController
+                            // scrim: the playing track's cover, with its blur, filter and fade)
+                            // as the lowest wallpaper layer; the depth pictures fade out over it
+                            // while it shows. Hung behind the scene container by
+                            // CentralSurfacesImpl it was never seen: the backdrop covered it.
+                            AndroidView(
+                                factory = {
+                                    mediaViewController.getMediaArtScrim().also { art ->
+                                        (art.parent as? ViewGroup)?.removeView(art)
+                                    }
+                                },
+                                modifier = Modifier.fillMaxSize(),
+                            )
                             IchthysDepthBackdrop(
                                 depthRepository,
                                 dozeAmount,

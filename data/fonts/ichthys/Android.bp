@@ -1,4 +1,5 @@
-// IchthysOS: product fonts for the "Shoal" design (tracker#50). SIL OFL 1.1.
+// IchthysOS: product fonts for the "Shoal" design (tracker#50) and the system font options of
+// Theme Studio (theme.font.body overlays in packages/overlays/Font*Overlay). All SIL OFL 1.1.
 package {
     default_applicable_licenses: ["frameworks_base_data_fonts_ichthys_license"],
 }
@@ -13,6 +14,19 @@ license {
         "OFL-jetbrainsmono.txt",
         "OFL-outfit.txt",
         "OFL-ibmplexsans.txt",
+        "OFL-atkinsonhyperlegiblenext.txt",
+        "OFL-dmsans.txt",
+        "OFL-figtree.txt",
+        "OFL-inter.txt",
+        "OFL-lexend.txt",
+        "OFL-manrope.txt",
+        "OFL-nunitosans.txt",
+        "OFL-plusjakartasans.txt",
+        "OFL-publicsans.txt",
+        "OFL-sourcesans3.txt",
+        "OFL-rubikbubbles.txt",
+        "OFL-bowlbyone.txt",
+        "OFL-bungeeinline.txt",
     ],
 }
 
@@ -51,6 +65,102 @@ prebuilt_font {
     product_specific: true,
 }
 
+// System font options (body faces; each has a Font<Name>Overlay).
+
+prebuilt_font {
+    name: "IchthysAtkinsonHyperlegibleNext-VF.ttf",
+    src: "AtkinsonHyperlegibleNext-VF.ttf",
+    filename: "AtkinsonHyperlegibleNext-VF.ttf",
+    product_specific: true,
+}
+
+prebuilt_font {
+    name: "IchthysDMSans-VF.ttf",
+    src: "DMSans-VF.ttf",
+    filename: "DMSans-VF.ttf",
+    product_specific: true,
+}
+
+prebuilt_font {
+    name: "IchthysFigtree-VF.ttf",
+    src: "Figtree-VF.ttf",
+    filename: "Figtree-VF.ttf",
+    product_specific: true,
+}
+
+prebuilt_font {
+    name: "IchthysInter-VF.ttf",
+    src: "Inter-VF.ttf",
+    filename: "Inter-VF.ttf",
+    product_specific: true,
+}
+
+prebuilt_font {
+    name: "IchthysLexend-VF.ttf",
+    src: "Lexend-VF.ttf",
+    filename: "Lexend-VF.ttf",
+    product_specific: true,
+}
+
+prebuilt_font {
+    name: "IchthysManrope-VF.ttf",
+    src: "Manrope-VF.ttf",
+    filename: "Manrope-VF.ttf",
+    product_specific: true,
+}
+
+prebuilt_font {
+    name: "IchthysNunitoSans-VF.ttf",
+    src: "NunitoSans-VF.ttf",
+    filename: "NunitoSans-VF.ttf",
+    product_specific: true,
+}
+
+prebuilt_font {
+    name: "IchthysPlusJakartaSans-VF.ttf",
+    src: "PlusJakartaSans-VF.ttf",
+    filename: "PlusJakartaSans-VF.ttf",
+    product_specific: true,
+}
+
+prebuilt_font {
+    name: "IchthysPublicSans-VF.ttf",
+    src: "PublicSans-VF.ttf",
+    filename: "PublicSans-VF.ttf",
+    product_specific: true,
+}
+
+prebuilt_font {
+    name: "IchthysSourceSans3-VF.ttf",
+    src: "SourceSans3-VF.ttf",
+    filename: "SourceSans3-VF.ttf",
+    product_specific: true,
+}
+
+// Lock screen clock display faces (SettingsLib DepthClockView FONT_BUBBLE / FONT_BLOCK /
+// FONT_INLINE; read from /product/fonts by path, like IchthysDepth's faces from /system/fonts).
+
+prebuilt_font {
+    name: "IchthysRubikBubbles-Regular.ttf",
+    src: "RubikBubbles-Regular.ttf",
+    filename: "RubikBubbles-Regular.ttf",
+    product_specific: true,
+}
+
+prebuilt_font {
+    name: "IchthysBowlbyOne-Regular.ttf",
+    src: "BowlbyOne-Regular.ttf",
+    filename: "BowlbyOne-Regular.ttf",
+    product_specific: true,
+}
+
+prebuilt_font {
+    name: "IchthysBungeeInline-Regular.ttf",
+    src: "BungeeInline-Regular.ttf",
+    filename: "BungeeInline-Regular.ttf",
+    product_specific: true,
+}
+
 prebuilt_etc {
     name: "fonts_customization.xml",
     src: "fonts_customization.xml",
@@ -62,5 +172,18 @@ prebuilt_etc {
         "IchthysJetBrainsMono-VF.ttf",
         "IchthysOutfit-VF.ttf",
         "IchthysIBMPlexSans-VF.ttf",
+        "IchthysAtkinsonHyperlegibleNext-VF.ttf",
+        "IchthysDMSans-VF.ttf",
+        "IchthysFigtree-VF.ttf",
+        "IchthysInter-VF.ttf",
+        "IchthysLexend-VF.ttf",
+        "IchthysManrope-VF.ttf",
+        "IchthysNunitoSans-VF.ttf",
+        "IchthysPlusJakartaSans-VF.ttf",
+        "IchthysPublicSans-VF.ttf",
+        "IchthysSourceSans3-VF.ttf",
+        "IchthysRubikBubbles-Regular.ttf",
+        "IchthysBowlbyOne-Regular.ttf",
+        "IchthysBungeeInline-Regular.ttf",
     ],
 }

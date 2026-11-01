@@ -51,6 +51,7 @@ import com.android.systemui.shade.ShadeDisplayAware
 import com.android.systemui.statusbar.policy.KeyguardStateController
 import com.android.systemui.util.settings.SecureSettings
 import com.android.systemui.util.settings.SettingsProxyExt.observerFlow
+import dagger.Lazy
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -64,10 +65,12 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 
 /**
- * IchthysOS: the Backstage tile (kusti420/ichthysos-tracker#38). Tap sends the app on screen to
- * Backstage, where it keeps running as if open; long-press opens the Backstage list. The only
- * state is Settings.Secure `ichthys_backstage_pkgs`, which IchthysBackstageService reconciles,
- * so the tile and the Settings page always agree.
+ * IchthysOS: the Backstage tile (kusti420/ichthysos-tracker#38). Tap opens the Backstage popup
+ * ([BackstageDetailsViewModel]: the apps in Backstage, the recent apps to send); on the lock
+ * screen it still sends the app on screen to Backstage after unlocking, where the app keeps
+ * running as if open. Long-press opens the Backstage list. The only state is Settings.Secure
+ * `ichthys_backstage_pkgs`, which IchthysBackstageService reconciles, so the tile and the
+ * Settings page always agree.
  */
 data class BackstageTileModel(val apps: List<CharSequence>)
 
@@ -126,6 +129,7 @@ constructor(
     private val qsTileIntentUserActionHandler: QSTileIntentUserInputHandler,
     private val activityStarter: ActivityStarter,
     private val keyguardController: KeyguardStateController,
+    private val dialogDelegate: Lazy<BackstageDialogDelegate>,
 ) : QSTileUserActionInteractor<BackstageTileModel> {
 
     private val main = Handler(Looper.getMainLooper())
@@ -134,20 +138,22 @@ constructor(
         with(input) {
             when (action) {
                 is QSTileUserAction.Click -> {
-                    val send = {
-                        CoroutineScope(
-                                applicationScope.coroutineContext +
-                                    bgDispatcher +
-                                    newTracingContext("BackstageTileScope")
-                            )
-                            .launch { sendTopApp(user) }
-                        Unit
-                    }
-                    // The app on screen is only known (and only ours to move) once unlocked.
+                    // IchthysOS: the popup. In the dual shade this is never reached (the click
+                    // opens the details view, see BackstageTileModule); the single shade shows the
+                    // same content in a dialog, like the Internet and Bluetooth tiles do there.
+                    // The lock screen keeps the one-tap send: the popup has nothing to show over
+                    // the keyguard, and the app on screen is only ours to move once unlocked.
                     if (keyguardController.isShowing()) {
-                        activityStarter.postQSRunnableDismissingKeyguard { send() }
+                        activityStarter.postQSRunnableDismissingKeyguard {
+                            CoroutineScope(
+                                    applicationScope.coroutineContext +
+                                        bgDispatcher +
+                                        newTracingContext("BackstageTileScope")
+                                )
+                                .launch { sendTopApp(user) }
+                        }
                     } else {
-                        send()
+                        dialogDelegate.get().showDialog(action.expandable)
                     }
                 }
                 is QSTileUserAction.LongClick ->

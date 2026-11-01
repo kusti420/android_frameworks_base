@@ -38,6 +38,7 @@ import android.view.WindowManager
 import android.widget.ImageView
 import com.android.internal.graphics.ColorUtils
 import com.android.systemui.dagger.SysUISingleton
+import com.android.systemui.keyguard.data.repository.IchthysDepthRepository
 import com.android.systemui.media.MediaScrimState.STATE_SCRIM_HIDDEN
 import com.android.systemui.media.MediaScrimState.STATE_SCRIM_VISIBLE
 import com.android.systemui.util.ScrimUtils
@@ -265,6 +266,8 @@ class MediaViewController @Inject constructor(
         cancelScrimAnim()
         updateMediaArt()
         setupMediaFilter()
+        // IchthysOS: the depth lock screen's pictures fade out under the art while it shows.
+        IchthysDepthRepository.mediaArtShowing.value = true
         mediaScrim.apply {
             alpha = 0f
             visibility = View.VISIBLE
@@ -388,6 +391,7 @@ class MediaViewController @Inject constructor(
     }
 
     private fun clearResources() {
+        IchthysDepthRepository.mediaArtShowing.value = false
         mediaScrim.setImageDrawable(null)
         mediaScrim.setRenderEffect(null)
         mediaScrim.colorFilter = null

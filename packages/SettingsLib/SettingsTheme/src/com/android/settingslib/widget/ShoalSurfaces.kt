@@ -27,6 +27,7 @@ import android.graphics.PixelFormat
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
+import android.graphics.drawable.DrawableWrapper
 import android.graphics.drawable.RippleDrawable
 import android.os.Build
 import android.provider.Settings
@@ -183,11 +184,17 @@ object ShoalSurfaces {
 
     /**
      * A list row's title (medium) and summary (regular) in the body face. With [sized] and the
-     * hairline surface, the Shoal sizes apply too: title 15sp, summary 12.5sp muted (#8b938f).
+     * hairline surface, the Shoal sizes apply too: title 15sp, summary 12.5sp muted (#8b938f)
+     * unless [recolor] is off.
      */
     @JvmStatic
     @JvmOverloads
-    fun styleRowText(title: TextView?, summary: TextView?, sized: Boolean = true) {
+    fun styleRowText(
+        title: TextView?,
+        summary: TextView?,
+        sized: Boolean = true,
+        recolor: Boolean = true,
+    ) {
         val c = (title ?: summary ?: return).context
         val shoalSized = sized && isHairline(c)
         title?.let {
@@ -198,7 +205,8 @@ object ShoalSurfaces {
             it.typeface = textTypeface(c, 400)
             if (shoalSized) {
                 it.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
-                if (isNight(c)) {
+                // [recolor] is off for a row that paints its own card (ShoalOwnRowDrawable).
+                if (recolor && isNight(c)) {
                     val muted = mutedTextColor(c)
                     it.setTextColor(ColorStateList(
                         arrayOf(intArrayOf(-android.R.attr.state_enabled), intArrayOf()),
@@ -230,6 +238,21 @@ object ShoalSurfaces {
             return Math.round(a + (b - a) * amount).coerceIn(0, 255)
         }
         return (0xff shl 24) or (ch(16) shl 16) or (ch(8) shl 8) or ch(0)
+    }
+}
+
+/**
+ * IchthysOS: a row background the preference itself owns (the crDroid "danger" card). The group
+ * adapter leaves such a row alone: no Shoal slice over it, no tonal restyle, no muted summary,
+ * and it clears the background again when the row is recycled for another preference.
+ */
+class ShoalOwnRowDrawable(wrapped: Drawable) : DrawableWrapper(wrapped) {
+    companion object {
+        /** Gives [view] the drawable [resId] as a preference-owned background. */
+        @JvmStatic
+        fun set(view: View, resId: Int) {
+            view.background = ShoalOwnRowDrawable(view.context.getDrawable(resId)!!)
+        }
     }
 }
 

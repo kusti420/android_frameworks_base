@@ -180,6 +180,41 @@ private fun VolumeDialogSlider(
         }
     }
 
+    if (!isVolumeDialogVertical) {
+        // IchthysOS: the horizontal dialog (custom_volume_horizontal) draws one of the premade
+        // looks of HorizontalVolumeStyle (volume_horizontal_style / _level / _thickness) instead
+        // of the stock Material slider. The vertical dialog below is untouched.
+        val horizontalConfig = remember(context) { HorizontalVolumeStyle.read(context) }
+        HorizontalVolumeSlider(
+            state = sliderStateModel,
+            config = horizontalConfig,
+            hapticFeedbackEnabled = hapticFeedbackEnabled,
+            onValueChanged = { value ->
+                overscrollViewModel.setSlider(
+                    value = value,
+                    min = sliderStateModel.valueRange.start,
+                    max = sliderStateModel.valueRange.endInclusive,
+                )
+                viewModel.setStreamVolume(value, true)
+            },
+            onValueChangeFinished = { viewModel.onSliderChangeFinished(it) },
+            onDragStarted = { viewModel.onSliderDragStarted() },
+            onDragFinished = { viewModel.onSliderDragFinished() },
+            modifier =
+                modifier.pointerInput(Unit) {
+                    coroutineScope {
+                        val currentContext = currentCoroutineContext()
+                        awaitPointerEventScope {
+                            while (currentContext.isActive) {
+                                viewModel.onTouchEvent(awaitPointerEvent())
+                            }
+                        }
+                    }
+                },
+        )
+        return
+    }
+
     if (oneUiStyle) {
         // Custom Options: One UI (1) renders an original, fully custom capsule slider instead of
         // the AOSP Material slider. Default (0) falls through to the unchanged Slider() below.

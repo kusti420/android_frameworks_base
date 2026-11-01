@@ -237,6 +237,7 @@ import android.provider.Settings;
 import android.service.vr.IVrManager;
 import android.service.vr.IVrStateCallbacks;
 import android.sysprop.SurfaceFlingerProperties;
+import android.text.TextUtils;
 import android.text.format.DateUtils;
 import android.tracing.TracingUtils;
 import android.util.ArrayMap;
@@ -844,6 +845,10 @@ public class WindowManagerService extends IWindowManager.Stub
                 Settings.Secure.getUriFor(Settings.Secure.IMMERSIVE_MODE_CONFIRMATIONS);
         private final Uri mDisableSecureWindowsUri =
                 Settings.Secure.getUriFor(Settings.Secure.DISABLE_SECURE_WINDOWS);
+        // IchthysOS: per-app FLAG_SECURE bypass list (Settings > IchthysOS > Apps > Install &
+        // compatibility), read with mDisableSecureWindows; see isSecureWindowBypassed().
+        private final Uri mSecureWindowBypassPkgsUri =
+                Settings.Secure.getUriFor(SECURE_WINDOW_BYPASS_PKGS);
         private final Uri mMagnifyImeEnabledUri = Settings.Secure.getUriFor(
                 Settings.Secure.ACCESSIBILITY_MAGNIFICATION_MAGNIFY_NAV_AND_IME);
         private final Uri mPolicyControlUri =
@@ -877,6 +882,8 @@ public class WindowManagerService extends IWindowManager.Stub
             resolver.registerContentObserver(mImmersiveModeConfirmationsUri, false, this,
                     UserHandle.USER_ALL);
             resolver.registerContentObserver(mDisableSecureWindowsUri, false, this,
+                    UserHandle.USER_ALL);
+            resolver.registerContentObserver(mSecureWindowBypassPkgsUri, false, this,
                     UserHandle.USER_ALL);
             resolver.registerContentObserver(mMagnifyImeEnabledUri, false, this,
                     UserHandle.USER_ALL);
@@ -936,7 +943,8 @@ public class WindowManagerService extends IWindowManager.Stub
                 return;
             }
 
-            if (mDisableSecureWindowsUri.equals(uri)) {
+            if (mDisableSecureWindowsUri.equals(uri)
+                    || mSecureWindowBypassPkgsUri.equals(uri)) {
                 updateDisableSecureWindows();
                 return;
             }
@@ -1058,23 +1066,32 @@ public class WindowManagerService extends IWindowManager.Stub
         }
 
         void updateDisableSecureWindows() {
-            if (!SystemProperties.getBoolean(SYSTEM_DEBUGGABLE, false)) {
-                return;
+            // IchthysOS: AOSP honours DISABLE_SECURE_WINDOWS on debuggable builds only. Here it is
+            // the owner's "allow screenshots in every app" switch (Settings > IchthysOS > Apps >
+            // Install & compatibility), so it is read on every build, together with the per-app
+            // bypass list, both for the current user (the Settings app writes USER_CURRENT).
+            final ContentResolver resolver = mContext.getContentResolver();
+            final boolean disableSecureWindows = Settings.Secure.getIntForUser(resolver,
+                    Settings.Secure.DISABLE_SECURE_WINDOWS, 0, mCurrentUserId) != 0;
+            final ArraySet<String> bypassPkgs = new ArraySet<>();
+            final String list = Settings.Secure.getStringForUser(resolver,
+                    SECURE_WINDOW_BYPASS_PKGS, mCurrentUserId);
+            if (!TextUtils.isEmpty(list)) {
+                for (String pkg : list.split(",")) {
+                    pkg = pkg.trim();
+                    if (!pkg.isEmpty()) {
+                        bypassPkgs.add(pkg);
+                    }
+                }
             }
-
-            boolean disableSecureWindows;
-            try {
-                disableSecureWindows = Settings.Secure.getIntForUser(mContext.getContentResolver(),
-                        Settings.Secure.DISABLE_SECURE_WINDOWS, 0) != 0;
-            } catch (Settings.SettingNotFoundException e) {
-                disableSecureWindows = false;
-            }
-            if (mDisableSecureWindows == disableSecureWindows) {
+            if (mDisableSecureWindows == disableSecureWindows
+                    && mSecureWindowBypassPkgs.equals(bypassPkgs)) {
                 return;
             }
 
             synchronized (mGlobalLock) {
                 mDisableSecureWindows = disableSecureWindows;
+                mSecureWindowBypassPkgs = bypassPkgs;
                 mRoot.refreshSecureSurfaceState();
             }
         }
@@ -1284,6 +1301,14 @@ public class WindowManagerService extends IWindowManager.Stub
     private final ScreenRecordingCallbackController mScreenRecordingCallbackController;
 
     private volatile boolean mDisableSecureWindows = false;
+
+    /**
+     * IchthysOS: Secure setting (per user) with the packages whose own FLAG_SECURE is ignored, as
+     * a comma list. Written by crDroidSettings (SecureWindowBypassApps), which repeats the string.
+     */
+    static final String SECURE_WINDOW_BYPASS_PKGS = "ichthys_secure_window_bypass_pkgs";
+    /** IchthysOS: parsed {@link #SECURE_WINDOW_BYPASS_PKGS}; replaced whole, never mutated. */
+    private volatile ArraySet<String> mSecureWindowBypassPkgs = new ArraySet<>();
 
     /** Creates an instance of the WindowManagerService for the system server. */
     public static WindowManagerService main(@NonNull final Context context,
@@ -4179,6 +4204,8 @@ public class WindowManagerService extends IWindowManager.Stub
             // This call is crucial on user switch to ensure the Magnify IME state
             // is correctly re-evaluated and applied for the new user.
             mSettingsObserver.updateMagnifyIme();
+            // IchthysOS: the secure-window switch and bypass list are per user too.
+            mSettingsObserver.updateDisableSecureWindows();
         }
     }
 
@@ -11486,6 +11513,14 @@ public class WindowManagerService extends IWindowManager.Stub
 
     boolean getDisableSecureWindows() {
         return mDisableSecureWindows;
+    }
+
+    /**
+     * IchthysOS: whether the owner exempted {@code packageName} from its own FLAG_SECURE, so its
+     * windows show up in screenshots, recordings and recents (WindowState.isSecureLocked).
+     */
+    boolean isSecureWindowBypassed(String packageName) {
+        return packageName != null && mSecureWindowBypassPkgs.contains(packageName);
     }
 
     /**

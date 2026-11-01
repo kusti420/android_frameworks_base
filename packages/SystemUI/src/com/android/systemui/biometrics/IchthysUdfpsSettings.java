@@ -57,9 +57,6 @@ public final class IchthysUdfpsSettings {
     /** Effect size in percent of the default (50..250). */
     public static final String ANIM_SCALE = "ichthys_udfps_anim_scale";
     public static final int ANIM_SCALE_DEFAULT = 100;
-    /** Fine position offsets in dp (-40..40). */
-    public static final String ANIM_OFFSET_X = "ichthys_udfps_anim_offset_x";
-    public static final String ANIM_OFFSET_Y = "ichthys_udfps_anim_offset_y";
     /** Also play in app fingerprint prompts (BiometricPrompt). */
     public static final String ANIM_IN_PROMPT = "ichthys_udfps_anim_bp";
     public static final int ANIM_IN_PROMPT_DEFAULT = 1;

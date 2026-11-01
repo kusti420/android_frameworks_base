@@ -55,6 +55,7 @@ import com.android.systemui.volume.dialog.ringer.ui.viewmodel.RingerDrawerState
 import com.android.systemui.volume.dialog.ringer.ui.viewmodel.RingerViewModel
 import com.android.systemui.volume.dialog.ringer.ui.viewmodel.RingerViewModelState
 import com.android.systemui.volume.dialog.ringer.ui.viewmodel.VolumeDialogRingerDrawerViewModel
+import com.android.systemui.volume.dialog.sliders.ui.HorizontalVolumeStyle
 import com.android.systemui.volume.dialog.ui.binder.ViewBinder
 import com.android.systemui.volume.dialog.ui.utils.suspendAnimate
 import com.android.systemui.volume.dialog.ui.viewmodel.VolumeDialogViewModel
@@ -143,9 +144,13 @@ constructor(
             ) == 1
         ) {
             drawerContainer.visibility = View.GONE
-            volumeDialogBackgroundView.setBackgroundResource(
-                R.drawable.volume_dialog_background_horizontal
-            )
+            // IchthysOS: the Shoal panel (ground + hairline) of the chosen horizontal look, or no
+            // panel at all when the row is its own card (HorizontalVolumeStyle).
+            volumeDialogBackgroundView.background =
+                HorizontalVolumeStyle.panelBackground(
+                    view.context,
+                    HorizontalVolumeStyle.read(view.context),
+                )
             return
         }
 

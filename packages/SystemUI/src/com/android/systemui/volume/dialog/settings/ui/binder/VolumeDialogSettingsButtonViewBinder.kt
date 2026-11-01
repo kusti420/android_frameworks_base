@@ -44,8 +44,9 @@ constructor(
     override fun CoroutineScope.bind(view: View) {
         val button = view.requireViewById<ImageButton>(R.id.volume_dialog_settings)
 
-        // Custom Options: in the horizontal (8.1-style) slider, replace the settings button with a
-        // live volume step number (fits up to 3 digits in the button-sized slot).
+        // Custom Options: the horizontal (8.1-style) slider has no settings button.
+        // IchthysOS: its level is drawn inside the slider row now (HorizontalVolumeSlider,
+        // volume_horizontal_level), so the old step-number TextView beside the row stays hidden.
         if (
             Settings.Secure.getIntForUser(
                 view.context.contentResolver,
@@ -54,15 +55,8 @@ constructor(
                 UserHandle.USER_CURRENT,
             ) == 1
         ) {
-            val stepNumber = view.requireViewById<TextView>(R.id.volume_dialog_step_number)
             button.visibility = View.GONE
-            stepNumber.visibility = View.VISIBLE
-            launchTraced("VDSBVB#addTouchableBounds") {
-                dialogViewModel.addTouchableBounds(stepNumber)
-            }
-            dialogViewModel.currentSliderLevel
-                .onEach { stepNumber.text = it.toString() }
-                .launchInTraced("VDSBVB#stepNumber", this)
+            view.requireViewById<TextView>(R.id.volume_dialog_step_number).visibility = View.GONE
             return
         }
 

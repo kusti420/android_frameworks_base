@@ -131,8 +131,6 @@ public class UdfpsAnimation extends View {
     private float mPressedSize = 1.2f;
     private int mSuccessEffect;
     private int mFailEffect;
-    private int mOffsetX;
-    private int mOffsetY;
 
     private AnimationDrawable mPackAnim;
     private int mPackSize;
@@ -307,10 +305,6 @@ public class UdfpsAnimation extends View {
         mPeriod = BASE_PERIOD_MS * 100 / speed;
         mScale = clamp(IchthysUdfpsSettings.get(mContext, IchthysUdfpsSettings.ANIM_SCALE,
                 IchthysUdfpsSettings.ANIM_SCALE_DEFAULT), 50, 250) / 100f;
-        mOffsetX = dp(clamp(IchthysUdfpsSettings.get(mContext,
-                IchthysUdfpsSettings.ANIM_OFFSET_X, 0), -40, 40));
-        mOffsetY = dp(clamp(IchthysUdfpsSettings.get(mContext,
-                IchthysUdfpsSettings.ANIM_OFFSET_Y, 0), -40, 40));
         mPressedStyle = IchthysUdfpsSettings.get(mContext, IchthysUdfpsSettings.PRESSED_STYLE,
                 IchthysUdfpsSettings.PRESSED_STYLE_DEFAULT);
         mPressedColor = IchthysUdfpsSettings.resolveColor(mContext,
@@ -383,8 +377,9 @@ public class UdfpsAnimation extends View {
         final int size = (int) Math.ceil(outerRadius() * 2f);
         mParams.width = size;
         mParams.height = size;
-        mParams.x = mSensor.centerX() - size / 2 + mOffsetX;
-        mParams.y = mSensor.centerY() - size / 2 + mOffsetY;
+        // IchthysOS: centred on the sensor itself (UdfpsOverlayParams); no user offset.
+        mParams.x = mSensor.centerX() - size / 2;
+        mParams.y = mSensor.centerY() - size / 2;
     }
 
     /** Finger down on the sensor. Called before the illumination disc is added. */

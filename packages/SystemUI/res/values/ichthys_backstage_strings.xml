@@ -22,4 +22,10 @@
     <!-- Secondary label: how many apps run in Backstage. -->
     <string name="ichthys_backstage_tile_count"><xliff:g id="count" example="2">%1$d</xliff:g> apps</string>
     <string name="ichthys_backstage_tile_full">Backstage holds 3 apps. Bring one back or stop it first.</string>
+    <!-- The tile's popup: section of the apps in Backstage (each with Remove). -->
+    <string name="ichthys_backstage_details_in_backstage">In Backstage</string>
+    <!-- The tile's popup: shown under "In Backstage" while nothing is there. -->
+    <string name="ichthys_backstage_details_empty">Nothing is running in Backstage</string>
+    <!-- The tile's popup: section of the recently used apps (each with Send). -->
+    <string name="ichthys_backstage_details_recent">Recent apps</string>
 </resources>

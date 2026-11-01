@@ -1965,7 +1965,12 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
             return false;
         }
 
-        if ((mAttrs.flags & WindowManager.LayoutParams.FLAG_SECURE) != 0) {
+        // IchthysOS: the owner can exempt an app from its own FLAG_SECURE (Settings > IchthysOS >
+        // Apps > Install & compatibility), so screenshots, screen recording, casting and the
+        // recents preview show it. Only the app's own flag is lifted: the sensitive-content and
+        // device-policy blocks below still hold.
+        if ((mAttrs.flags & WindowManager.LayoutParams.FLAG_SECURE) != 0
+                && !mWmService.isSecureWindowBypassed(getOwningPackage())) {
             return true;
         }
 

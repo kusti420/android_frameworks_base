@@ -67,6 +67,8 @@ import com.android.systemui.qs.tiles.dialog.InternetDetailsContent
 import com.android.systemui.qs.tiles.dialog.InternetDetailsViewModel
 import com.android.systemui.qs.tiles.dialog.ModesDetailsContent
 import com.android.systemui.qs.tiles.dialog.ModesDetailsViewModel
+import com.android.systemui.qs.tiles.impl.backstage.BackstageDetailsContent
+import com.android.systemui.qs.tiles.impl.backstage.BackstageDetailsViewModel
 import com.android.systemui.qs.ui.compose.borderOnFocus
 import com.android.systemui.res.R
 
@@ -235,6 +237,8 @@ private fun MapTileDetailsContent(
         is ModesDetailsViewModel -> ModesDetailsContent(tileDetailsViewModel)
         is CastDetailsViewModel -> CastDetailsContent(tileDetailsViewModel)
         is AudioDetailsViewModel -> AudioDetailsContent(tileDetailsViewModel)
+        // IchthysOS: the Backstage tile's popup.
+        is BackstageDetailsViewModel -> BackstageDetailsContent(tileDetailsViewModel)
     }
 }
 
