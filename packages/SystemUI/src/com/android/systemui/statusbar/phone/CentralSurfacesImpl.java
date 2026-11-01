@@ -341,6 +341,8 @@ public class CentralSurfacesImpl implements CoreStartable, CentralSurfaces {
     @WindowVisibleState private int mStatusBarWindowState = WINDOW_STATE_SHOWING;
     private final NotificationShadeWindowController mNotificationShadeWindowController;
     private final TopUiController mTopUiController;
+    // IchthysOS: picks the charger-connected animation style, wireless included.
+    private final WiredChargingRippleController mWiredChargingRippleController;
     private final KeyguardUpdateMonitor mKeyguardUpdateMonitor;
     @VisibleForTesting
     DozeServiceHost mDozeServiceHost;
@@ -732,6 +734,7 @@ public class CentralSurfacesImpl implements CoreStartable, CentralSurfaces {
                 id -> onLaunchTransitionTimeout());
 
         mDeviceStateManager = deviceStateManager;
+        mWiredChargingRippleController = wiredChargingRippleController;
         wiredChargingRippleController.registerCallbacks();
 
         mLightRevealScrim = lightRevealScrim;
@@ -1431,6 +1434,9 @@ public class CentralSurfacesImpl implements CoreStartable, CentralSurfaces {
 
     @Override
     public void showWirelessChargingAnimation(int batteryLevel) {
+        // IchthysOS: the Shoal styles (and "off") are played by the charging controller; only
+        // the "ripple" style falls through to the stock wireless animation.
+        if (mWiredChargingRippleController.showWirelessChargingAnimation(batteryLevel)) return;
         showChargingAnimation(batteryLevel, UNKNOWN_BATTERY_LEVEL, 0);
     }
 

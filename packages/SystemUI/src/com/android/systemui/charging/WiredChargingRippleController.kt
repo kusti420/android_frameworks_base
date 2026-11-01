@@ -16,10 +16,17 @@
 
 package com.android.systemui.charging
 
+import android.animation.ValueAnimator
 import android.content.Context
 import android.content.res.Configuration
 import android.graphics.PixelFormat
+import android.graphics.PointF
+import android.os.Handler
+import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemProperties
+import android.util.Log
+import android.view.RoundedCorner
 import android.view.Surface
 import android.view.View
 import android.view.WindowManager
@@ -31,6 +38,7 @@ import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.flags.FeatureFlags
 import com.android.systemui.flags.Flags
 import com.android.systemui.res.R
+import com.android.systemui.shade.ui.ShoalShade
 import com.android.systemui.statusbar.commandline.Command
 import com.android.systemui.statusbar.commandline.CommandRegistry
 import com.android.systemui.statusbar.policy.BatteryController
@@ -44,10 +52,24 @@ import kotlin.math.pow
 
 private const val MAX_DEBOUNCE_LEVEL = 3
 private const val BASE_DEBOUNCE_TIME = 2000
+private const val TAG = "WiredChargingRipple"
+
+// IchthysOS: how long to wait for the screen when power is connected with it off (wake on plug
+// turns it on a moment after the battery broadcast); the animation never wakes it itself.
+private const val WAIT_FOR_SCREEN_MS = 500L
+// IchthysOS: the stock ripple runs 1.75 s; the charging animations are kept to ~1.5 s.
+private const val RIPPLE_DURATION_MS = 1500L
 
 /**
  * Controls the ripple effect that shows when wired charging begins. The ripple uses the accent
  * color of the current theme.
+ *
+ * IchthysOS: this is the charger-connected animation for wired and wireless charging. The style
+ * is Settings.System [ChargingAnimationSettings.KEY] (Look > Lock screen): "ripple" plays the
+ * stock ripple (wired) or the stock wireless animation, recoloured to the Shoal accent;
+ * "pulse", "fill" and "spark" play a [ShoalChargingView] on the same kind of untouchable overlay
+ * window; "off" plays nothing. Nothing plays with the screen off (or dozing) or with animations
+ * turned off (animator duration scale 0).
  */
 @SysUISingleton
 class WiredChargingRippleController
@@ -88,6 +110,18 @@ constructor(
     private var lastTriggerTime: Long? = null
     private var debounceLevel = 0
 
+    // IchthysOS: the Shoal styles' view and state.
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val powerManager: PowerManager? = context.getSystemService(PowerManager::class.java)
+    private var batteryLevel = -1
+    private var shoalView: ShoalChargingView? = null
+    private val shoalWindowLayoutParams =
+        WindowManager.LayoutParams().apply {
+            copyFrom(windowLayoutParams)
+            title = "Charging Animation"
+        }
+    private var pendingPlay: Runnable? = null
+
     @VisibleForTesting
     var rippleView: RippleView = RippleView(context, attrs = null).also { it.setupShader() }
 
@@ -114,6 +148,7 @@ constructor(
                         return
                     }
 
+                    batteryLevel = level
                     if (!pluggedIn && nowPluggedIn) {
                         startRippleWithDebounce()
                     }
@@ -155,7 +190,8 @@ constructor(
                 (now - lastTriggerTime!!) > BASE_DEBOUNCE_TIME * (2.0.pow(debounceLevel))
         ) {
             // Not waiting for debounce. Start ripple.
-            startRipple()
+            // IchthysOS: the chosen charger-connected style instead of always the ripple.
+            playChargingAnimation(wireless = false, level = batteryLevel)
             debounceLevel = 0
         } else {
             // Still waiting for debounce. Ignore ripple and bump debounce level.
@@ -172,6 +208,9 @@ constructor(
             return
         }
         windowLayoutParams.packageName = context.opPackageName
+        // IchthysOS: Shoal accent and a 1.5 s run.
+        updateRippleColor()
+        rippleView.duration = RIPPLE_DURATION_MS
         rippleView.addOnAttachStateChangeListener(
             object : View.OnAttachStateChangeListener {
                 override fun onViewDetachedFromWindow(view: View) {}
@@ -193,39 +232,176 @@ constructor(
         val height = bounds.height()
         val maxDiameter = Integer.max(width, height) * 2f
         rippleView.setMaxSize(maxDiameter, maxDiameter)
+        val p = portPosition(width, height)
+        rippleView.setCenter(p.x, p.y)
+    }
+
+    /** IchthysOS: the charging port in window coordinates for the current rotation. */
+    private fun portPosition(width: Int, height: Int): PointF =
         when (context.display?.rotation) {
-            Surface.ROTATION_0 -> {
-                rippleView.setCenter(width * normalizedPortPosX, height * normalizedPortPosY)
-            }
+            Surface.ROTATION_90 ->
+                PointF(width * normalizedPortPosY, height * (1 - normalizedPortPosX))
+            Surface.ROTATION_180 ->
+                PointF(width * (1 - normalizedPortPosX), height * (1 - normalizedPortPosY))
+            Surface.ROTATION_270 ->
+                PointF(width * (1 - normalizedPortPosY), height * normalizedPortPosX)
+            else -> PointF(width * normalizedPortPosX, height * normalizedPortPosY)
+        }
 
-            Surface.ROTATION_90 -> {
-                rippleView.setCenter(width * normalizedPortPosY, height * (1 - normalizedPortPosX))
+    private fun updateRippleColor() {
+        // IchthysOS: the Shoal theme accent (the picked seed, else the Monet accent), not the
+        // Monet-derived colorAccent.
+        rippleView.setColor(
+            try {
+                ShoalShade.accent(context)
+            } catch (e: Exception) {
+                Utils.getColorAttr(context, android.R.attr.colorAccent).defaultColor
             }
+        )
+    }
 
-            Surface.ROTATION_180 -> {
-                rippleView.setCenter(
-                    width * (1 - normalizedPortPosX),
-                    height * (1 - normalizedPortPosY),
-                )
-            }
+    // region IchthysOS charger-connected styles
 
-            Surface.ROTATION_270 -> {
-                rippleView.setCenter(width * (1 - normalizedPortPosY), height * normalizedPortPosX)
+    /**
+     * Wireless charging started (system_server's Notifier via CommandQueue). Returns false when
+     * the stock wireless animation should play (style "ripple"); true when this handled it, which
+     * includes playing nothing ("off", screen off, animations off).
+     */
+    fun showWirelessChargingAnimation(level: Int): Boolean {
+        val style = ChargingAnimationSettings.read(context)
+        if (style == ChargingAnimationSettings.RIPPLE) return false
+        if (level >= 0) batteryLevel = level
+        playStyle(style, level, wireless = true)
+        return true
+    }
+
+    /** Plays the chosen style for a charger that was just connected. */
+    private fun playChargingAnimation(wireless: Boolean, level: Int) {
+        playStyle(ChargingAnimationSettings.read(context), level, wireless)
+    }
+
+    private fun playStyle(style: String, levelIn: Int, wireless: Boolean) {
+        if (style == ChargingAnimationSettings.OFF) return
+        val level = if (levelIn >= 0) levelIn else currentLevel()
+        if (SystemProperties.getBoolean("persist.debug.suppress-charging-ripple", false)) return
+        // Reduced motion: animator duration scale 0 means no animations at all.
+        if (!ValueAnimator.areAnimatorsEnabled()) return
+        pendingPlay?.let { mainHandler.removeCallbacks(it) }
+        pendingPlay = null
+        val play = Runnable {
+            pendingPlay = null
+            if (!isScreenOn()) return@Runnable
+            if (style == ChargingAnimationSettings.RIPPLE) {
+                // Only reached for wired: wireless "ripple" is the stock wireless animation.
+                if (!wireless) startRipple()
+            } else {
+                startShoal(style, level)
             }
+        }
+        if (isScreenOn()) {
+            play.run()
+        } else {
+            pendingPlay = play
+            mainHandler.postDelayed(play, WAIT_FOR_SCREEN_MS)
         }
     }
 
-    private fun updateRippleColor() {
-        rippleView.setColor(Utils.getColorAttr(context, android.R.attr.colorAccent).defaultColor)
+    private fun currentLevel(): Int =
+        try {
+            context
+                .getSystemService(android.os.BatteryManager::class.java)
+                ?.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
+        } catch (e: Exception) {
+            -1
+        }
+
+    // Interactive = the screen is on and awake (not off, not the ambient display).
+    private fun isScreenOn(): Boolean = powerManager?.isInteractive ?: true
+
+    private fun startShoal(style: String, level: Int) {
+        val current = shoalView
+        if (current != null && (current.isRunning() || current.parent != null)) return
+        if (rippleView.rippleInProgress() || rippleView.parent != null) return
+        val view = current ?: ShoalChargingView(context).also { shoalView = it }
+        val metrics = windowManager.currentWindowMetrics
+        val bounds = metrics.bounds
+        val width = bounds.width()
+        val height = bounds.height()
+        if (width <= 0 || height <= 0) return
+        val p = portPosition(width, height)
+        val insets = metrics.windowInsets
+        val corners =
+            intArrayOf(
+                insets.getRoundedCorner(RoundedCorner.POSITION_TOP_LEFT)?.radius ?: 0,
+                insets.getRoundedCorner(RoundedCorner.POSITION_TOP_RIGHT)?.radius ?: 0,
+                insets.getRoundedCorner(RoundedCorner.POSITION_BOTTOM_RIGHT)?.radius ?: 0,
+                insets.getRoundedCorner(RoundedCorner.POSITION_BOTTOM_LEFT)?.radius ?: 0,
+            )
+        try {
+            view.configure(style, level, p.x, p.y, width, height, corners)
+        } catch (e: Exception) {
+            Log.w(TAG, "charging animation setup failed", e)
+            return
+        }
+        shoalWindowLayoutParams.packageName = context.opPackageName
+        view.addOnAttachStateChangeListener(
+            object : View.OnAttachStateChangeListener {
+                override fun onViewDetachedFromWindow(v: View) {}
+
+                override fun onViewAttachedToWindow(v: View) {
+                    view.removeOnAttachStateChangeListener(this)
+                    view.start(Runnable { removeShoal(view) })
+                }
+            }
+        )
+        try {
+            windowManager.addView(view, shoalWindowLayoutParams)
+        } catch (e: Exception) {
+            Log.w(TAG, "charging animation window failed", e)
+            return
+        }
+        // Belt and braces: the window never outlives the animation by much.
+        mainHandler.postDelayed(
+            { removeShoal(view) },
+            ShoalChargingView.DURATION_MS.toLong() + 1000L,
+        )
+        uiEventLogger.log(WiredChargingRippleEvent.CHARGING_RIPPLE_PLAYED)
     }
+
+    private fun removeShoal(view: ShoalChargingView) {
+        if (view.parent == null) return
+        try {
+            windowManager.removeView(view)
+        } catch (e: Exception) {
+            Log.w(TAG, "charging animation removal failed", e)
+        }
+    }
+
+    // endregion
 
     inner class ChargingRippleCommand : Command {
         override fun execute(pw: PrintWriter, args: List<String>) {
-            startRipple()
+            // IchthysOS: optional style and level, e.g. "charging-ripple fill 63".
+            val style = args.getOrNull(0)
+            if (style == null) {
+                startRipple()
+                return
+            }
+            if (!ChargingAnimationSettings.isStyle(style)) {
+                help(pw)
+                return
+            }
+            val level =
+                args.getOrNull(1)?.toIntOrNull()
+                    ?: if (batteryLevel >= 0) batteryLevel else currentLevel()
+            if (style == ChargingAnimationSettings.RIPPLE) startRipple()
+            else if (style != ChargingAnimationSettings.OFF) startShoal(style, level)
         }
 
         override fun help(pw: PrintWriter) {
-            pw.println("Usage: adb shell cmd statusbar charging-ripple")
+            pw.println("Usage: adb shell cmd statusbar charging-ripple [STYLE [LEVEL]]")
+            pw.println("  STYLE: ripple, pulse, fill, spark (default: the stock ripple)")
+            pw.println("  LEVEL: battery level 0-100 (default: the current level)")
         }
     }
 
