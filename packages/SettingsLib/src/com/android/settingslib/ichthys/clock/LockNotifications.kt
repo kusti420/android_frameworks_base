@@ -79,6 +79,13 @@ object LockNotifications {
     /** The dock keeps this far from the screen's sides. */
     const val DOCK_SIDE_DP = 32f
 
+    /**
+     * IchthysOS: the dock's touch area reaches this far above and below what it draws (the
+     * bottom one at most [DOCK_GAP_DP], so it ends at the sensor's keep-out).
+     */
+    const val DOCK_TOUCH_TOP_DP = 16f
+    const val DOCK_TOUCH_BOTTOM_DP = 10f
+
     const val ALPHA_AWAKE = 0.92f
     const val ALPHA_IDLE = 0.60f
     const val ALPHA_AOD = 0.40f

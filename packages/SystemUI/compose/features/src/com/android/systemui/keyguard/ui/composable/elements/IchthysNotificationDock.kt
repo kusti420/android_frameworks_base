@@ -283,9 +283,17 @@ constructor(
         }
 
         val description = stringResource(R.string.ichthys_dock_a11y, model.total)
+        // IchthysOS: press feedback, so a tap visibly lands.
+        var pressed by remember { mutableStateOf(false) }
+        val pressScale by
+            animateFloatAsState(if (pressed) 0.96f else 1f, tween(if (pressed) 90 else 220), label = "dockPress")
         Column(
             modifier
-                .padding(horizontal = LockNotifications.DOCK_SIDE_DP.dp)
+                // IchthysOS: the touch area is the whole width (16 dp from the screen's edges) and
+                // reaches DOCK_TOUCH_TOP_DP above and DOCK_TOUCH_BOTTOM_DP below what is drawn; the
+                // lock screen root places it so the drawn dock stays where it was.
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
                 .semantics {
                     contentDescription = description
                     role = Role.Button
@@ -294,6 +302,7 @@ constructor(
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                         touched++
+                        pressed = true
                         var taken = false
                         var moved = false
                         while (true) {
@@ -309,6 +318,7 @@ constructor(
                             val travel = change.position - down.position
                             if (!moved && travel.getDistance() > viewConfiguration.touchSlop) {
                                 moved = true
+                                pressed = false
                                 // Up: the dock's; down or sideways: the scene's swipe.
                                 if (travel.y < 0f && kotlin.math.abs(travel.y) > kotlin.math.abs(travel.x)) {
                                     taken = true
@@ -318,9 +328,20 @@ constructor(
                             }
                             if (taken) change.consume()
                         }
+                        pressed = false
                     }
                 }
-                .graphicsLayer { alpha = sheetDim },
+                .padding(
+                    start = (LockNotifications.DOCK_SIDE_DP - 16f).dp,
+                    end = (LockNotifications.DOCK_SIDE_DP - 16f).dp,
+                    top = LockNotifications.DOCK_TOUCH_TOP_DP.dp,
+                    bottom = LockNotifications.DOCK_TOUCH_BOTTOM_DP.dp,
+                )
+                .graphicsLayer {
+                    alpha = sheetDim
+                    scaleX = pressScale
+                    scaleY = pressScale
+                },
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             var rowWidth by remember { mutableIntStateOf(0) }

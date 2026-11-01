@@ -332,6 +332,12 @@ private fun LockscreenScope<ContentScope>.LockscreenSceneLayout(
     val dockGapPx = with(androidx.compose.ui.platform.LocalDensity.current) {
         LockNotifications.DOCK_GAP_DP.dp.roundToPx()
     }
+    val dockTouchTopPx = with(androidx.compose.ui.platform.LocalDensity.current) {
+        LockNotifications.DOCK_TOUCH_TOP_DP.dp.roundToPx()
+    }
+    val dockTouchBottomPx = with(androidx.compose.ui.platform.LocalDensity.current) {
+        LockNotifications.DOCK_TOUCH_BOTTOM_DP.dp.roundToPx()
+    }
     val upperGapPx = with(androidx.compose.ui.platform.LocalDensity.current) {
         LockNotifications.UPPER_GAP_DP.dp.roundToPx()
     }
@@ -405,14 +411,18 @@ private fun LockscreenScope<ContentScope>.LockscreenSceneLayout(
                     minWidth = 0,
                     maxWidth = constraints.maxWidth.coerceAtLeast(0),
                     minHeight = 0,
-                    maxHeight = (keepOutTop - dockGapPx - statusBarPlaceable.measuredHeight).coerceAtLeast(0),
+                    maxHeight = (keepOutTop - dockGapPx - statusBarPlaceable.measuredHeight +
+                        dockTouchTopPx + dockTouchBottomPx).coerceAtLeast(0),
                 )
             )
         val dockShown = dockPlaceable.measuredHeight > 0
-        val dockBottom = keepOutTop - dockGapPx
+        // IchthysOS: the dock's box is its touch area: DOCK_TOUCH_TOP/BOTTOM_DP beyond what it
+        // draws, so its drawn part still ends DOCK_GAP_DP above the keep-out.
+        val dockBottom = keepOutTop - dockGapPx + dockTouchBottomPx
         val dockTop = dockBottom - dockPlaceable.measuredHeight
-        val upperRegionBottom = if (dockShown) dockTop - upperGapPx else keepOutTop
-        onBottomZone(keepOutTop, if (dockShown) dockTop else keepOutTop)
+        val dockDrawnTop = dockTop + dockTouchTopPx
+        val upperRegionBottom = if (dockShown) dockDrawnTop - upperGapPx else keepOutTop
+        onBottomZone(keepOutTop, if (dockShown) dockDrawnTop else keepOutTop)
 
         var upperRegionMaxHeight = upperRegionBottom - statusBarPlaceable.measuredHeight
         var lowerRegionMaxHeight = constraints.maxHeight - lockIconBounds.bottom
