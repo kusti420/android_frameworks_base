@@ -17,13 +17,14 @@
 package com.android.systemui.qs.notes
 
 import android.content.Context
+import android.content.Intent
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.deviceentry.domain.interactor.DeviceEntryInteractor
 import com.android.systemui.plugins.ActivityStarter
+import com.android.systemui.qs.ui.composable.IchthysNoteEditorActivity
 import com.android.systemui.settings.UserTracker
 import com.android.systemui.shade.ShadeController
-import com.android.systemui.statusbar.phone.SystemUIDialogFactory
 import dagger.Lazy
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -45,7 +46,6 @@ constructor(
     private val activityStarter: Lazy<ActivityStarter>,
     private val shadeController: Lazy<ShadeController>,
     private val userTracker: UserTracker,
-    val dialogFactory: SystemUIDialogFactory,
 ) {
     val notes: StateFlow<List<IchthysNote>>
         get() = repository.notes
@@ -82,4 +82,26 @@ constructor(
             )
     }
 
+    /**
+     * IchthysOS: opens the note editor for [noteId], or for a new note when null. The editor is
+     * [IchthysNoteEditorActivity], not a dialog over the shade: a SystemUI dialog window could not
+     * host the text selection toolbar (BadTokenException from RemoteFloatingToolbarPopup) nor sit
+     * under the keyboard with expanded quick settings. The shade collapses for the launch, like
+     * every other QS launch. Only offered while the device is entered (the page shows "Unlock to
+     * open" otherwise); CLEAR_TASK replaces an editor left open behind.
+     */
+    fun openEditor(noteId: Long?) {
+        val intent =
+            Intent(context, IchthysNoteEditorActivity::class.java).apply {
+                if (noteId != null) putExtra(IchthysNoteEditorActivity.EXTRA_NOTE_ID, noteId)
+            }
+        activityStarter
+            .get()
+            .startActivity(
+                intent,
+                false, /* onlyProvisioned */
+                true, /* dismissShade */
+                Intent.FLAG_ACTIVITY_CLEAR_TASK,
+            )
+    }
 }

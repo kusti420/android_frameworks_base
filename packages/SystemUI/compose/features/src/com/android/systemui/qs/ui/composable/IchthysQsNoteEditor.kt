@@ -34,7 +34,6 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,7 +47,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -60,62 +58,8 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import com.android.systemui.qs.notes.IchthysNote
 import com.android.systemui.qs.notes.IchthysNoteKind
-import com.android.systemui.qs.notes.IchthysQsNotesViewModel
 import com.android.systemui.res.R
-import com.android.systemui.statusbar.phone.ComponentSystemUIDialog
-import com.android.systemui.statusbar.phone.create
 import kotlinx.coroutines.launch
-
-/** IchthysOS: what the notes editor opens on. */
-sealed interface IchthysNoteEditorTarget {
-    data object New : IchthysNoteEditorTarget
-
-    data class Edit(val note: IchthysNote) : IchthysNoteEditorTarget
-}
-
-/**
- * IchthysOS: the editor of the quick settings notes page, a SystemUI dialog over the shade (the
- * same host EnableWidgetDialog uses). Shown while [target] is set; it dismisses on device lock.
- */
-@Composable
-fun IchthysQsNoteEditorDialog(
-    target: IchthysNoteEditorTarget?,
-    viewModel: IchthysQsNotesViewModel,
-    tokens: IchthysNotesTokens,
-    onDismiss: () -> Unit,
-) {
-    var dialog: ComponentSystemUIDialog? by remember { mutableStateOf(null) }
-    val context = LocalView.current.context
-
-    DisposableEffect(target) {
-        if (target != null) {
-            dialog =
-                viewModel.dialogFactory.create(context = context) { d ->
-                    NoteEditor(
-                        initial = (target as? IchthysNoteEditorTarget.Edit)?.note,
-                        tokens = tokens,
-                        onPin = { note -> viewModel.repository.save(note) },
-                        onUnpin =
-                            (target as? IchthysNoteEditorTarget.Edit)?.let { edit ->
-                                { viewModel.repository.remove(edit.note.id) }
-                            },
-                        onClose = { d.dismiss() },
-                    )
-                }
-            dialog?.apply {
-                setCancelable(true)
-                setCanceledOnTouchOutside(true)
-                setOnDismissListener { onDismiss() }
-                show()
-            }
-        }
-        onDispose {
-            dialog?.setOnDismissListener(null)
-            dialog?.dismiss()
-            dialog = null
-        }
-    }
-}
 
 private object Editor {
     val RADIUS = 24.dp
@@ -125,33 +69,20 @@ private object Editor {
     val FIELD_MIN_HEIGHT = 96.dp
 }
 
+/**
+ * IchthysOS: the editor card of the quick settings notes page: label chips, colour dots, the text
+ * and Unpin / Cancel / Pin. Hosted by [IchthysNoteEditorActivity] (an activity window, so the text
+ * selection toolbar and the keyboard work; see there).
+ */
 @Composable
-private fun NoteEditor(
+internal fun IchthysQsNoteEditor(
     initial: IchthysNote?,
     tokens: IchthysNotesTokens,
     onPin: suspend (IchthysNote) -> Boolean,
     onUnpin: (suspend () -> Boolean)?,
     onClose: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    // IchthysOS: the platform's floating text toolbar (select / copy / paste) is a PopupWindow
-    // anchored to this dialog's window token, which SystemUI's dialog windows cannot host: it
-    // crashed SystemUI on the first long-press in the field. No toolbar here.
-    val noToolbar = remember {
-        object : androidx.compose.ui.platform.TextToolbar {
-            override val status = androidx.compose.ui.platform.TextToolbarStatus.Hidden
-            override fun hide() {}
-            override fun showMenu(
-                rect: androidx.compose.ui.geometry.Rect,
-                onCopyRequested: (() -> Unit)?,
-                onPasteRequested: (() -> Unit)?,
-                onCutRequested: (() -> Unit)?,
-                onSelectAllRequested: (() -> Unit)?,
-            ) {}
-        }
-    }
-    androidx.compose.runtime.CompositionLocalProvider(
-        androidx.compose.ui.platform.LocalTextToolbar provides noToolbar
-    ) {
     val scope = rememberCoroutineScope()
     var kind by remember { mutableStateOf(initial?.kind ?: IchthysNoteKind.NOTE) }
     var color by remember { mutableStateOf(initial?.color ?: 0) }
@@ -175,8 +106,8 @@ private fun NoteEditor(
 
     Column(
         modifier =
-            Modifier.fillMaxWidth()
-                .padding(vertical = 8.dp)
+            modifier
+                .fillMaxWidth()
                 .clip(RoundedCornerShape(Editor.RADIUS))
                 .background(tokens.card)
                 .border(1.dp, tokens.hairline, RoundedCornerShape(Editor.RADIUS))
@@ -331,6 +262,5 @@ private fun NoteEditor(
                 )
             }
         }
-    }
     }
 }

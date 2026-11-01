@@ -146,6 +146,10 @@ constructor(
 
     suspend fun remove(id: Long): Boolean = edit { current -> current.filter { it.id != id } }
 
+    /** IchthysOS: the stored note [id] of the current user, read from the store itself. */
+    suspend fun find(id: Long): IchthysNote? =
+        withContext(backgroundDispatcher) { read(userTracker.userId).firstOrNull { it.id == id } }
+
     /** Reads, applies [transform] (null = refused) and writes, serialised against other edits. */
     private suspend fun edit(transform: (List<IchthysNote>) -> List<IchthysNote>?): Boolean =
         withContext(backgroundDispatcher) {

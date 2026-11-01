@@ -55,7 +55,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -334,17 +333,8 @@ fun ContentScope.IchthysQsNotesPage(
     val locked = !entered
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
-    var editing by remember { mutableStateOf<IchthysNoteEditorTarget?>(null) }
-    // Checked when the page is (re)composed: cheap, and p!n is rarely installed or removed.
-
-    // Locking closes the editor (the dialog itself also dismisses on device lock).
-    LaunchedEffect(locked) { if (locked) editing = null }
-    IchthysQsNoteEditorDialog(
-        target = if (locked) null else editing,
-        viewModel = viewModel,
-        tokens = tokens,
-        onDismiss = { editing = null },
-    )
+    // IchthysOS: the editor is IchthysNoteEditorActivity (viewModel.openEditor), launched with the
+    // shade collapsing; it finishes itself when the device locks.
 
     Column(modifier.padding(horizontal = IchthysQsNotes.PAGE_PADDING)) {
         Column(
@@ -390,7 +380,7 @@ fun ContentScope.IchthysQsNotesPage(
                                             )
                                             scope.launch { viewModel.repository.remove(note.id) }
                                         },
-                                        onClick = { editing = IchthysNoteEditorTarget.Edit(note) },
+                                        onClick = { viewModel.openEditor(note.id) },
                                     ),
                             )
                         }
@@ -427,7 +417,7 @@ fun ContentScope.IchthysQsNotesPage(
                     text = stringResource(R.string.ichthys_qs_notes_new),
                     filled = true,
                     tokens = tokens,
-                    onClick = { editing = IchthysNoteEditorTarget.New },
+                    onClick = { viewModel.openEditor(null) },
                 )
             }
         }

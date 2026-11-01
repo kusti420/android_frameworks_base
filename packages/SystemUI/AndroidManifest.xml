@@ -1210,6 +1210,23 @@
             android:exported="false">
         </activity>
 
+        <!-- IchthysOS: editor of the quick settings notes page. An activity, not a dialog over
+             the shade: the text selection toolbar (a PopupWindow) needs an activity token, and
+             the keyboard cannot share the screen with expanded quick settings. Never shown over
+             the keyguard; launched as SystemUI's own user, hence showForAllUsers. -->
+        <activity
+            android:name=".qs.ui.composable.IchthysNoteEditorActivity"
+            android:theme="@style/Theme.Transparent"
+            android:label="@string/ichthys_qs_notes_title"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:showWhenLocked="false"
+            android:showForAllUsers="true"
+            android:windowSoftInputMode="adjustResize|stateVisible"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode"
+            />
+
         <!-- Contextual setup activity for dreams/screensavers. -->
         <activity
             android:name=".dreams.ui.activity.DreamSetupActivity"

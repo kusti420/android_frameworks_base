@@ -26,6 +26,7 @@ import com.android.systemui.keyguard.WorkLockActivity;
 import com.android.systemui.people.PeopleSpaceActivity;
 import com.android.systemui.people.widget.LaunchConversationActivity;
 import com.android.systemui.personalcontext.attribution.AttributionActivity;
+import com.android.systemui.qs.ui.composable.IchthysNoteEditorActivity;
 import com.android.systemui.screenshot.appclips.AppClipsActivity;
 import com.android.systemui.screenshot.appclips.AppClipsTrampolineActivity;
 import com.android.systemui.screenshot.scroll.LongScreenshotActivity;
@@ -181,4 +182,10 @@ public abstract class DefaultActivityBinder {
     public abstract Activity bindAttributionActivity(
             AttributionActivity activity
     );
+
+    /** IchthysOS: inject into IchthysNoteEditorActivity (the quick settings notes editor). */
+    @Binds
+    @IntoMap
+    @ClassKey(IchthysNoteEditorActivity.class)
+    public abstract Activity bindIchthysNoteEditorActivity(IchthysNoteEditorActivity activity);
 }
