@@ -197,9 +197,9 @@ constructor(
         }
     }
 
-    // IchthysOS: the disc stays on the lock screen (owner); during the unlock the whole lock icon
-    // element fades in the first 8 % (FromLockscreenToGoneTransition), so it no longer lingers.
-    val useBackgroundProtection: StateFlow<Boolean> = isUdfpsSupported
+    // IchthysOS (owner, 2026-11-01): no dark disc behind the fingerprint icon; the icon styles
+    // (IchthysFpIconDrawable) stand on the wallpaper by themselves.
+    val useBackgroundProtection: StateFlow<Boolean> = MutableStateFlow(false).asStateFlow()
     val burnInOffsets: Flow<BurnInOffsets> =
         deviceEntryUdfpsInteractor.isUdfpsEnrolledAndEnabled
             .flatMapLatest { udfpsEnrolled ->
