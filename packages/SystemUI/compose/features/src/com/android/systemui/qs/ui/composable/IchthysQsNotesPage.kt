@@ -336,7 +336,6 @@ fun ContentScope.IchthysQsNotesPage(
     val haptics = LocalHapticFeedback.current
     var editing by remember { mutableStateOf<IchthysNoteEditorTarget?>(null) }
     // Checked when the page is (re)composed: cheap, and p!n is rarely installed or removed.
-    val pinInstalled = remember(notes) { viewModel.pinLaunchIntent() != null }
 
     // Locking closes the editor (the dialog itself also dismisses on device lock).
     LaunchedEffect(locked) { if (locked) editing = null }
@@ -430,14 +429,6 @@ fun ContentScope.IchthysQsNotesPage(
                     tokens = tokens,
                     onClick = { editing = IchthysNoteEditorTarget.New },
                 )
-                if (pinInstalled) {
-                    PillButton(
-                        text = stringResource(R.string.ichthys_qs_notes_open_pin),
-                        filled = false,
-                        tokens = tokens,
-                        onClick = { viewModel.openPin() },
-                    )
-                }
             }
         }
     }

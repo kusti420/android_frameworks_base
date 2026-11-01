@@ -17,7 +17,6 @@
 package com.android.systemui.qs.notes
 
 import android.content.Context
-import android.content.Intent
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.deviceentry.domain.interactor.DeviceEntryInteractor
@@ -83,25 +82,4 @@ constructor(
             )
     }
 
-    /** The launcher intent of p!n for the current user, or null when it is not installed. */
-    fun pinLaunchIntent(): Intent? =
-        try {
-            context
-                .createContextAsUser(userTracker.userHandle, 0)
-                .packageManager
-                .getLaunchIntentForPackage(PIN_PACKAGE)
-        } catch (e: Exception) {
-            null
-        }
-
-    /** Opens p!n (collapsing the shade; on the lock screen through the keyguard). */
-    fun openPin() {
-        val intent = pinLaunchIntent() ?: return
-        activityStarter.get().startActivity(intent, true /* dismissShade */)
-    }
-
-    companion object {
-        /** p!n, the F-Droid notes-as-notifications app (GPL-3.0-or-later, github.com/nproth/pin). */
-        const val PIN_PACKAGE = "de.nproth.pin"
-    }
 }

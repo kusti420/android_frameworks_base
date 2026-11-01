@@ -22,7 +22,6 @@
     <!-- Accent button: opens the editor for a new note. [CHAR LIMIT=20] -->
     <string name="ichthys_qs_notes_new">New note</string>
     <!-- Secondary button: opens the p!n app (only shown when it is installed). [CHAR LIMIT=20] -->
-    <string name="ichthys_qs_notes_open_pin">open p!n</string>
     <!-- Locked: the only button; dismisses the lock screen, then opens this page. [CHAR LIMIT=24] -->
     <string name="ichthys_qs_notes_unlock">Unlock to open</string>
     <!-- Content description of the page indicator's pin glyph: tapping it shows the notes page. [CHAR LIMIT=NONE] -->
