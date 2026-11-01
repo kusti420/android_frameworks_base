@@ -208,18 +208,24 @@ constructor(
             val blur by animateFloatAsState(if (shown) 1f else 0f, tween(SHEET_MS), label = "ichthysSheetBlur")
             Box(modifier.fillMaxSize()) {
                 clock { blur }
-                AnimatedVisibility(
-                    shown,
-                    enter = slideInVertically(tween(SHEET_MS, easing = Easings.Emphasized)) { it / 4 } +
-                        fadeIn(tween(SHEET_MS)),
-                    exit = slideOutVertically(tween(SHEET_MS, easing = Easings.Emphasized)) { it / 4 } +
-                        fadeOut(tween(SHEET_MS * 2 / 3)),
-                ) {
-                    Column(Modifier.fillMaxSize()) {
-                        Spacer(Modifier.height(SHEET_TOP_DP.dp))
+                // IchthysOS: only the header slides and fades. The stack's placeholder stands
+                // still where the sheet puts it: the NSSL is a view outside this layer (no fade
+                // reaches it) that follows the placeholder's bounds, so inside the slide it rode
+                // up the screen with the animation, in front of everything, before the cards were
+                // counted. The header keeps its height while it animates (a slide, no size
+                // change), so the stack never moves under it.
+                Column(Modifier.fillMaxSize()) {
+                    Spacer(Modifier.height(SHEET_TOP_DP.dp))
+                    AnimatedVisibility(
+                        shown,
+                        enter = slideInVertically(tween(SHEET_MS, easing = Easings.Emphasized)) { it } +
+                            fadeIn(tween(SHEET_MS)),
+                        exit = slideOutVertically(tween(SHEET_MS, easing = Easings.Emphasized)) { it } +
+                            fadeOut(tween(SHEET_MS * 2 / 3)),
+                    ) {
                         dockProvider.SheetHeader(onClose = { notifRepository.setSheetOpen(false) })
-                        Notifications(aodAlignment = Alignment.TopStart)
                     }
+                    if (shown) Notifications(aodAlignment = Alignment.TopStart)
                 }
             }
         }

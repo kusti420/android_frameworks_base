@@ -47,6 +47,9 @@ constructor(
     private val sceneInteractor: SceneInteractor,
     private val sharedNotificationContainerInteractor: SharedNotificationContainerInteractor,
     private val notificationStackAppearanceInteractor: NotificationStackAppearanceInteractor,
+    // IchthysOS quiet dock (last, defaulted: the test fixtures keep compiling).
+    private val ichthysLockNotifRepository:
+        com.android.systemui.keyguard.data.repository.IchthysLockNotifRepository? = null,
 ) {
     @OptIn(ExperimentalCoroutinesApi::class)
     val isStackConstrained: Flow<Boolean> =
@@ -100,7 +103,11 @@ constructor(
                 notificationStackAppearanceInteractor.constrainedAvailableSpace,
                 sharedNotificationContainerInteractor.useExtraShelfSpace,
                 sharedNotificationContainerInteractor.notificationStackChanged,
-            ) { showLimited, availableHeight, useExtraShelfSpace, _ ->
+                // IchthysOS quiet dock: opening or closing the dock's sheet counts the stack
+                // again (NotificationStackSizeCalculator lifts the lock screen's count while it is
+                // open); before, the sheet showed whatever was counted last (often the bare shelf).
+                ichthysLockNotifRepository?.sheetOpen ?: flowOf(false),
+            ) { showLimited, availableHeight, useExtraShelfSpace, _, _ ->
                 if (showLimited) {
                     LockscreenDisplayConfig(
                         isOnLockscreen = true,

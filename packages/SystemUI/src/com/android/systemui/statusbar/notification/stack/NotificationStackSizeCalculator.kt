@@ -74,7 +74,22 @@ constructor(
     // IchthysOS: user override of the lock screen notification limit (last, defaulted, so the
     // existing test constructions keep compiling).
     private val systemSettings: SystemSettingsRepository? = null,
+    // IchthysOS quiet dock: while its sheet is open the stack is read there (see sheetOpen()).
+    private val ichthysLockNotifRepository:
+        com.android.systemui.keyguard.data.repository.IchthysLockNotifRepository? = null,
 ) {
+
+    /**
+     * IchthysOS quiet dock: the dock's sheet is open (dock / glance modes, not cards). The sheet
+     * is where the notifications are read, so only its space limits the stack: not the lock
+     * screen's count (the owner's ichthys_lockscreen_max_notifs, "none, shelf only" included, or
+     * the device's) and not the minimalism's one-important rule. Those left the sheet with the
+     * bare shelf (its icon disc) and no cards.
+     */
+    private fun ichthysSheetOpen(): Boolean {
+        val repo = ichthysLockNotifRepository ?: return false
+        return repo.sheetOpen.value && !repo.settings.value.cards
+    }
 
     /** IchthysOS: Settings.System [LOCKSCREEN_MAX_NOTIFS_KEY]; -1 = device default. */
     @Volatile private var userMaxKeyguardNotifications = -1
@@ -94,7 +109,7 @@ constructor(
 
     /** Whether we allow keyguard to show less important notifications above the shelf. */
     private val limitLockScreenToOneImportant
-        get() = NotificationMinimalism.isEnabled && minimalismSettingEnabled
+        get() = NotificationMinimalism.isEnabled && minimalismSettingEnabled && !ichthysSheetOpen()
 
     /** Minimum space between two notifications, see [calculateGapAndDividerHeight]. */
     private var dividerHeight by notNull<Float>()
@@ -282,7 +297,7 @@ constructor(
             }
         }
 
-        if (onLockscreen()) {
+        if (onLockscreen() && !ichthysSheetOpen()) {
             val increaseMaxForMedia = maxNotificationsExcludesMedia && isMediaShowingInStack
             val lockscreenMax = maxKeyguardNotifications.safeIncrementIf(increaseMaxForMedia)
             maxNotifications = min(lockscreenMax, maxNotifications)

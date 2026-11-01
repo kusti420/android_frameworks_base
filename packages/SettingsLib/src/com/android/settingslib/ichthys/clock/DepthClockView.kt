@@ -331,6 +331,21 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
 
     private fun dozeFraction(): Float = if (dozeT >= 0f) dozeT else if (dozingNow) 1f else 0f
 
+    /**
+     * IchthysOS: the clock opacity (lock_screen_custom_clock_opacity, 0..1), for the digits only.
+     * SystemUI's KeyguardCustomClockView used to put it on the whole face's view, so the date line
+     * and the weather in it (a clear night's moon icon) faded with the glass digits. The date line
+     * keeps its own strength (dimmed by the doze only); the digits (awake and dozing) are drawn
+     * through one layer at this alpha, the view's own bounds, so they look as they did.
+     */
+    var faceOpacity = 1f
+        set(v) {
+            val c = v.coerceIn(0f, 1f)
+            if (field == c) return
+            field = c
+            invalidate()
+        }
+
     override fun setClockOptions(showDate: Boolean, dotShape: Int, showUnlit: Boolean) {
         super.setClockOptions(showDate, dotShape, showUnlit)
         layoutFace(width, height)
@@ -1542,9 +1557,18 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         // IchthysOS polish: awake and dozing looks cross-fade with the doze amount (SystemUI's
         // doze animation); without one, it is one or the other. IchthysOS: projected onto the
         // wallpaper's wall, the digits are the depth layers' (ProjectedClock); only the date here.
-        if (placement != PLACEMENT_PROJECTED) {
+        if (placement != PLACEMENT_PROJECTED && faceOpacity > 0f) {
+            // IchthysOS: the clock opacity is the digits' alone ([faceOpacity]); the layer is this
+            // view's own box (the canvas is moved by the fit's shift), never larger.
+            val faded = faceOpacity < 0.999f
+            val save =
+                if (faded) {
+                    canvas.saveLayerAlpha(-shift, 0f, width - shift, height.toFloat(),
+                        (255 * faceOpacity).toInt().coerceIn(0, 255))
+                } else -1
             if (doze < 1f) drawAwake(canvas, path, 1f - doze)
             if (doze > 0f) drawDozing(canvas, path, doze)
+            if (faded) canvas.restoreToCount(save)
         }
         canvas.restore()
         if (!dateRect.isEmpty) dateRect.offset(shift, 0f)

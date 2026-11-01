@@ -1006,7 +1006,12 @@ half4 main(float2 p) {
             float full = 1.0 - abs(2.0 * moonPhase - 1.0);
             float halo = exp(-1.4 * max(d - 1.0, 0.0)) * 0.06 * (0.25 + 0.75 * full);
             float k = moonVis * s * clearSky;
-            o = mix(o, float3(0.80, 0.81, 0.86) * mix(0.03, 1.0, lit), disc * k);
+            // IchthysOS: the disc is solid wherever the moon is up: cloud cover only dims its
+            // light (to 0.6 under a full deck), it never makes it see-through. Veiled by the
+            // cover's alpha it was a faint ghost on a cloudy evening (about 3 %), read as the
+            // clock's opacity. The halo stays veiled by the cloud.
+            float veil = mix(0.6, 1.0, clearSky);
+            o = mix(o, float3(0.80, 0.81, 0.86) * (mix(0.03, 1.0, lit) * veil), disc * moonVis * s);
             o += float3(0.45, 0.5, 0.65) * (halo * (1.0 - disc) * k);
         }
     }

@@ -308,6 +308,12 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
         val oldTop = paddingTop
         setPadding(dp(24), dp(BASE_TOP_DP) + marginTopPx, dp(24), 0)
         target = floatArrayOf(scale, offsetX.toFloat(), rotation, opacity / 100f)
+        // IchthysOS: on the Depth face the opacity is its digits' only (DepthClockView.faceOpacity):
+        // on the face's root it also faded the date line and the weather in it (the moon icon).
+        var depthFace: DepthClockView? = null
+        forEachFace(clock) { f -> if (f is DepthClockView) depthFace = f }
+        val depth = depthFace
+        val rootAlpha = if (depth != null) 1f else opacity / 100f
         // IchthysOS polish: scaled about its top (as the editor and the weather line expect) and
         // turned about its middle, for every angle: the pivot is always the middle and a
         // translation puts the scaled top back. So turning a scaled clock never makes it jump (it
@@ -324,15 +330,30 @@ class KeyguardCustomClockView(context: Context) : FrameLayout(context) {
                 .translationX(offsetX.toFloat())
                 .translationY(topCompensation(clock, scale))
                 .rotation(rotation)
-                .alpha(opacity / 100f)
+                .alpha(rootAlpha)
                 .setDuration(GLIDE_MS)
                 .setInterpolator(GLIDE)
-                .withEndAction { gliding = false }
+                .apply {
+                    // The animator is the view's own and keeps its listener: set it every glide.
+                    val from = depth?.faceOpacity ?: 1f
+                    val to = opacity / 100f
+                    setUpdateListener(
+                        if (depth == null || from == to) null
+                        else android.animation.ValueAnimator.AnimatorUpdateListener { a ->
+                            depth.faceOpacity = from + (to - from) * a.animatedFraction
+                        }
+                    )
+                }
+                .withEndAction {
+                    gliding = false
+                    depth?.faceOpacity = opacity / 100f
+                }
                 .start()
         } else {
             clock.animate().cancel()
             gliding = false
-            clock.alpha = opacity / 100f
+            clock.alpha = rootAlpha
+            depth?.faceOpacity = opacity / 100f
             clock.scaleX = scale
             clock.scaleY = scale
             clock.translationX = offsetX.toFloat()
