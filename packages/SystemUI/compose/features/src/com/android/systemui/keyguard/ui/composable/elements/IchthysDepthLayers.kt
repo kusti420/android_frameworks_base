@@ -487,10 +487,12 @@ private fun ProjectedClockLayer(
             }
         val alpha = (1f - dozeAmount) * shown
         if (sky != null && layers.livingSky) {
-            LivingSkyLayer(repository, layers, sky, alpha, Modifier.matchParentSize(),
+            // IchthysOS: ProjectedClockLayer is not a BoxScope; its parent is the full-screen
+            // backdrop Box, so fillMaxSize gives the same screen-sized (bounded) layer.
+            LivingSkyLayer(repository, layers, sky, alpha, Modifier.fillMaxSize(),
                 mask = cutout, hole = hole, bounds = bounds)
         } else {
-            WindowImage(repository, cutout, alpha, Modifier.matchParentSize(), hole = hole,
+            WindowImage(repository, cutout, alpha, Modifier.fillMaxSize(), hole = hole,
                 bounds = bounds)
         }
     }
