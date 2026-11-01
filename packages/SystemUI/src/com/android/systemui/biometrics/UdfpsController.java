@@ -62,6 +62,7 @@ import android.util.Log;
 import android.view.HapticFeedbackConstants;
 import android.view.Gravity;
 import android.view.LayoutInflater;
+import android.view.Display;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
@@ -155,6 +156,8 @@ public class UdfpsController implements DozeReceiver, Dumpable {
     private static final long MIN_UNCHANGED_INTERACTION_LOG_INTERVAL = 50;
 
     private final Context mContext;
+    /** IchthysOS: for the panel's current brightness, the dim layer's input (computeAutoDimAlpha). */
+    private final DisplayManager mDimDisplayManager;
     private final Execution mExecution;
     private final FingerprintManager mFingerprintManager;
     @NonNull private final LayoutInflater mInflater;
@@ -744,6 +747,7 @@ public class UdfpsController implements DozeReceiver, Dumpable {
             MSDLPlayer msdlPlayer,
             Lazy<SceneInteractor> sceneInteractorLazy) {
         mContext = context;
+        mDimDisplayManager = displayManager;
         mExecution = execution;
         mVibrator = vibrator;
         mInflater = inflater;
@@ -1364,7 +1368,7 @@ public class UdfpsController implements DozeReceiver, Dumpable {
     }
 
     // ---- Runtime-tunable UDFPS optics (no rebuild needed to sweep these) ----
-    //   persist.sys.udfps.dim_alpha    -1 = auto (brightness-scaled, 40-200), 0 = no dim,
+    //   persist.sys.udfps.dim_alpha    -1 = auto (nits-matched, 0-245), 0 = no dim,
     //                                  1-255 = fixed alpha                      (default -1)
     //   persist.sys.udfps.dim_session  bool   dim held for whole enroll session (default false:
     //                                         dim only while the finger is down)
@@ -1404,27 +1408,64 @@ public class UdfpsController implements DozeReceiver, Dumpable {
      */
     private int computeAutoDimAlpha() {
         try {
-            final int max = mContext.getResources().getInteger(
-                    com.android.internal.R.integer.config_screenBrightnessSettingMaximum);
-            final int cur = android.provider.Settings.System.getIntForUser(
-                    mContext.getContentResolver(),
-                    android.provider.Settings.System.SCREEN_BRIGHTNESS,
-                    max, android.os.UserHandle.USER_CURRENT);
-            if (max <= 0) {
+            // The panel's backlight -> nits table (the one DisplayDeviceConfig splines), so the
+            // dim is computed in light, not in slider units: slider 50 % is ~170 nits here, not
+            // half of 547, which is why a linear guess under-dimmed and the screen flashed.
+            final android.content.res.Resources res = mContext.getResources();
+            final int[] backlight = res.getIntArray(
+                    com.android.internal.R.array.config_screenBrightnessBacklight);
+            final android.content.res.TypedArray nitsArray = res.obtainTypedArray(
+                    com.android.internal.R.array.config_screenBrightnessNits);
+            final float[] nits = new float[nitsArray.length()];
+            for (int i = 0; i < nits.length; i++) {
+                nits[i] = nitsArray.getFloat(i, 0f);
+            }
+            nitsArray.recycle();
+            if (backlight.length < 2 || nits.length != backlight.length) {
                 return DEFAULT_DIM_ALPHA;
             }
-            // Fraction of the HBM level the screen is already at. Clamped so we never fully black
-            // the screen out and never leave it completely undimmed.
-            final float ratio = Math.max(0f, Math.min(1f, (float) cur / (float) max));
-            final int alpha = Math.round((1f - ratio) * 255f);
-            // Capped at 200 so the UI underneath always stays readable, even at minimum brightness.
-            return Math.max(40, Math.min(200, alpha));
+            final int maxBacklight = backlight[backlight.length - 1];
+            final float brightness = mDimDisplayManager.getBrightness(Display.DEFAULT_DISPLAY);
+            final float current = nitsAt(brightness * maxBacklight, backlight, nits);
+            // What the panel shows while the fingerprint mask is on: the HAL writes
+            // mask_brightness = hbm_level (331 on this panel = 547 nits in the same table).
+            final int hbmLevel = SystemProperties.getInt(PROP_HBM_LEVEL, DEFAULT_HBM_LEVEL);
+            final float hbm = nitsAt(hbmLevel, backlight, nits);
+            if (hbm <= 0f || current >= hbm) {
+                return 0; // already brighter than the mask level: nothing to hide
+            }
+            // A black layer at alpha a scales the sRGB value by (1 - a); the light by about
+            // (1 - a)^2.2. Solve (1 - a)^2.2 * hbm = current.
+            final double keep = Math.pow(current / hbm, 1.0 / 2.2);
+            final int alpha = (int) Math.round((1.0 - keep) * 255.0);
+            // Never fully black: the user must still see the lock screen / enrolment UI.
+            return Math.max(0, Math.min(MAX_AUTO_DIM_ALPHA, alpha));
         } catch (RuntimeException e) {
             Log.w(TAG, "computeAutoDimAlpha failed, using default", e);
             return DEFAULT_DIM_ALPHA;
         }
     }
 
+    /** Linear interpolation of the backlight -> nits table at [level]. */
+    private static float nitsAt(float level, int[] backlight, float[] nits) {
+        if (level <= backlight[0]) {
+            return nits[0];
+        }
+        for (int i = 1; i < backlight.length; i++) {
+            if (level <= backlight[i]) {
+                final float span = backlight[i] - backlight[i - 1];
+                final float t = span <= 0f ? 1f : (level - backlight[i - 1]) / span;
+                return nits[i - 1] + (nits[i] - nits[i - 1]) * t;
+            }
+        }
+        return nits[nits.length - 1];
+    }
+
+    /** IchthysOS: the mask_brightness level the fingerprint HAL writes (Session.cpp setHBM). */
+    private static final String PROP_HBM_LEVEL = "persist.sys.udfps.hbm_level";
+    private static final int DEFAULT_HBM_LEVEL = 331;
+    /** The darkest the auto dim goes: alpha 245 keeps ~1 % of the light, enough to see the UI. */
+    private static final int MAX_AUTO_DIM_ALPHA = 245;
     private static final int DEFAULT_DIM_ALPHA = 180;
 
     private void showDimLayer() {
