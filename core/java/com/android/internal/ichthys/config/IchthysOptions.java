@@ -47,6 +47,7 @@ final class IchthysOptions {
         registerStatusBar(s);
         registerNotifications(s);
         registerPrivacy(s);
+        registerSecurity(s);
         registerBackground(s);
         registerUi(s);
         registerApps(s);
@@ -446,6 +447,25 @@ final class IchthysOptions {
                 "Advertise decoy services on the local network (mDNS), so device lists don't "
                         + "show what the phone is.",
                 setting(GLOBAL, "network_decoy_enabled")));
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // security.*
+
+    // IchthysOS: auto reboot (services/core/.../ichthys/IchthysAutoRebootService.java). The key
+    // holds milliseconds; the names are the choices Settings offers (IchthysOS > System >
+    // Security). Unset is 18 hours, the GrapheneOS default.
+    private static final String[] AUTO_REBOOT = {"off", "1h", "2h", "4h", "8h", "12h", "18h",
+            "24h", "36h", "48h", "72h"};
+    private static final String[] AUTO_REBOOT_MS = {"0", "3600000", "7200000", "14400000",
+            "28800000", "43200000", "64800000", "86400000", "129600000", "172800000",
+            "259200000"};
+
+    private static void registerSecurity(OptionSchema s) {
+        s.add(Option.enumeration("security.autoReboot", AUTO_REBOOT, AUTO_REBOOT_MS, "18h",
+                "Restart after the phone stayed locked this long with no unlock, so user data "
+                        + "is encrypted at rest again (needs a PIN, pattern or password).",
+                setting(GLOBAL, "ichthys_auto_reboot_timeout")));
     }
 
     private static Binding.Store store(IchthysShields.Table table) {

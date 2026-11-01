@@ -3359,6 +3359,17 @@ public final class SystemServer implements Dumpable {
         }
         t.traceEnd();
 
+        // IchthysOS: auto reboot, restart after the phone stayed locked for the chosen time
+        // (GrapheneOS style), so user data goes back to rest.
+        t.traceBegin("StartIchthysAutoRebootService");
+        try {
+            mSystemServiceManager.startService(
+                    com.android.server.ichthys.IchthysAutoRebootService.class);
+        } catch (Throwable e) {
+            reportWtf("starting IchthysAutoRebootService", e);
+        }
+        t.traceEnd();
+
         // IchthysOS: Guard, per-app network firewall, DNS/connect monitor and tracker scan
         // (kusti420/ichthysos-tracker#27). Connectivity and NetworkPolicyManager are up by now;
         // the firewall is rebuilt at its first boot phase (ACTIVITY_MANAGER_READY), before
