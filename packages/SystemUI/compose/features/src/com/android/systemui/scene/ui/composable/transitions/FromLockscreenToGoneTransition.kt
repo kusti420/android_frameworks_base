@@ -98,7 +98,7 @@ fun TransitionBuilder.lockscreenToGoneWithAnimationOverLockscreenTransition() {
     }
     // IchthysOS: the notification dock and the "Customize lock screen" button are chrome, not
     // part of the depth reveal: they go first, before the layers start to move.
-    fractionRange(end = 0.25f) {
+    fractionRange(end = 0.08f) {
         fade(IchthysDockElementKey)
         fade(LockscreenElementKeys.SettingsMenu)
     }

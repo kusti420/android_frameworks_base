@@ -165,6 +165,9 @@ constructor(
     dumpManager: DumpManager,
     @Application applicationScope: CoroutineScope,
     @ShadeDisplayAware private val context: Context,
+    // IchthysOS: lock screen notification mode (quiet dock / cards / glance), see keyguardAlpha.
+    private val ichthysLockNotifRepository:
+        com.android.systemui.keyguard.data.repository.IchthysLockNotifRepository,
     @ShadeDisplayAware configurationInteractor: ConfigurationInteractor,
     communalInteractor: CommunalInteractor,
     private val keyguardInteractor: KeyguardInteractor,
@@ -826,12 +829,26 @@ constructor(
                 )
                 .dumpValue("alphaForTransitionsAndShade")
 
+        // IchthysOS quiet dock: on the lock screen without the shade the stack is only shown in
+        // the cards mode or while the dock's sheet is open. Otherwise the NSSL (added to the window
+        // after the scene, with no Notifications.Stack element placing it) sat at the window
+        // origin and its shelf drew the notification icons in a disc over the status bar.
+        val ichthysStackShown: Flow<Boolean> =
+            combine(
+                ichthysLockNotifRepository.settings,
+                ichthysLockNotifRepository.sheetOpen,
+                isOnLockscreenWithoutShade,
+            ) { settings, sheetOpen, lockscreenOnly ->
+                !lockscreenOnly || settings.cards || sheetOpen
+            }
         return isKeyguardNotVisible
             .flatMapLatest { isKeyguardNotVisible ->
                 if (isKeyguardNotVisible) {
                     alphaForShadeAndQsExpansion
                 } else {
-                    alphaForTransitionsAndShade
+                    combine(alphaForTransitionsAndShade, ichthysStackShown) { a, shown ->
+                        if (shown) a else 0f
+                    }
                 }
             }
             .distinctUntilChanged()

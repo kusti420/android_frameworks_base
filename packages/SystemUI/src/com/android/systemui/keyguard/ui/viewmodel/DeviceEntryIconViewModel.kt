@@ -44,6 +44,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNot
@@ -195,7 +197,9 @@ constructor(
         }
     }
 
-    val useBackgroundProtection: StateFlow<Boolean> = isUdfpsSupported
+    // IchthysOS: no dark disc behind the fingerprint icon. The icon styles (IchthysFpIconDrawable)
+    // draw their own look on the wallpaper, and the disc outlived the lock screen during the unlock.
+    val useBackgroundProtection: StateFlow<Boolean> = MutableStateFlow(false).asStateFlow()
     val burnInOffsets: Flow<BurnInOffsets> =
         deviceEntryUdfpsInteractor.isUdfpsEnrolledAndEnabled
             .flatMapLatest { udfpsEnrolled ->

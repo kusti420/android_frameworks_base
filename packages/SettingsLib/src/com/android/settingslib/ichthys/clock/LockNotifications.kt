@@ -83,7 +83,7 @@ object LockNotifications {
     const val ALPHA_IDLE = 0.60f
     const val ALPHA_AOD = 0.40f
     /** The newest line after its arrival fade. */
-    const val LINE_DIM = 0.55f
+    const val LINE_DIM = 0.78f // IchthysOS: readable at rest (owner: 0.55 was not)
     const val IDLE_MS = 10_000L
     const val ARRIVAL_MS = 3_000L
 

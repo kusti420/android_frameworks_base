@@ -355,6 +355,13 @@ constructor(
                 fontSize = LockNotifications.DOCK_LINE_SP.sp,
                 lineHeight = 14.sp,
                 color = ink,
+                // IchthysOS: a soft dark shadow so the line reads on a bright wallpaper too.
+                style = androidx.compose.ui.text.TextStyle(
+                    shadow = androidx.compose.ui.graphics.Shadow(
+                        color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.55f),
+                        blurRadius = 6f,
+                    )
+                ),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier =
