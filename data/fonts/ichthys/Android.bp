@@ -27,6 +27,9 @@ license {
         "OFL-rubikbubbles.txt",
         "OFL-bowlbyone.txt",
         "OFL-bungeeinline.txt",
+        "OFL-saira.txt",
+        "OFL-zentokyozoo.txt",
+        "OFL-bigshouldersinline.txt",
     ],
 }
 
@@ -161,6 +164,31 @@ prebuilt_font {
     product_specific: true,
 }
 
+// IchthysOS: more clock display faces after the owner's references (DepthClockView
+// FONT_CAPSULE: Saira, rounded-square glass digits; FONT_STRIPE: Zen Tokyo Zoo, two-line
+// striped digits; FONT_LINES: Big Shoulders Inline, condensed inline digits).
+
+prebuilt_font {
+    name: "IchthysSaira-VF.ttf",
+    src: "Saira-VF.ttf",
+    filename: "Saira-VF.ttf",
+    product_specific: true,
+}
+
+prebuilt_font {
+    name: "IchthysZenTokyoZoo-Regular.ttf",
+    src: "ZenTokyoZoo-Regular.ttf",
+    filename: "ZenTokyoZoo-Regular.ttf",
+    product_specific: true,
+}
+
+prebuilt_font {
+    name: "IchthysBigShouldersInline-VF.ttf",
+    src: "BigShouldersInline-VF.ttf",
+    filename: "BigShouldersInline-VF.ttf",
+    product_specific: true,
+}
+
 prebuilt_etc {
     name: "fonts_customization.xml",
     src: "fonts_customization.xml",
@@ -185,5 +213,8 @@ prebuilt_etc {
         "IchthysRubikBubbles-Regular.ttf",
         "IchthysBowlbyOne-Regular.ttf",
         "IchthysBungeeInline-Regular.ttf",
+        "IchthysSaira-VF.ttf",
+        "IchthysZenTokyoZoo-Regular.ttf",
+        "IchthysBigShouldersInline-VF.ttf",
     ],
 }

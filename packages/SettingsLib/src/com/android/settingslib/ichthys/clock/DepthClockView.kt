@@ -522,7 +522,8 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
             font = newFont
             datePos = newPos
             digitPaint.typeface = digitTypeface(font)
-            digitPaint.letterSpacing = if (font in CONDENSED) -0.03f else 0f
+            // IchthysOS: Black sits tight too, like its reference.
+            digitPaint.letterSpacing = if (font in CONDENSED || font == FONT_BLACK) -0.03f else 0f
             measurePaint.set(digitPaint)
             requestLayout()
             layoutFace(width, height)
@@ -615,7 +616,13 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         measurePaint.textSize = 100f
         val textW = max(pairWidth(measurePaint), 1f)
         val byWidth = w * WIDTH_SHARE / textW * 100f
-        val byScreen = resources.displayMetrics.heightPixels * MAX_SCREEN_SHARE / LINE_STEP
+        // IchthysOS: a face whose figures sit small in their em (Zen Tokyo Zoo's are 0.43 em)
+        // gets the same digit height under the screen cap as the usual ~0.72 em ones; the cap
+        // assumed every face's line took LINE_STEP text sizes, so those came out 60 % as tall.
+        val capEm = capHeight(measurePaint) / 100f
+        val small =
+            if (!squareFont && capEm > 0.05f && capEm < SMALL_CAP_EM) TYPICAL_CAP_EM / capEm else 1f
+        val byScreen = resources.displayMetrics.heightPixels * MAX_SCREEN_SHARE / LINE_STEP * small
         return min(byWidth, byScreen)
     }
 
@@ -2242,8 +2249,13 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         const val FONT_BUBBLE = 15       // Rubik Bubbles, inflated rounded digits
         const val FONT_BLOCK = 16        // Bowlby One, chunky rounded black
         const val FONT_INLINE = 17       // Bungee Inline, striped inline digits
+        /** IchthysOS: faces matched to the owner's lock screen references (SIL OFL 1.1). */
+        const val FONT_CAPSULE = 18      // Saira SemiBold, rounded-square "glass" digits
+        const val FONT_BLACK = 19        // Rubik Black, chunky rounded figures, set tight
+        const val FONT_STRIPE = 20       // Zen Tokyo Zoo, two-line striped digits
+        const val FONT_LINES = 21        // Big Shoulders Inline, condensed inline digits
         private val CONDENSED = setOf(FONT_TALL, FONT_FLEX, FONT_THIN, FONT_TEKO, FONT_CONDENSED,
-            FONT_POSTER, FONT_COMPACT)
+            FONT_POSTER, FONT_COMPACT, FONT_LINES)
 
         /** Settings.Secure: the date / status line above ([DATE_ABOVE]) or below the digits. */
         const val KEY_DATE_POS = "ichthys_clock_date_pos"
@@ -2271,6 +2283,9 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
         private const val MAX_SCREEN_SHARE = 0.27f
         /** One line of digits takes about this many text sizes, for measuring. */
         private const val LINE_STEP = 0.76f
+        /** IchthysOS: see [digitSizeFor]: below this cap height (in ems) a face's figures are small. */
+        private const val SMALL_CAP_EM = 0.6f
+        private const val TYPICAL_CAP_EM = 0.72f
         private val INK = Color.argb(150, 3, 14, 17)
         /** The depth look's palette (the koi concept's pond light). */
         val POND_CYAN = Color.rgb(159, 231, 221)
@@ -2304,6 +2319,11 @@ constructor(context: Context, attrs: AttributeSet? = null) : IchthysClockFaceVie
                         FONT_BUBBLE -> variable(PRODUCT_FONTS + "RubikBubbles-Regular.ttf", "")
                         FONT_BLOCK -> variable(PRODUCT_FONTS + "BowlbyOne-Regular.ttf", "")
                         FONT_INLINE -> variable(PRODUCT_FONTS + "BungeeInline-Regular.ttf", "")
+                        FONT_CAPSULE -> variable(PRODUCT_FONTS + "Saira-VF.ttf", "'wdth' 100, 'wght' 600")
+                        FONT_BLACK -> variable(FONTS + "Rubik-VF.ttf", "'wght' 900")
+                        FONT_STRIPE -> variable(PRODUCT_FONTS + "ZenTokyoZoo-Regular.ttf", "")
+                        FONT_LINES ->
+                            variable(PRODUCT_FONTS + "BigShouldersInline-VF.ttf", "'wght' 700, 'opsz' 72")
                         else ->
                             // Big Shoulders Display Black (IchthysDepth ships it), else Roboto
                             // Flex at its narrowest.

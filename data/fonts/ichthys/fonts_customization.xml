@@ -114,6 +114,16 @@
     <family customizationType="new-named-family" name="bungee-inline">
         <font weight="400" style="normal">BungeeInline-Regular.ttf</font>
     </family>
+    <family customizationType="new-named-family" name="saira">
+        <font weight="400" style="normal">Saira-VF.ttf<axis tag="wght" stylevalue="400" /></font>
+        <font weight="600" style="normal">Saira-VF.ttf<axis tag="wght" stylevalue="600" /></font>
+    </family>
+    <family customizationType="new-named-family" name="zen-tokyo-zoo">
+        <font weight="400" style="normal">ZenTokyoZoo-Regular.ttf</font>
+    </family>
+    <family customizationType="new-named-family" name="big-shoulders-inline">
+        <font weight="700" style="normal">BigShouldersInline-VF.ttf<axis tag="wght" stylevalue="700" /></font>
+    </family>
 
     <!-- Medium faces for config_bodyFontFamilyMedium / config_headlineFontFamilyMedium. -->
     <alias name="instrument-sans-medium" to="instrument-sans" weight="500" />
