@@ -43,7 +43,7 @@ final class CrDroidOptions {
         s.add(Option.integer("lockscreen.edgeLight.strokeWidth", 8L, 2L, 32L, "Stroke width", Binding.setting(Binding.Store.SYSTEM, "edge_light_stroke_width")));
         s.add(Option.enumeration("lockscreen.edgeLight.style", new String[] {"defaultLeftRight", "frameAllSides"}, new String[] {"default", "rounded"}, "defaultLeftRight", "Render style", Binding.setting(Binding.Store.SYSTEM, "edge_light_style")));
         s.add(Option.bool("lockscreen.enablePowerMenu", Boolean.TRUE, "Power menu", Binding.setting(Binding.Store.SYSTEM, "lockscreen_enable_power_menu")));
-        s.add(Option.bool("lockscreen.enableRippleEffect", Boolean.TRUE, "Ripple effect", Binding.setting(Binding.Store.SYSTEM, "enable_ripple_effect")));
+        s.add(Option.bool("lockscreen.enableRippleEffect", Boolean.FALSE, "Ripple effect", Binding.setting(Binding.Store.SYSTEM, "enable_ripple_effect")));
         s.add(Option.bool("lockscreen.fingerprint.animBp", Boolean.TRUE, "In app prompts", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_anim_bp")));
         s.add(Option.color("lockscreen.fingerprint.animColor", null, "Fingerprint: custom color", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_anim_color")).storedAsInt());
         s.add(Option.enumeration("lockscreen.fingerprint.animColorMode", new String[] {"accent", "white", "custom", "rainbow"}, new String[] {"0", "1", "2", "3"}, "accent", "Animation color", Binding.setting(Binding.Store.SYSTEM, "ichthys_udfps_anim_color_mode")));

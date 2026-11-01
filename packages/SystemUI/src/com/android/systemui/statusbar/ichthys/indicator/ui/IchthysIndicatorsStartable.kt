@@ -449,6 +449,9 @@ constructor(
                             !dotSettings.enabled -> null
                             device.dozing -> sources.aodDot.takeIf { dotSettings.onAod }
                             device.statusBarHidden -> null
+                            // IchthysOS: the lock screen shows its notifications itself (the
+                            // quiet dock, cards or glance counts), so no dot over its status bar.
+                            device.keyguardShowing -> null
                             else -> sources.statusBarDot
                         }
                     DotUiState(

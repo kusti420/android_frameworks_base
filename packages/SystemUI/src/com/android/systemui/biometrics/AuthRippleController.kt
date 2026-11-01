@@ -136,7 +136,7 @@ constructor(
             Settings.System.getIntForUser(
                 sysuiContext.contentResolver,
                 Settings.System.ENABLE_RIPPLE_EFFECT,
-                1,
+                0, // IchthysOS: off by default (the accent ripple on unlock)
                 UserHandle.USER_CURRENT,
             ) == 1
         if (!rippleEnabled) {

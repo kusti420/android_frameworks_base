@@ -217,6 +217,8 @@ public class UdfpsController implements DozeReceiver, Dumpable {
     // White circle overlay for optical UDFPS illumination (replaces removed UdfpsSurfaceView).
     @Nullable private View mIlluminationView;
     @Nullable private View mFodDimView;
+    /** IchthysOS: invalidates a pending gated onUiReady when the finger lifts (see onFingerDown). */
+    private long mUiReadyToken;
     // FOD dim layer: full-screen black overlay to reduce light bleed into the optical sensor.
     // Samsung's kernel DRM pipeline would normally create this, but the SurfaceFlinger UDFPS
     // extension is not present in this tree, so we create it manually here.
@@ -1180,18 +1182,41 @@ public class UdfpsController implements DozeReceiver, Dumpable {
                 }
             };
             final View gate = mFodDimView != null ? mFodDimView : mIlluminationView;
-            if (gate != null && gate.isAttachedToWindow()) {
-                gate.getViewTreeObserver().addOnDrawListener(
-                        new android.view.ViewTreeObserver.OnDrawListener() {
-                            @Override
-                            public void onDraw() {
-                                final android.view.ViewTreeObserver.OnDrawListener self = this;
-                                gate.post(() -> {
-                                    gate.getViewTreeObserver().removeOnDrawListener(self);
-                                    gate.postOnAnimation(ready);
-                                });
-                            }
-                        });
+            if (gate != null) {
+                // The windows were just added, so the view is not attached yet: wait for the
+                // first draw, then a frame. If the finger lifted meanwhile (the overlay is gone)
+                // do nothing: a late onUiReady would raise HBM and request the UDFPS display mode
+                // with nothing to release them.
+                final long token = ++mUiReadyToken;
+                final android.view.ViewTreeObserver.OnDrawListener[] self =
+                        new android.view.ViewTreeObserver.OnDrawListener[1];
+                self[0] = () -> gate.post(() -> {
+                    if (gate.getViewTreeObserver().isAlive()) {
+                        gate.getViewTreeObserver().removeOnDrawListener(self[0]);
+                    }
+                    gate.postOnAnimation(() -> {
+                        if (token == mUiReadyToken && mIlluminationView != null) {
+                            ready.run();
+                        }
+                    });
+                });
+                if (gate.isAttachedToWindow()) {
+                    gate.getViewTreeObserver().addOnDrawListener(self[0]);
+                } else {
+                    gate.addOnAttachStateChangeListener(
+                            new View.OnAttachStateChangeListener() {
+                                @Override
+                                public void onViewAttachedToWindow(View v) {
+                                    v.removeOnAttachStateChangeListener(this);
+                                    v.getViewTreeObserver().addOnDrawListener(self[0]);
+                                }
+
+                                @Override
+                                public void onViewDetachedFromWindow(View v) {
+                                    v.removeOnAttachStateChangeListener(this);
+                                }
+                            });
+                }
             } else {
                 ready.run();
             }
@@ -1550,6 +1575,7 @@ public class UdfpsController implements DozeReceiver, Dumpable {
     }
 
     private void hideIlluminationOverlay() {
+        mUiReadyToken++; // IchthysOS: a gated onUiReady still pending must not fire now
         if (mIlluminationView != null) {
             Log.e(TAG, "hideIlluminationOverlay | removing illumination view");
             try {
