@@ -358,8 +358,14 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
                 (mSecondText != null ? STACKED_PILL_HEIGHT_DP : PILL_HEIGHT_DP) * mDensity;
         final float width = PAD_DP * mDensity * 2 + GLYPH_DP * mDensity + GAP_DP * mDensity
                 + textWidth();
-        final int height = MeasureSpec.getMode(heightMeasureSpec) == MeasureSpec.UNSPECIFIED
-                ? (int) Math.ceil(pillHeight) : MeasureSpec.getSize(heightMeasureSpec);
+        // IchthysOS: AT_MOST (a Compose AndroidView, the QS header) takes the pill's own height,
+        // capped by the limit. Taking the whole limit made the header row as tall as the screen
+        // and pushed QS's tiles off it whenever a Bluetooth device was connected.
+        final int mode = MeasureSpec.getMode(heightMeasureSpec);
+        final int pill = (int) Math.ceil(pillHeight);
+        final int height = mode == MeasureSpec.EXACTLY ? MeasureSpec.getSize(heightMeasureSpec)
+                : mode == MeasureSpec.AT_MOST
+                        ? Math.min(pill, MeasureSpec.getSize(heightMeasureSpec)) : pill;
         // A little breathing room from the icons on either side.
         setMeasuredDimension((int) Math.ceil(width + 4 * mDensity), height);
     }
