@@ -18,6 +18,7 @@ package com.android.systemui.charging
 
 import android.animation.ValueAnimator
 import android.app.KeyguardManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -43,6 +44,7 @@ import com.android.internal.annotations.VisibleForTesting
 import com.android.internal.logging.UiEvent
 import com.android.internal.logging.UiEventLogger
 import com.android.settingslib.Utils
+import com.android.settingslib.ichthys.charging.ChargingAnimationSettings
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.flags.FeatureFlags
 import com.android.systemui.flags.Flags
@@ -79,7 +81,8 @@ private const val PROXIMITY_NEAR_CM = 5f
  * color of the current theme.
  *
  * IchthysOS: this is the charger-connected animation for wired and wireless charging. The style
- * is Settings.System [ChargingAnimationSettings.KEY] (Look > Lock screen): "ripple" plays the
+ * is Settings.System [ChargingAnimationSettings.KEY] (IchthysOS > System > Battery and display):
+ * "ripple" plays the
  * stock ripple (wired) or the stock wireless animation, recoloured to the Shoal accent;
  * the other styles play a [ShoalChargingView] on the same kind of untouchable overlay window;
  * "off" plays nothing. With the screen off (or dozing) nothing plays, unless "Turn on the screen to
@@ -144,6 +147,7 @@ constructor(
     init {
         pluggedIn = batteryController.isPluggedIn
         commandRegistry.registerCommand("charging-ripple") { ChargingRippleCommand() }
+        registerPreviewReceiver()
         updateRippleColor()
     }
 
@@ -440,6 +444,47 @@ constructor(
             -1
         }
 
+    /**
+     * IchthysOS: the Settings picker plays a style once full screen when a card is tapped:
+     * [ChargingAnimationSettings.ACTION_PREVIEW], sent to SystemUI by a holder of
+     * [ChargingAnimationSettings.PREVIEW_PERMISSION] (STATUS_BAR: signature|privileged), any user.
+     * The same path as `cmd statusbar charging-ripple STYLE LEVEL`.
+     */
+    private fun registerPreviewReceiver() {
+        val receiver =
+            object : BroadcastReceiver() {
+                override fun onReceive(c: Context, intent: Intent) {
+                    if (intent.action != ChargingAnimationSettings.ACTION_PREVIEW) return
+                    val style = intent.getStringExtra(ChargingAnimationSettings.EXTRA_STYLE)
+                    if (!ChargingAnimationSettings.isStyle(style)) return
+                    if (!ValueAnimator.areAnimatorsEnabled() || !isScreenOn()) return
+                    val extra = intent.getIntExtra(ChargingAnimationSettings.EXTRA_LEVEL, -1)
+                    val level =
+                        if (extra in 0..100) extra
+                        else if (batteryLevel >= 0) batteryLevel
+                        else currentLevel()
+                    playNow(style!!, level)
+                }
+            }
+        try {
+            context.registerReceiverForAllUsers(
+                receiver,
+                IntentFilter(ChargingAnimationSettings.ACTION_PREVIEW),
+                ChargingAnimationSettings.PREVIEW_PERMISSION,
+                mainHandler,
+                Context.RECEIVER_EXPORTED,
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "charging animation preview receiver failed", e)
+        }
+    }
+
+    /** Plays [style] right away (preview / shell command); "off" plays nothing. */
+    private fun playNow(style: String, level: Int) {
+        if (style == ChargingAnimationSettings.RIPPLE) startRipple()
+        else if (style != ChargingAnimationSettings.OFF) startShoal(style, level)
+    }
+
     // Interactive = the screen is on and awake (not off, not the ambient display).
     private fun isScreenOn(): Boolean = powerManager?.isInteractive ?: true
 
@@ -521,8 +566,7 @@ constructor(
             val level =
                 args.getOrNull(1)?.toIntOrNull()
                     ?: if (batteryLevel >= 0) batteryLevel else currentLevel()
-            if (style == ChargingAnimationSettings.RIPPLE) startRipple()
-            else if (style != ChargingAnimationSettings.OFF) startShoal(style, level)
+            playNow(style, level)
         }
 
         override fun help(pw: PrintWriter) {
