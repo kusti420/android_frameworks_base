@@ -527,7 +527,10 @@ object LivingSky {
             sunColor = lin(mixC(light, floatArrayOf(255f, 255f, 255f), 0.35f)),
             sunX = 0.15f + 0.7f * dayF,
             sunY = sunY,
-            moonVis = smoothstep(-4f, -10f, e) * clear,
+            // IchthysOS: the moon's presence is the sun's depth alone. The cover dims its light in
+            // the shader (veil) and veils its halo; multiplied in here too, a cloudy night's disc
+            // was a faint ghost, much dimmer than the date line under it.
+            moonVis = smoothstep(-4f, -10f, e),
             moonPhase = moonPhase,
             // IchthysOS: from civil twilight (-6°) to a sun clear of the horizon (2°): the night
             // path below, the relit night picture above, a cross-fade between.
