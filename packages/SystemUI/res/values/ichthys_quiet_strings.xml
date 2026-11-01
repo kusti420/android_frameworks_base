@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ~ Copyright (C) 2026 IchthysOS
+  ~
+  ~ Licensed under the Apache License, Version 2.0 (the "License");
+  ~ you may not use this file except in compliance with the License.
+  ~ You may obtain a copy of the License at
+  ~
+  ~      http://www.apache.org/licenses/LICENSE-2.0
+  ~
+  ~ Unless required by applicable law or agreed to in writing, software
+  ~ distributed under the License is distributed on an "AS IS" BASIS,
+  ~ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  ~ See the License for the specific language governing permissions and
+  ~ limitations under the License.
+  -->
+<!-- IchthysOS: quiet notifications (the chip strip and fold rows in the shade; see
+     IchthysQuietNotificationsCoordinator). No dimens here on purpose: SystemUI dimens are code
+     constants in this ROM. -->
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+    <!-- Fold row label for ongoing system notifications folded out of the shade [CHAR LIMIT=20] -->
+    <string name="ichthys_quiet_system">System</string>
+    <!-- Fold row label for the folded Silent section [CHAR LIMIT=20] -->
+    <string name="ichthys_quiet_silent">Silent</string>
+    <!-- Fold row text while its notifications are shown in the list; tap folds them again [CHAR LIMIT=40] -->
+    <string name="ichthys_quiet_unfolded">shown in the list. Tap to fold</string>
+    <!-- Accessibility: tapping a chip opens the notification [CHAR LIMIT=20] -->
+    <string name="ichthys_quiet_chip_open">Open</string>
+    <!-- Accessibility: long-pressing a chip hides that notification for good [CHAR LIMIT=30] -->
+    <string name="ichthys_quiet_chip_hide">Hide this one</string>
+    <!-- Chip label for the "USB debugging connected" notification [CHAR LIMIT=24] -->
+    <string name="ichthys_quiet_usb_debugging">USB debugging</string>
+    <!-- Chip label for "Charging this device via USB" / "Supplying power" [CHAR LIMIT=24] -->
+    <string name="ichthys_quiet_charging">Charging</string>
+    <!-- Chip label when the Backstage notification's title can't be parsed [CHAR LIMIT=24] -->
+    <string name="ichthys_quiet_backstage">Backstage</string>
+    <!-- Fold row summary part: several apps running in Backstage [CHAR LIMIT=30] -->
+    <string name="ichthys_quiet_in_backstage"><xliff:g id="count" example="2">%1$d</xliff:g> in Backstage</string>
+</resources>
