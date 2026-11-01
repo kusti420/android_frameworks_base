@@ -700,9 +700,16 @@ private fun ContentScope.ShoalSharedStatusIcons(
 
 /**
  * How far below the date's bottom edge the ringer pill's bottom edge sits: (pill height 24 dp -
- * the 13 sp date's line) / 2, so the pill's centre is the date's.
+ * the 13 sp date's line) / 2 = 6 dp would centre it on the date's line.
+ *
+ * IchthysOS: 16 dp further down (owner: "too high up"): centred on the date's line it sat tight
+ * under the date and the clock, and its end ran into the weather's "high / low" line. Lower, it
+ * has room below the header text and still ends well above the Brightness row (about 15 dp of
+ * the ~30 dp gap remain). Only expanded Quick Settings draws it (showRinger), so the Shade's
+ * header is unchanged; it is drawn into the space below the header, not laid out, so nothing
+ * else moves.
  */
-private val ShoalHeaderPillDrop = 6.dp
+private val ShoalHeaderPillDrop = 22.dp
 /** IchthysOS: the ringer pill, shared between the Shade and Quick Settings scenes. */
 /** IchthysOS: the ringer pill, expanded Quick Settings' own (faded in by its transition). */
 val ShoalRingerElement = ElementKey("ShoalRinger")

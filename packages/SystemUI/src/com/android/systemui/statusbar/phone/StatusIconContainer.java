@@ -160,7 +160,14 @@ public class StatusIconContainer extends AlphaOptimizedLinearLayout {
 
     /** IchthysOS: this is the shade header's lattice; the QS header's BT pill stands in for it. */
     private boolean mUsesQsBtPill;
-    private final Runnable mQsPillListener = this::requestLayout;
+    // IchthysOS: also re-requested after the current frame: a requestLayout() that lands while
+    // the AndroidView holder above still has its own request pending is swallowed (see
+    // calculateZigzagTranslations), and the Bluetooth icon then stayed drawn next to the pill.
+    private final Runnable mQsPillListener = () -> {
+        requestLayout();
+        removeCallbacks(mZzRemeasure);
+        post(mZzRemeasure);
+    };
 
     public void setUsesQsBtPill(boolean uses) {
         mUsesQsBtPill = uses;

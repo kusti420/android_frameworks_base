@@ -154,6 +154,9 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
         mBluetoothController = Dependency.get(BluetoothController.class);
         mBluetoothController.addCallback(this);
         readSettings();
+        // IchthysOS: a pill re-attached with its level still shown counts again.
+        mAttached = true;
+        updateQsShowing();
     }
 
     @Override
@@ -164,6 +167,10 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
             mBluetoothController = null;
         }
         super.onDetachedFromWindow();
+        // IchthysOS: a detached pill (its scene left the composition) no longer hides anything.
+        // (isAttachedToWindow() is still true inside onDetachedFromWindow, hence the own flag.)
+        mAttached = false;
+        updateQsShowing();
     }
 
     private void readSettings() {
@@ -257,8 +264,7 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
             if (mQsHeader) {
                 // IchthysOS: the shade header's lattice lives elsewhere (StatusIconContainer
                 // with setUsesQsBtPill), so it hears of the QS pill through this.
-                sQsShowing = show;
-                for (Runnable r : QS_LISTENERS) r.run();
+                updateQsShowing();
             }
             if (getParent() instanceof android.view.ViewGroup) {
                 final android.view.ViewGroup parent = (android.view.ViewGroup) getParent();
@@ -285,17 +291,38 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
      * bar), so the header's lattice drops its small Bluetooth-level disc while it shows.
      */
     private boolean mQsHeader;
-    private static volatile boolean sQsShowing;
+    /**
+     * IchthysOS: the QS header pills that are attached and showing a level. The header is composed
+     * in both the Shade and the Quick Settings scene, so there are two pill instances, each
+     * reading the levels on its own background request. A single "showing" flag written by
+     * whichever instance changed last let one (e.g. a transient unknown level read in the scene
+     * being swiped away) clear it while the other still drew its pill: the lattice then put the
+     * stock "[BT] 84" Bluetooth icon back next to the pill, two Bluetooth chips on top of each
+     * other. The lattice now hides its Bluetooth icon while ANY attached pill shows.
+     */
+    private boolean mAttached;
+    private static final java.util.Set<IchthysBtBatteryView> QS_SHOWING =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
     private static final java.util.concurrent.CopyOnWriteArraySet<Runnable> QS_LISTENERS =
             new java.util.concurrent.CopyOnWriteArraySet<>();
 
     public void setQsHeader(boolean qsHeader) {
         mQsHeader = qsHeader;
+        updateQsShowing();
     }
 
-    /** Whether the QS header's pill shows a level. */
+    /** IchthysOS: records whether this pill counts as a showing QS header pill; tells listeners. */
+    private void updateQsShowing() {
+        final boolean counts = mQsHeader && mShowing && mAttached;
+        final boolean changed = counts ? QS_SHOWING.add(this) : QS_SHOWING.remove(this);
+        if (changed) {
+            for (Runnable r : QS_LISTENERS) r.run();
+        }
+    }
+
+    /** Whether a QS header pill shows a level. */
     public static boolean isQsPillShowing() {
-        return sQsShowing;
+        return !QS_SHOWING.isEmpty();
     }
 
     public static void addQsListener(Runnable r) {
