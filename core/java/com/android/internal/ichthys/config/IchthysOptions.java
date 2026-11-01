@@ -45,6 +45,7 @@ final class IchthysOptions {
     static void register(OptionSchema s) {
         registerTheme(s);
         registerStatusBar(s);
+        registerNotifications(s);
         registerPrivacy(s);
         registerBackground(s);
         registerUi(s);
@@ -338,6 +339,51 @@ final class IchthysOptions {
     }
 
     // ---------------------------------------------------------------------------------------------
+    // notifications.*
+
+    private static void registerNotifications(OptionSchema s) {
+        // Quiet notifications (SystemUI IchthysQuietNotificationsCoordinator, Guard >
+        // Notifications). Persistent and silent notifications stop filling the shade: ongoing
+        // system notifications (USB debugging, charging over USB, hotspot, VPN, screen recorder,
+        // Backstage) and the ongoing notifications of the alwaysQuiet apps leave the stack.
+        // Consumers treat an unset key as the default below.
+        s.add(Option.enumeration("notifications.quiet.foldOngoing",
+                new String[] {"chips", "oneRow", "off"}, new String[] {"0", "1", "2"}, "chips",
+                "Where ongoing system notifications go instead of the stack: a strip of small "
+                        + "chips (icon + short text) under the quick tiles, above the first "
+                        + "notification (tap opens, long-press hides that one); one dashed "
+                        + "\"System · USB debugging, charging, 2 in Backstage\" row at the end "
+                        + "of the shade that unfolds on tap; or off (stock cards).",
+                setting(SECURE, "ichthys_quiet_fold_ongoing")));
+        s.add(Option.bool("notifications.quiet.hideOngoingIcons", Boolean.TRUE,
+                "Hide the status bar icons of the folded notifications. The notification dot "
+                        + "still lights for real notifications.",
+                setting(SECURE, "ichthys_quiet_hide_icons")));
+        s.add(Option.bool("notifications.quiet.peekOnChange", Boolean.TRUE,
+                "When a folded notification changes (USB plugged, charging state), show it as a "
+                        + "normal card for three seconds before it settles into its chip or row.",
+                setting(SECURE, "ichthys_quiet_peek")));
+        s.add(Option.enumeration("notifications.quiet.silentStyle",
+                new String[] {"oneLine", "folded", "cards"}, new String[] {"0", "1", "2"},
+                "oneLine",
+                "How the Silent section shows its notifications: one line each (icon · app · "
+                        + "title) until expanded, the whole section folded into one dashed row at "
+                        + "the end of the shade, or stock cards.",
+                setting(SECURE, "ichthys_quiet_silent_style")));
+        // Per-app decisions made in Guard: kept unless a config mentions them, like the shield
+        // lists. The key ends in _pkgs so SettingsProvider hides it from apps.
+        s.add(Option.packageList("notifications.quiet.alwaysQuiet",
+                "Apps whose ongoing notifications (\"Background service running\") are always "
+                        + "folded like the system's.",
+                setting(SECURE, "ichthys_quiet_notif_pkgs")).preserved());
+        s.add(Option.stringList("notifications.quiet.hidden",
+                "Folded notifications hidden for good from a chip's long-press, as "
+                        + "\"package:channel[:tag]\" entries. Device state; Guard > "
+                        + "Notifications lists and clears them.",
+                setting(SECURE, "ichthys_quiet_hidden")).preserved());
+    }
+
+    // ---------------------------------------------------------------------------------------------
     // privacy.*
 
     private static void registerPrivacy(OptionSchema s) {
@@ -498,6 +544,43 @@ final class IchthysOptions {
                         + "plane of the wallpaper (its corners are set per wallpaper in the lock "
                         + "screen editor).",
                 setting(SECURE, "ichthys_clock_placement")));
+        // IchthysOS projected clock, styles and surfaces (ProjectedClock). The surface's points,
+        // bows and split are per wallpaper device state (ichthys_clock_quads); only the kind a
+        // new wallpaper starts with is configuration.
+        s.add(Option.enumeration("lockscreen.clock.projectedStyle",
+                new String[] {"painted", "lightStrip", "engraved", "signage", "beam", "shadow"},
+                new String[] {"0", "1", "2", "3", "4", "5"}, "painted",
+                "How the projected Depth clock is painted on its surface: painted (paint taking "
+                        + "the wall's shading), lightStrip (glowing digits, strong at night), "
+                        + "engraved (cut into the wall), signage (a matte plate under the digits), "
+                        + "beam (a projector's soft digits and cone; Painted by day) or shadow "
+                        + "(the digits are a shadow following the sun).",
+                setting(SECURE, "ichthys_clock_projected_style")));
+        s.add(Option.enumeration("lockscreen.clock.surface",
+                new String[] {"plane", "fold", "curve", "mesh"},
+                new String[] {"0", "1", "2", "3"}, "plane",
+                "The surface kind a wallpaper without a saved surface starts with: plane (one "
+                        + "quad), fold (two faces sharing a corner edge, the clock split at the "
+                        + "fold), curve (bowed top and bottom edges, a cylinder bend) or mesh "
+                        + "(3 x 3 control points).",
+                setting(SECURE, "ichthys_clock_surface")));
+        // IchthysOS lock screen notifications, the Quiet dock (LockNotifications; SystemUI's
+        // IchthysLockNotifRepository reads them, the lock screen editor writes them).
+        s.add(Option.enumeration("lockscreen.notifications.mode",
+                new String[] {"dock", "cards", "glance"}, new String[] {"0", "1", "2"}, "dock",
+                "How notifications sit on the lock screen: dock (no cards at rest; a quiet row of "
+                        + "app icons and the newest line above the shortcuts, tap or swipe up for "
+                        + "the stack as a sheet), cards (the stack of cards under the clock) or "
+                        + "glance (the dock with counts only; content after the unlock).",
+                setting(SECURE, "ichthys_lockscreen_notif_mode")));
+        s.add(Option.integer("lockscreen.notifications.anchor", 0L, 0, 85,
+                "Cards mode: where the stack starts, in percent of the screen's height from the "
+                        + "top (0 = automatic: a clear gap under the clock and its date). Never "
+                        + "above the clock, never into the fingerprint sensor's keep-out.",
+                setting(SECURE, "ichthys_lockscreen_notif_anchor")));
+        s.add(Option.bool("lockscreen.notifications.dockDim", Boolean.TRUE,
+                "Dock mode: the dock's icons dim after ten seconds without a touch.",
+                setting(SECURE, "ichthys_lockscreen_dock_dim")));
     }
 
     // ---------------------------------------------------------------------------------------------

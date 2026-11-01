@@ -220,6 +220,8 @@ fun ContentScope.ScrollingNotificationPanel(
     stackBottomPadding: () -> Dp,
     modifier: Modifier = Modifier,
     aboveNotifications: @Composable (modifier: Modifier) -> Unit = {},
+    // IchthysOS: drawn under the last notification, inside the scrolling content (fold rows).
+    belowNotifications: @Composable (modifier: Modifier) -> Unit = {},
     shouldFillMaxHeight: Boolean = false,
     shouldIncludeHeadsUpSpace: Boolean = true,
     shouldDrawScrimBackground: Boolean = true,
@@ -280,6 +282,7 @@ fun ContentScope.ScrollingNotificationPanel(
         stackTopPadding = stackTopPadding,
         stackBottomPadding = stackBottomPadding,
         aboveNotifications = aboveNotifications,
+        belowNotifications = belowNotifications,
         shouldContentFillMaxSize = shouldFillMaxHeight,
         shouldScrimBackgroundFillMaxHeight = false,
         shouldDrawScrimBackground = shouldDrawScrimBackground,
@@ -311,6 +314,8 @@ fun ContentScope.NestedScrollingNotificationPanel(
     shortContentOverscrollEffect: OffsetOverscrollEffect,
     modifier: Modifier = Modifier,
     aboveNotifications: @Composable (modifier: Modifier) -> Unit = {},
+    // IchthysOS: drawn under the last notification, inside the scrolling content (fold rows).
+    belowNotifications: @Composable (modifier: Modifier) -> Unit = {},
     shouldContentFillMaxSize: Boolean,
     shouldScrimBackgroundFillMaxHeight: Boolean,
     shouldIncludeHeadsUpSpace: Boolean = true,
@@ -582,6 +587,8 @@ fun ContentScope.NestedScrollingNotificationPanel(
                                     onStackHeightChanged(size.height + stackVerticalPaddingPx())
                                 },
                     )
+                    // IchthysOS: the quiet-notification fold rows, at the end of the shade.
+                    belowNotifications(Modifier.padding(top = 8.dp))
                     Spacer(
                         modifier =
                             Modifier.windowInsetsBottomHeight(WindowInsets.imeAnimationTarget)

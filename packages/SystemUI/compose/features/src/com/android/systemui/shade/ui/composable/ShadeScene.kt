@@ -494,6 +494,14 @@ private fun ContentScope.SingleShade(
                     modifier = Modifier.padding(horizontal = shadeHorizontalPadding),
                     onStackHeightChanged = onContentHeightChanged,
                     allowSwipeToExpandChildren = isScrimAtRest,
+                    // IchthysOS: quiet notifications, as chips above the stack and fold rows
+                    // under it.
+                    aboveNotifications = { m ->
+                        IchthysQuietChipStrip(viewModel.ichthysQuietNotifications, m)
+                    },
+                    belowNotifications = { m ->
+                        IchthysQuietFoldRows(viewModel.ichthysQuietNotifications, m)
+                    },
                 )
             },
             cutoutInsetsProvider = {
@@ -769,6 +777,13 @@ private fun ContentScope.SplitShade(
                     useVerticalOverscrollEffect = false,
                     isTransparencyEnabled = viewModel.isTransparencyEnabled,
                     onEmptySpaceClick = onEmptySpaceClick,
+                    // IchthysOS: quiet notifications (see the single shade above).
+                    aboveNotifications = { m ->
+                        IchthysQuietChipStrip(viewModel.ichthysQuietNotifications, m)
+                    },
+                    belowNotifications = { m ->
+                        IchthysQuietFoldRows(viewModel.ichthysQuietNotifications, m)
+                    },
                     modifier =
                         Modifier.weight(weight = 1f)
                             .fillMaxHeight()

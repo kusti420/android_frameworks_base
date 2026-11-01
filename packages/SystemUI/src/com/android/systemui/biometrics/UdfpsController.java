@@ -1167,10 +1167,33 @@ public class UdfpsController implements DozeReceiver, Dumpable {
 
         final View view = mOverlay.getTouchOverlay();
         if (view != null && isOptical()) {
-            if (mIgnoreRefreshRate) {
-                dispatchOnUiReady(requestId);
-            } else {
+            // IchthysOS: onUiReady is what makes the HAL raise the whole-panel mask HBM. The dim
+            // and the disc were only just added as windows; dispatching now lets HBM land a frame
+            // before them, which the eye sees as a full-screen flash. Wait until the dim (or the
+            // disc, when there is no dim) has drawn once, then one more frame for SurfaceFlinger
+            // to latch it.
+            final Runnable ready = () -> {
+                if (mIgnoreRefreshRate) {
+                    dispatchOnUiReady(requestId);
+                } else {
                     mUdfpsDisplayMode.enable(() -> dispatchOnUiReady(requestId));
+                }
+            };
+            final View gate = mFodDimView != null ? mFodDimView : mIlluminationView;
+            if (gate != null && gate.isAttachedToWindow()) {
+                gate.getViewTreeObserver().addOnDrawListener(
+                        new android.view.ViewTreeObserver.OnDrawListener() {
+                            @Override
+                            public void onDraw() {
+                                final android.view.ViewTreeObserver.OnDrawListener self = this;
+                                gate.post(() -> {
+                                    gate.getViewTreeObserver().removeOnDrawListener(self);
+                                    gate.postOnAnimation(ready);
+                                });
+                            }
+                        });
+            } else {
+                ready.run();
             }
         }
 

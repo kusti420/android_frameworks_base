@@ -33,6 +33,14 @@ interface IIchthysGuard {
     const int ACCESS_UNMETERED_ONLY = 1;
     /** Network access: none. */
     const int ACCESS_DENY = 2;
+    /**
+     * IchthysOS: setNetworkPolicy and replaceNetworkPolicies take {@code access | (reason <<
+     * ACCESS_REASON_SHIFT)}, where reason is a GuardEvent.REASON_* value: why Settings chose this
+     * access (its own rule, lockdown, a schedule, sleep). The service stamps it on every blocked
+     * event and shows it in dumpsys. 0 (an older caller) reads as REASON_POLICY.
+     */
+    const int ACCESS_REASON_SHIFT = 8;
+    const int ACCESS_MASK = 0xff;
 
     /**
      * Sets the network access of {@code uid} (an app uid, any user). Persisted and re-applied
@@ -137,4 +145,44 @@ interface IIchthysGuard {
     void setAlertMask(int mask);
 
     int getAlertMask();
+
+    // ---- IchthysOS: evidence (journal, shield proofs, counters, health) ---------------------
+
+    /**
+     * Appends a journal entry (GuardEvent.TYPE_JOURNAL) to the event ring: Settings reports what
+     * it decided (lockdown on/off, a preset applied, a schedule window, an app put to sleep, a
+     * verification run). {@code code} is a GuardEvent.JOURNAL_* value, {@code uid} the app it
+     * concerns or 0.
+     */
+    void addJournal(int uid, int code, String detail);
+
+    /**
+     * Records that a data shield decided for {@code uid} (GuardEvent.TYPE_SHIELD, {@code code} a
+     * GuardEvent.SHIELD_* value). Called by the platform parts that make the decision
+     * (ContactsProvider, CalendarProvider, TelephonyProvider); the location service reports
+     * in-process. Rate-limited per uid and code. Callers must be preinstalled system apps or hold
+     * MANAGE_ICHTHYS_GUARD.
+     */
+    void noteShield(int uid, int code, String detail);
+
+    /**
+     * Blocked network attempts since boot, as flat triples {uid, count, lastBlockedMs, ...}.
+     */
+    long[] getBlockedCounters();
+
+    /** Service health, HEALTH_* bits. */
+    const int HEALTH_MONITOR = 1;
+    /** The deny chain was written and enabled at the last apply. */
+    const int HEALTH_FIREWALL = 2;
+    /** The metered (Wi-Fi only) rules reached NetworkPolicyManager at the last apply. */
+    const int HEALTH_METERED = 4;
+    const int HEALTH_TRACKER_DB = 8;
+    /** The persisted policy loaded without error. */
+    const int HEALTH_POLICY_LOADED = 16;
+    const int HEALTH_ALL = 31;
+
+    int getHealth();
+
+    /** Uids on the deny chain right now, as flat pairs {uid, reason (GuardEvent.REASON_*)}. */
+    int[] getDenyNow();
 }

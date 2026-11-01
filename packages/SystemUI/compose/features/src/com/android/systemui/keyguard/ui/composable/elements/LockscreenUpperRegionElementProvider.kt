@@ -20,9 +20,24 @@ import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.graphics.BlurEffect
+import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Constraints
+import com.android.settingslib.ichthys.clock.LockNotifications
+import com.android.systemui.keyguard.data.repository.IchthysLockNotifRepository
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableFloatStateOf
@@ -115,6 +130,9 @@ constructor(
     private val viewModelFactory: LockscreenUpperRegionViewModel.Factory,
     private val depthRepository: IchthysDepthRepository,
     private val keyguardInteractor: KeyguardInteractor,
+    // IchthysOS Quiet dock (tracker#58): how notifications sit on the lock screen, and the sheet.
+    private val notifRepository: IchthysLockNotifRepository,
+    private val dockProvider: IchthysNotificationDockProvider,
 ) : LockscreenElementProvider {
     private val logger = Logger(blueprintLog, "LockscreenUpperRegionElementProvider")
     override val elements: List<LockscreenElement> by lazy { listOf(UpperRegionElement()) }
@@ -148,15 +166,101 @@ constructor(
             aodAlignment: Alignment,
             modifier: Modifier = Modifier,
         ) {
+            // IchthysOS Quiet dock (tracker#58): at rest the stack of cards shows only in the
+            // cards mode; in the dock and glance modes it is the dock's sheet (sheetOpen, over the
+            // clock). The dock draws its own AOD icon row, so the stock AOD shelf is the cards
+            // mode's. In the cards mode the stack starts at the owner's anchor (never above the
+            // clock, a clear gap under it when automatic): "notifications are too high up".
+            val notif by notifRepository.settings.collectAsStateWithLifecycle()
+            val sheetOpen by notifRepository.sheetOpen.collectAsStateWithLifecycle()
             Box(modifier = Modifier.fillMaxSize().then(modifier)) {
-                AODNotifications(Modifier.align(aodAlignment))
+                if (notif.cards) AODNotifications(Modifier.align(aodAlignment))
                 // Make the Notification section overlap with the AOD icons, to avoid jumps while
                 // animating them in.
-                AnimatedVisibility(viewModel.isNotificationStackActive) {
+                AnimatedVisibility(viewModel.isNotificationStackActive && (notif.cards || sheetOpen)) {
                     LockscreenElement(
                         Notifications.Stack,
-                        modifier = Modifier.burnInAware(isClock = false),
+                        modifier =
+                            Modifier.burnInAware(isClock = false)
+                                .then(
+                                    if (notif.cards) Modifier.ichthysCardsAnchor(notif.anchorPercent)
+                                    else Modifier
+                                ),
                     )
+                }
+            }
+        }
+
+        /**
+         * IchthysOS Quiet dock: [clock] with the dock's sheet over it. The sheet (a header and the
+         * notification stack) slides up over the clock, which blurs and dims under it ([blur] 0..1,
+         * read by the clock at draw time); a swipe down on the header, a tap on the dock, dozing or
+         * any scene change puts it away (the repository's sheetOpen). Cards mode has no sheet.
+         */
+        @Composable
+        protected fun LockscreenScope<ContentScope>.ClockWithSheet(
+            modifier: Modifier = Modifier,
+            clock: @Composable (blur: () -> Float) -> Unit,
+        ) {
+            val notif by notifRepository.settings.collectAsStateWithLifecycle()
+            val sheetOpen by notifRepository.sheetOpen.collectAsStateWithLifecycle()
+            val shown = sheetOpen && !notif.cards
+            val blur by animateFloatAsState(if (shown) 1f else 0f, tween(SHEET_MS), label = "ichthysSheetBlur")
+            Box(modifier.fillMaxSize()) {
+                clock { blur }
+                AnimatedVisibility(
+                    shown,
+                    enter = slideInVertically(tween(SHEET_MS, easing = Easings.Emphasized)) { it / 4 } +
+                        fadeIn(tween(SHEET_MS)),
+                    exit = slideOutVertically(tween(SHEET_MS, easing = Easings.Emphasized)) { it / 4 } +
+                        fadeOut(tween(SHEET_MS * 2 / 3)),
+                ) {
+                    Column(Modifier.fillMaxSize()) {
+                        Spacer(Modifier.height(SHEET_TOP_DP.dp))
+                        dockProvider.SheetHeader(onClose = { notifRepository.setSheetOpen(false) })
+                        Notifications(aodAlignment = Alignment.TopStart)
+                    }
+                }
+            }
+        }
+
+        /**
+         * IchthysOS polish: the clock, the media player and the notifications in one budget (the
+         * upper region's height, which the root ends above the dock and the sensor's keep-out).
+         * The media takes its own height first, [LockNotifications.MEDIA_GAP_DP] under the clock;
+         * the clock gets what is left above it (the Depth face scales down to fit, see
+         * [DepthClock]); the notifications the rest. The media player used to run on past the
+         * region's bottom under the shortcuts ("cut off from the bottom").
+         */
+        @Composable
+        protected fun UpperStack(
+            clock: @Composable () -> Unit,
+            media: @Composable () -> Unit,
+            notifications: @Composable () -> Unit,
+        ) {
+            val gapPx = with(LocalDensity.current) { LockNotifications.MEDIA_GAP_DP.dp.roundToPx() }
+            Layout(
+                content = {
+                    Box { clock() }
+                    Box { media() }
+                    Box { notifications() }
+                }
+            ) { measurables, constraints ->
+                val maxH = constraints.maxHeight.coerceAtLeast(0)
+                val loose = constraints.copy(minWidth = 0, minHeight = 0)
+                val mediaPlaceable =
+                    measurables[1].measure(loose.copy(maxHeight = (maxH * 0.55f).toInt().coerceAtLeast(0)))
+                val mediaH = mediaPlaceable.height
+                val mediaGap = if (mediaH > 0) gapPx else 0
+                val clockPlaceable =
+                    measurables[0].measure(loose.copy(maxHeight = (maxH - mediaH - mediaGap).coerceAtLeast(0)))
+                val used = clockPlaceable.height + mediaGap + mediaH
+                val notifPlaceable =
+                    measurables[2].measure(loose.copy(maxHeight = (maxH - used).coerceAtLeast(0)))
+                layout(constraints.maxWidth, maxH) {
+                    clockPlaceable.placeRelative(0, 0)
+                    mediaPlaceable.placeRelative(0, clockPlaceable.height + mediaGap)
+                    notifPlaceable.placeRelative(0, used)
                 }
             }
         }
@@ -235,8 +339,13 @@ constructor(
      * (tracker#58; nothing is drawn over it while depth is off).
      */
     @Composable
-    private fun DepthClock() {
+    private fun DepthClock(blur: () -> Float = { 0f }) {
         val dozeAmount by keyguardInteractor.dozeAmount.collectAsStateWithLifecycle(0f)
+        // IchthysOS polish: the face scales down (about its top centre) when its budget is smaller
+        // than its natural height (the media player under it, UpperStack), instead of running on
+        // under the shortcuts. Set in layout, read in draw. The subject's cut-out draws in window
+        // coordinates and must not scale with it: it takes the inverse about the same pivot.
+        val fit = remember { mutableFloatStateOf(1f) }
         // IchthysOS: back on the stock clock, no stale rectangle may keep taking held touches.
         // Only this clock's own: in a large/small clock switch the other one may own it by now.
         val placed = remember { arrayOf(androidx.compose.ui.geometry.Rect.Zero) }
@@ -290,12 +399,20 @@ constructor(
                     if (columnTop.isNaN() || kotlin.math.abs(y - columnTop) >= 16f) columnTop = y
                 }
                 .layout { measurable, constraints ->
-                    val placeable = measurable.measure(constraints)
+                    // Measured at its natural height; a smaller budget scales it (fit).
+                    val placeable =
+                        measurable.measure(constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity))
                     val r = reserve.value
-                    val h =
-                        if (r < 0f) placeable.height
-                        else r.roundToInt().coerceIn(constraints.minHeight, constraints.maxHeight)
+                    val natural = if (r < 0f) placeable.height else r.roundToInt()
+                    val h = natural.coerceIn(constraints.minHeight, constraints.maxHeight)
+                    fit.floatValue = if (natural > 0 && h < natural) h.toFloat() / natural else 1f
                     layout(placeable.width, h) { placeable.place(0, 0) }
+                }
+                .graphicsLayer {
+                    val f = fit.floatValue
+                    scaleX = f
+                    scaleY = f
+                    transformOrigin = TransformOrigin(0.5f, 0f)
                 }
         ) {
             Box(
@@ -311,12 +428,24 @@ constructor(
                     factory = { KeyguardCustomClockView(it) },
                     // IchthysOS polish: the Depth face cross-fades into its AOD look with this.
                     update = { it.setDozeAmount(dozeAmount) },
-                    modifier = Modifier.fillMaxWidth(),
+                    // IchthysOS Quiet dock: blurred and dimmed under the open sheet.
+                    modifier = Modifier.fillMaxWidth().ichthysSheetBlur(blur),
                 )
                 IchthysDepthCutout(
                     depthRepository,
                     dozeAmount,
                     Modifier.matchParentSize()
+                        .graphicsLayer {
+                            // The inverse of the fit, about the same pivot (this box starts at
+                            // the column's top and spans its width), so the window-anchored
+                            // picture stays exactly on the backdrop.
+                            val f = fit.floatValue
+                            if (f > 0f && f != 1f) {
+                                scaleX = 1f / f
+                                scaleY = 1f / f
+                                transformOrigin = TransformOrigin(0.5f, 0f)
+                            }
+                        }
                         .ichthysDepthPlane(depthRepository, IchthysDepthPlane.FRONT),
                 )
                 AndroidView(
@@ -334,6 +463,7 @@ constructor(
                         Modifier.fillMaxWidth()
                             .align(Alignment.TopStart)
                             .padding(top = WEATHER_TOP_DP.dp)
+                            .ichthysSheetBlur(blur)
                             .graphicsLayer { alpha = 1f - WEATHER_DOZE_DIM * dozeAmount },
                 )
             }
@@ -357,6 +487,7 @@ constructor(
                         .onSizeChanged { underHeight = it.height }
                         .offset { IntOffset(0, underShift) }
                         .ichthysDepthPlane(depthRepository, IchthysDepthPlane.MIDDLE)
+                        .ichthysSheetBlur(blur)
                         .graphicsLayer { alpha = 1f - WEATHER_DOZE_DIM * dozeAmount },
             )
         }
@@ -380,11 +511,14 @@ constructor(
     inner class NarrowLayout(viewModel: LockscreenUpperRegionViewModel) : RegionLayout(viewModel) {
         @Composable
         override fun LockscreenScope<ContentScope>.Layout(modifier: Modifier) {
+            // IchthysOS Quiet dock: notifications shrink the clock only in the cards mode; the
+            // dock keeps the large clock (its sheet opens over it).
+            val notif by notifRepository.settings.collectAsStateWithLifecycle()
             val clockSize =
                 logDecision("NarrowLayout: ClockSize") {
                     viewModel.evaluateClockSize {
                         when {
-                            viewModel.isNotificationStackActive ->
+                            notif.cards && viewModel.isNotificationStackActive ->
                                 Decision(ClockSize.SMALL, "isNotificationStackActive")
                             viewModel.isMediaVisible -> Decision(ClockSize.SMALL, "isMediaVisible")
                             else -> Decision(ClockSize.LARGE, "Default Case")
@@ -420,24 +554,39 @@ constructor(
                 debugName = "NarrowLayout - Clocks",
             ) {
                 scene(NarrowScenes.LargeClock) {
-                    if (isCustomLockClockActive(LocalContext.current)) {
-                        DepthClock()
-                    } else {
-                        LockscreenElement(Region.Clock.Large)
+                    // IchthysOS Quiet dock: the dock's sheet opens over the large clock.
+                    ClockWithSheet { blur ->
+                        if (isCustomLockClockActive(LocalContext.current)) {
+                            DepthClock(blur)
+                        } else {
+                            Box(Modifier.fillMaxWidth().ichthysSheetBlur(blur)) {
+                                LockscreenElement(Region.Clock.Large)
+                            }
+                        }
                     }
                 }
                 scene(NarrowScenes.SmallClock) {
-                    Column {
-                        // IchthysOS: render the selected crDroid custom clock in the clock slot so it
-                        // reserves its own height in this Column -- the notifications then flow below
-                        // it, adaptive to ANY clock style. Falls back to the stock clock for default.
-                        if (isCustomLockClockActive(LocalContext.current)) {
-                            DepthClock()
-                        } else {
-                            LockscreenElement(Region.Clock.Small)
-                        }
-                        MediaCarousel(Modifier.align(Alignment.Start))
-                        Notifications(aodAlignment = Alignment.TopStart)
+                    // IchthysOS: render the selected crDroid custom clock in the clock slot so it
+                    // reserves its own height -- the notifications then flow below it, adaptive to
+                    // ANY clock style. Falls back to the stock clock for default. IchthysOS polish:
+                    // clock, media and notifications share one budget (UpperStack), so the media
+                    // player and the stack always end above the dock and the sensor's keep-out.
+                    val custom = isCustomLockClockActive(LocalContext.current)
+                    ClockWithSheet { blur ->
+                        UpperStack(
+                            clock = {
+                                if (custom) DepthClock(blur)
+                                else Box(Modifier.fillMaxWidth().ichthysSheetBlur(blur)) {
+                                    LockscreenElement(Region.Clock.Small)
+                                }
+                            },
+                            media = { MediaCarousel() },
+                            // Cards under the media; in the dock modes the stack is the sheet's
+                            // (one Notifications.Stack element at a time).
+                            notifications = {
+                                if (notif.cards) Notifications(aodAlignment = Alignment.TopStart)
+                            },
+                        )
                     }
                 }
             }
@@ -747,6 +896,11 @@ constructor(
         const val WEATHER_TOP_DP = 10
         /** IchthysOS: how much dimmer the weather is on AOD (eased with the doze amount). */
         const val WEATHER_DOZE_DIM = 0.35f
+        /** IchthysOS Quiet dock: the sheet's slide, and its header's distance under the status bar. */
+        const val SHEET_MS = 320
+        const val SHEET_TOP_DP = 8
+        /** IchthysOS Quiet dock: how far the clock blurs under the open sheet. */
+        const val SHEET_BLUR_DP = 18f
 
         enum class LayoutType {
             WIDE,
@@ -781,6 +935,51 @@ constructor(
             return getLayoutDecision(shadeMode).choice
         }
     }
+}
+
+/**
+ * IchthysOS Quiet dock: the clock (or anything of bounded size) blurred and dimmed by [blur] (0..1,
+ * read at draw time) under the open sheet. The layer is the node's own bounded box: never larger.
+ */
+private fun Modifier.ichthysSheetBlur(blur: () -> Float): Modifier = graphicsLayer {
+    val b = blur().coerceIn(0f, 1f)
+    if (b > 0.01f) {
+        val r = LockscreenUpperRegionElementProvider.SHEET_BLUR_DP * density * b
+        renderEffect = BlurEffect(r, r, TileMode.Decal)
+        alpha = 1f - 0.45f * b
+    } else {
+        renderEffect = null
+        alpha = 1f
+    }
+}
+
+/**
+ * IchthysOS Quiet dock, cards mode: the stack starts at the owner's anchor ([anchorPercent] of the
+ * screen's height from the top; [LockNotifications.ANCHOR_AUTO]: [LockNotifications.CARDS_GAP_DP]
+ * under whatever is above it), never above where it is laid out (the clock and its date come
+ * first) and never past the room it has (the root ends the region above the keep-out). The node's
+ * own window position is read coarsely (nudges and transitions don't move the stack).
+ */
+@Composable
+private fun Modifier.ichthysCardsAnchor(anchorPercent: Int): Modifier {
+    val screenH = LocalContext.current.resources.displayMetrics.heightPixels
+    var top by remember { mutableFloatStateOf(Float.NaN) }
+    return onGloballyPositioned {
+            val y = it.positionInWindow().y
+            if (top.isNaN() || kotlin.math.abs(y - top) >= 8f) top = y
+        }
+        .layout { measurable, constraints ->
+            val gap = LockNotifications.CARDS_GAP_DP.dp.roundToPx()
+            val want =
+                if (anchorPercent == LockNotifications.ANCHOR_AUTO || top.isNaN()) gap
+                else maxOf(gap / 2, (screenH * anchorPercent / 100f - top).roundToInt())
+            val pad = want.coerceIn(0, constraints.maxHeight)
+            val placeable =
+                measurable.measure(
+                    constraints.copy(minHeight = 0, maxHeight = (constraints.maxHeight - pad).coerceAtLeast(0))
+                )
+            layout(placeable.width, placeable.height + pad) { placeable.place(0, pad) }
+        }
 }
 
 // IchthysOS: true when a crDroid custom lockscreen clock style is selected (non-default). Public

@@ -27,6 +27,8 @@ import com.android.systemui.statusbar.notification.data.repository.ActiveNotific
 import com.android.systemui.statusbar.notification.data.repository.ActiveNotificationsStore
 import com.android.systemui.statusbar.notification.data.repository.NotificationsKeyguardViewStateRepository
 import com.android.systemui.statusbar.notification.promoted.domain.interactor.AODPromotedNotificationInteractor
+import com.android.systemui.statusbar.notification.ichthys.quiet.IchthysQuietNotificationsRepository
+import com.android.systemui.statusbar.notification.ichthys.quiet.QuietNotificationModel
 import com.android.systemui.statusbar.notification.shared.ActiveBundleModel
 import com.android.systemui.statusbar.notification.shared.ActiveNotificationEntryModel
 import com.android.systemui.statusbar.notification.shared.ActiveNotificationGroupModel
@@ -174,6 +176,17 @@ constructor(
         )
 }
 
+/** IchthysOS: a folded (quiet) notification's icons; never ambient. */
+private fun QuietNotificationModel.toIconModel(): ActiveNotificationIconModel =
+    ActiveNotificationIconModel(
+        notifKey = key,
+        groupKey = groupKey,
+        shelfIcon = shelfIcon,
+        statusBarIcon = statusBarIcon,
+        aodIcon = aodIcon,
+        isAmbient = false,
+    )
+
 private fun ActiveNotificationModel.toIconModel(): ActiveNotificationIconModel? =
     groupKey?.let {
         ActiveNotificationIconModel(
@@ -234,9 +247,10 @@ constructor(
     @Background bgContext: CoroutineContext,
     iconsInteractor: NotificationIconsInteractor,
     settingsRepository: NotificationListenerSettingsRepository,
+    quietRepository: IchthysQuietNotificationsRepository,
 ) {
     @OptIn(ExperimentalCoroutinesApi::class)
-    val statusBarNotifs: Flow<Set<ActiveNotificationIconModel>> =
+    private val renderedStatusBarNotifs: Flow<Set<ActiveNotificationIconModel>> =
         settingsRepository.showSilentStatusIcons
             .flatMapLatest { showSilentIcons ->
                 iconsInteractor.filteredNotifSet(
@@ -245,6 +259,28 @@ constructor(
                     showDismissed = false,
                     showRepliedMessages = false,
                 )
+            }
+            .flowOn(bgContext)
+
+    /**
+     * IchthysOS: notifications folded out of the stack by IchthysQuietNotificationsCoordinator
+     * (chips / fold rows) are not in the render list, so their icons are gone from the status bar,
+     * which is what notifications.quiet.hideOngoingIcons = true asks for. With it off they are
+     * added back here; the icon views come from the pipeline's entries, which still exist.
+     */
+    val statusBarNotifs: Flow<Set<ActiveNotificationIconModel>> =
+        combine(
+                renderedStatusBarNotifs,
+                quietRepository.hideOngoingIcons,
+                quietRepository.foldedOngoing,
+                quietRepository.foldedSilent,
+            ) { rendered, hide, foldedOngoing, foldedSilent ->
+                if (hide) {
+                    rendered
+                } else {
+                    val folded = (foldedOngoing + foldedSilent).map { it.toIconModel() }
+                    if (folded.isEmpty()) rendered else rendered + folded
+                }
             }
             .flowOn(bgContext)
 

@@ -45,7 +45,20 @@ class SectionStyleProvider @Inject constructor(
      * Determine if the given section is minimized.
      */
     fun isMinimizedSection(section: NotifSection): Boolean {
-        return lowPrioritySections.contains(section.sectioner)
+        // IchthysOS: notifications.quiet.silentStyle = oneLine shows the Silent section with the
+        // minimized (one-line) template too; IchthysQuietNotificationsCoordinator sets it.
+        return lowPrioritySections.contains(section.sectioner) ||
+            (ichthysSilentMinimized &&
+                ::silentSections.isInitialized &&
+                silentSections.contains(section.sectioner))
+    }
+
+    /** IchthysOS: see [isMinimizedSection]. */
+    @Volatile private var ichthysSilentMinimized = false
+
+    /** IchthysOS: Silent-section rows use the minimized template (silentStyle = oneLine). */
+    fun setIchthysSilentMinimized(minimized: Boolean) {
+        ichthysSilentMinimized = minimized
     }
 
     /**

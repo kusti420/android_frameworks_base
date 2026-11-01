@@ -101,7 +101,9 @@ import com.android.internal.annotations.GuardedBy;
 import com.android.internal.util.Preconditions;
 import com.android.server.FgThread;
 import com.android.server.IoThread;
+import com.android.internal.ichthys.guard.GuardEvent;
 import com.android.server.LocalServices;
+import com.android.server.ichthys.guard.IchthysGuardInternal;
 import com.android.server.location.IchthysLocationNoFix;
 import com.android.server.location.IchthysLocationSpoof;
 import com.android.server.location.LocationPermissions;
@@ -966,7 +968,10 @@ public class LocationProviderManager extends
                 return null;
             }
 
+            // IchthysOS: each branch tells Guard what this app got (evidence, rate-limited).
             if (isIchthysNoFix()) {
+                IchthysGuardInternal.note(getIdentity().getUid(),
+                        GuardEvent.SHIELD_LOCATION_NONE, mName);
                 return null;
             }
             // Before the permission step, so a coarse-only app gets the fake place coarsened.
@@ -975,6 +980,11 @@ public class LocationProviderManager extends
                 if (fineLocationResult == null) {
                     return null;
                 }
+                IchthysGuardInternal.note(getIdentity().getUid(),
+                        GuardEvent.SHIELD_LOCATION_FAKE, mName);
+            } else {
+                IchthysGuardInternal.note(getIdentity().getUid(),
+                        GuardEvent.SHIELD_LOCATION_REAL, mName);
             }
 
             LocationResult permittedLocationResult = Objects.requireNonNull(
@@ -1392,6 +1402,8 @@ public class LocationProviderManager extends
             // IchthysOS "No location": ignore fixes and keep waiting, so the request ends the way
             // it does without signal: null once it times out.
             if (fineLocationResult != null && isIchthysNoFix()) {
+                IchthysGuardInternal.note(getIdentity().getUid(),
+                        GuardEvent.SHIELD_LOCATION_NONE, mName);
                 return null;
             }
 
@@ -1414,6 +1426,11 @@ public class LocationProviderManager extends
             }
             if (fineLocationResult != null && isIchthysSpoofed()) {
                 fineLocationResult = IchthysLocationSpoof.fake(fineLocationResult, getIdentity());
+                IchthysGuardInternal.note(getIdentity().getUid(),
+                        GuardEvent.SHIELD_LOCATION_FAKE, mName);
+            } else if (fineLocationResult != null) {
+                IchthysGuardInternal.note(getIdentity().getUid(),
+                        GuardEvent.SHIELD_LOCATION_REAL, mName);
             }
 
             LocationResult locationResult = getPermittedLocationResult(fineLocationResult,
@@ -1872,6 +1889,7 @@ public class LocationProviderManager extends
 
         // IchthysOS "No location": no last known fix either.
         if (!request.isBypass() && IchthysLocationNoFix.isNoFix(identity)) {
+            IchthysGuardInternal.note(identity.getUid(), GuardEvent.SHIELD_LOCATION_NONE, mName);
             return null;
         }
 
@@ -1883,6 +1901,12 @@ public class LocationProviderManager extends
         // IchthysOS "Fake location": the fake place's fix instead.
         if (!request.isBypass() && IchthysLocationSpoof.isSpoofed(identity)) {
             last = IchthysLocationSpoof.fake(last, identity);
+            if (last != null) {
+                IchthysGuardInternal.note(identity.getUid(), GuardEvent.SHIELD_LOCATION_FAKE,
+                        mName);
+            }
+        } else if (last != null && !request.isBypass()) {
+            IchthysGuardInternal.note(identity.getUid(), GuardEvent.SHIELD_LOCATION_REAL, mName);
         }
         Location location = getPermittedLocation(last, permissionLevel);
 

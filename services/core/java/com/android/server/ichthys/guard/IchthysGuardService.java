@@ -58,6 +58,7 @@ import android.util.AtomicFile;
 import android.util.Slog;
 import android.util.SparseBooleanArray;
 import android.util.SparseIntArray;
+import android.util.SparseLongArray;
 import android.util.Xml;
 import android.view.Display;
 
@@ -192,6 +193,12 @@ public final class IchthysGuardService extends SystemService {
     /** uid -> ACCESS_*; only non-ALLOW entries are stored. */
     @GuardedBy("mLock")
     private final SparseIntArray mPolicy = new SparseIntArray();
+    /**
+     * IchthysOS: uid -> GuardEvent.REASON_* why Settings chose the uid's access (its own rule,
+     * lockdown, a schedule, sleep); stamped on every blocked event. Only for uids in mPolicy.
+     */
+    @GuardedBy("mLock")
+    private final SparseIntArray mPolicyReason = new SparseIntArray();
     /** Wall clock ms the emergency pause ends at, 0 when enforcing (what Settings shows). */
     @GuardedBy("mLock")
     private long mPausedUntil;
@@ -215,9 +222,26 @@ public final class IchthysGuardService extends SystemService {
     /** App uid -> process state, from the uid observer. Missing = not running. */
     @GuardedBy("mLock")
     private final SparseIntArray mProcState = new SparseIntArray();
-    /** Uids currently on the deny chain (policy DENY plus active behaviours). */
+    /**
+     * Uids currently on the deny chain (policy DENY plus active behaviours) -> the
+     * GuardEvent.REASON_* that put them there.
+     */
     @GuardedBy("mLock")
-    private SparseBooleanArray mDenyNow = new SparseBooleanArray();
+    private SparseIntArray mDenyNow = new SparseIntArray();
+    /** IchthysOS: blocked network attempts per uid since boot, and when the last one was. */
+    @GuardedBy("mLock")
+    private final SparseIntArray mBlockedCount = new SparseIntArray();
+    @GuardedBy("mLock")
+    private final SparseLongArray mBlockedLast = new SparseLongArray();
+    /** IchthysOS: (uid << 8 | shield code) -> elapsedRealtime of the last shield proof event. */
+    @GuardedBy("mLock")
+    private final android.util.LongSparseArray<Long> mShieldTimes =
+            new android.util.LongSparseArray<>();
+    /** IchthysOS: uid -> whether it may report shield decisions (a preinstalled app). */
+    @GuardedBy("mLock")
+    private final SparseBooleanArray mTrustedReporters = new SparseBooleanArray();
+    /** The same shield proof (uid, code) is recorded at most this often. */
+    private static final long SHIELD_REPEAT_MS = 60_000L;
 
     @GuardedBy("mLock")
     private final GuardEvent[] mRing = new GuardEvent[RING_SIZE];
@@ -266,6 +290,13 @@ public final class IchthysGuardService extends SystemService {
     private volatile boolean mBootPhaseReached;
     @GuardedBy("mApplyLock")
     private int[] mAppliedMetered;
+    /** IchthysOS: health bits (IIchthysGuard.HEALTH_*) of the last firewall apply and the load. */
+    private volatile boolean mFirewallOk;
+    private volatile boolean mMeteredOk = true;
+    private volatile boolean mPolicyLoadOk = true;
+    /** Set while the firewall write keeps failing, so the journal gets one entry per streak. */
+    @GuardedBy("mApplyLock")
+    private boolean mFirewallFailureLogged;
 
     // Handler-thread only (filled by loadPolicy() before that thread gets any work):
     // local-network state last written (LAN_*), persisted so a block applied before a reboot can
@@ -300,6 +331,7 @@ public final class IchthysGuardService extends SystemService {
             mPauseEndElapsed = 0;
         }
         Slog.i(TAG, "Emergency pause over, enforcing again");
+        addJournal(0, GuardEvent.JOURNAL_PAUSE_END, "Pause over, rules enforced again");
         applyFirewall();
     };
     /** IchthysOS: ends the pause on time even in deep sleep. */
@@ -332,9 +364,14 @@ public final class IchthysGuardService extends SystemService {
         try {
             loadPolicy();
         } catch (RuntimeException e) {
+            mPolicyLoadOk = false;
             Slog.wtf(TAG, "policy load failed; starting with an empty policy", e);
         }
         publishBinderService(SERVICE_NAME, new BinderService());
+        // IchthysOS: the location service reports what it delivered to apps through this.
+        LocalServices.addService(IchthysGuardInternal.class, new LocalService());
+        mHandler.post(() -> addJournal(0, GuardEvent.JOURNAL_SERVICE_START,
+                "Guard service started"));
     }
 
     @Override
@@ -403,7 +440,8 @@ public final class IchthysGuardService extends SystemService {
         final int[] metered;
         synchronized (mLock) {
             final boolean paused = isPausedLocked();
-            final SparseBooleanArray d = new SparseBooleanArray();
+            // IchthysOS: uid -> why it is denied, so every blocked event can say so.
+            final SparseIntArray d = new SparseIntArray();
             int nMetered = 0;
             final int[] m = new int[mPolicy.size()];
             if (!paused) {
@@ -411,20 +449,20 @@ public final class IchthysGuardService extends SystemService {
                     final int uid = mPolicy.keyAt(i);
                     final int access = mPolicy.valueAt(i);
                     if (access == IIchthysGuard.ACCESS_DENY) {
-                        d.put(uid, true);
+                        d.put(uid, mPolicyReason.get(uid, GuardEvent.REASON_POLICY));
                     } else if (access == IIchthysGuard.ACCESS_UNMETERED_ONLY) {
                         m[nMetered++] = uid;
                     }
                 }
                 for (int i = 0; i < mBehaviour.size(); i++) {
                     final int uid = mBehaviour.keyAt(i);
+                    if (d.indexOfKey(uid) >= 0) continue; // the rule's own reason wins
                     final int flags = mBehaviour.valueAt(i);
                     if ((flags & IIchthysGuard.BEHAVIOUR_SCREEN_OFF_DENY) != 0 && mScreenLocked) {
-                        d.put(uid, true);
-                    }
-                    if ((flags & IIchthysGuard.BEHAVIOUR_FOREGROUND_ONLY) != 0
+                        d.put(uid, GuardEvent.REASON_SCREEN_OFF);
+                    } else if ((flags & IIchthysGuard.BEHAVIOUR_FOREGROUND_ONLY) != 0
                             && !isVisibleLocked(uid)) {
-                        d.put(uid, true);
+                        d.put(uid, GuardEvent.REASON_BACKGROUND);
                     }
                 }
             }
@@ -434,7 +472,7 @@ public final class IchthysGuardService extends SystemService {
             for (int i = 0; i < nApps; i++) {
                 final int uid = d.keyAt(i);
                 if (Process.isApplicationUid(uid)) {
-                    d.put(Process.toSdkSandboxUid(uid), true);
+                    d.put(Process.toSdkSandboxUid(uid), d.valueAt(i));
                 }
             }
             mDenyNow = d;
@@ -474,15 +512,29 @@ public final class IchthysGuardService extends SystemService {
                         mFirewallLogged = true;
                         Slog.i(TAG, "Firewall applied: " + deny.length + " uids on OEM_DENY_3");
                     }
+                    mFirewallOk = true;
+                    mFirewallFailureLogged = false;
                 } catch (RuntimeException e) {
                     Slog.e(TAG, "Failed to update FIREWALL_CHAIN_OEM_DENY_3", e);
+                    // IchthysOS: Guard's home page shows this as a red card; one journal entry
+                    // per streak of failures, not one per screen change.
+                    mFirewallOk = false;
+                    if (!mFirewallFailureLogged) {
+                        mFirewallFailureLogged = true;
+                        addJournal(0, GuardEvent.JOURNAL_FIREWALL_FAILED,
+                                "Firewall rules not applied: " + e.getClass().getSimpleName());
+                    }
                 }
                 if (mNpmi != null && !Arrays.equals(metered, mAppliedMetered)) {
                     try {
                         mNpmi.setIchthysMeteredDeniedUids(metered);
                         mAppliedMetered = metered;
+                        mMeteredOk = true;
                     } catch (RuntimeException e) {
                         Slog.e(TAG, "Failed to update metered restrictions", e);
+                        mMeteredOk = false;
+                        addJournal(0, GuardEvent.JOURNAL_FIREWALL_FAILED,
+                                "Wi-Fi-only rules not applied: " + e.getClass().getSimpleName());
                     }
                 }
             } finally {
@@ -663,6 +715,9 @@ public final class IchthysGuardService extends SystemService {
             } else {
                 mLanApplied.put(uid, state);
             }
+            addJournal(uid, GuardEvent.JOURNAL_LAN_APPLIED, state == LAN_DENY
+                    ? "Local network blocked" : state == LAN_ALLOW
+                    ? "Local network allowed" : "Local network back to stock");
             changed = true;
         }
         if (changed) savePolicy();
@@ -736,17 +791,39 @@ public final class IchthysGuardService extends SystemService {
             next.put(uids[i], f);
         }
         final ArraySet<Integer> users = replaceScope(callingUserId, uids);
+        final boolean changed;
         synchronized (mLock) {
+            final SparseIntArray before = mBehaviour.clone();
             removeUsersLocked(mBehaviour, users);
             for (int i = 0; i < next.size(); i++) {
                 mBehaviour.put(next.keyAt(i), next.valueAt(i));
             }
+            changed = !sparseEquals(before, mBehaviour);
         }
+        final int n = next.size();
         mHandler.post(() -> {
             savePolicy();
             applyFirewall();
             applyLan();
+            if (changed) {
+                addJournal(0, GuardEvent.JOURNAL_BEHAVIOURS_APPLIED,
+                        n + " apps with screen-off, background or local-network rules");
+            }
         });
+    }
+
+    private static boolean sparseEquals(SparseIntArray a, SparseIntArray b) {
+        if (a.size() != b.size()) return false;
+        for (int i = 0; i < a.size(); i++) {
+            if (a.keyAt(i) != b.keyAt(i) || a.valueAt(i) != b.valueAt(i)) return false;
+        }
+        return true;
+    }
+
+    /** IchthysOS: the GuardEvent.REASON_* packed above the access value, REASON_POLICY if none. */
+    private static int reasonOf(int packedAccess) {
+        final int r = (packedAccess >> IIchthysGuard.ACCESS_REASON_SHIFT) & GuardEvent.REASON_MASK;
+        return r == GuardEvent.REASON_NONE ? GuardEvent.REASON_POLICY : r;
     }
 
     /** Must be called with the caller's identity cleared. */
@@ -781,7 +858,9 @@ public final class IchthysGuardService extends SystemService {
                 || access == IIchthysGuard.ACCESS_DENY;
     }
 
-    private void setPolicyInternal(int uid, int access) {
+    private void setPolicyInternal(int uid, int packedAccess) {
+        final int access = packedAccess & IIchthysGuard.ACCESS_MASK;
+        final int reason = reasonOf(packedAccess);
         if (!isValidAccess(access)) {
             throw new IllegalArgumentException("Bad access " + access);
         }
@@ -789,11 +868,16 @@ public final class IchthysGuardService extends SystemService {
             throw new IllegalArgumentException("uid " + uid + " is system-critical");
         }
         synchronized (mLock) {
-            if (mPolicy.get(uid, IIchthysGuard.ACCESS_ALLOW) == access) return;
+            if (mPolicy.get(uid, IIchthysGuard.ACCESS_ALLOW) == access
+                    && mPolicyReason.get(uid, GuardEvent.REASON_POLICY) == reason) {
+                return;
+            }
             if (access == IIchthysGuard.ACCESS_ALLOW) {
                 mPolicy.delete(uid);
+                mPolicyReason.delete(uid);
             } else {
                 mPolicy.put(uid, access);
+                mPolicyReason.put(uid, reason);
             }
         }
         commitPolicy();
@@ -804,25 +888,39 @@ public final class IchthysGuardService extends SystemService {
             throw new IllegalArgumentException("uids and access differ in length");
         }
         final SparseIntArray next = new SparseIntArray();
+        final SparseIntArray reasons = new SparseIntArray();
         for (int i = 0; i < uids.length; i++) {
-            if (!isValidAccess(access[i])) {
+            final int a = access[i] & IIchthysGuard.ACCESS_MASK;
+            if (!isValidAccess(a)) {
                 throw new IllegalArgumentException("Bad access " + access[i]);
             }
-            if (access[i] == IIchthysGuard.ACCESS_ALLOW) continue;
+            if (a == IIchthysGuard.ACCESS_ALLOW) continue;
             if (isCriticalUid(uids[i])) {
                 Slog.w(TAG, "Skipping system-critical uid " + uids[i]);
                 continue;
             }
-            next.put(uids[i], access[i]);
+            next.put(uids[i], a);
+            reasons.put(uids[i], reasonOf(access[i]));
         }
         final ArraySet<Integer> users = replaceScope(callingUserId, uids);
+        final boolean changed;
         synchronized (mLock) {
+            final SparseIntArray before = mPolicy.clone();
+            final SparseIntArray beforeReasons = mPolicyReason.clone();
             removeUsersLocked(mPolicy, users);
+            removeUsersLocked(mPolicyReason, users);
             for (int i = 0; i < next.size(); i++) {
                 mPolicy.put(next.keyAt(i), next.valueAt(i));
+                mPolicyReason.put(next.keyAt(i), reasons.valueAt(i));
             }
+            changed = !sparseEquals(before, mPolicy) || !sparseEquals(beforeReasons, mPolicyReason);
         }
         commitPolicy();
+        if (changed) {
+            final int n = next.size();
+            mHandler.post(() -> addJournal(0, GuardEvent.JOURNAL_RULES_APPLIED,
+                    n + " apps with a network rule"));
+        }
     }
 
     /**
@@ -863,6 +961,10 @@ public final class IchthysGuardService extends SystemService {
         }
         if (ms > 0) {
             Slog.w(TAG, "Enforcement paused for " + (ms / 60_000L) + " min");
+            addJournal(0, GuardEvent.JOURNAL_PAUSE_START,
+                    "Rules paused for " + (ms / 60_000L) + " min");
+        } else {
+            addJournal(0, GuardEvent.JOURNAL_PAUSE_END, "Pause ended, rules enforced again");
         }
         // On the handler, so two pauses (or a pause and the end of the last one) can't race.
         mHandler.post(this::schedulePauseEnd);
@@ -907,6 +1009,7 @@ public final class IchthysGuardService extends SystemService {
     private void loadPolicy() {
         synchronized (mLock) {
             mPolicy.clear();
+            mPolicyReason.clear();
             mBehaviour.clear();
             mLanDefaultDeny.clear();
             mLanApplied.clear();
@@ -924,6 +1027,9 @@ public final class IchthysGuardService extends SystemService {
                         if (isValidAccess(access) && access != IIchthysGuard.ACCESS_ALLOW
                                 && UserHandle.getAppId(uid) >= Process.FIRST_APPLICATION_UID) {
                             mPolicy.put(uid, access);
+                            final int reason = parser.getAttributeInt(null, "reason",
+                                    GuardEvent.REASON_POLICY);
+                            if (reason != GuardEvent.REASON_POLICY) mPolicyReason.put(uid, reason);
                         }
                     } else if ("behaviour".equals(tag)) {
                         final int uid = parser.getAttributeInt(null, "id");
@@ -953,6 +1059,7 @@ public final class IchthysGuardService extends SystemService {
                     }
                 }
             } catch (Exception e) {
+                mPolicyLoadOk = false;
                 Slog.e(TAG, "Failed to read " + mPolicyFile, e);
             }
         }
@@ -961,12 +1068,14 @@ public final class IchthysGuardService extends SystemService {
     /** Handler thread. */
     private void savePolicy() {
         final SparseIntArray copy;
+        final SparseIntArray reasons;
         final SparseIntArray behaviour;
         final SparseBooleanArray lanNew;
         final int alertMask;
         final ArrayList<Map.Entry<String, int[]>> removed;
         synchronized (mLock) {
             copy = mPolicy.clone();
+            reasons = mPolicyReason.clone();
             behaviour = mBehaviour.clone();
             lanNew = mLanDefaultDeny.clone();
             alertMask = mAlertMask;
@@ -983,6 +1092,8 @@ public final class IchthysGuardService extends SystemService {
                 xml.startTag(null, "uid");
                 xml.attributeInt(null, "id", copy.keyAt(i));
                 xml.attributeInt(null, "access", copy.valueAt(i));
+                final int reason = reasons.get(copy.keyAt(i), GuardEvent.REASON_POLICY);
+                if (reason != GuardEvent.REASON_POLICY) xml.attributeInt(null, "reason", reason);
                 xml.endTag(null, "uid");
             }
             for (int i = 0; i < behaviour.size(); i++) {
@@ -1064,9 +1175,10 @@ public final class IchthysGuardService extends SystemService {
         return ip;
     }
 
-    private boolean isBlocked(int uid) {
+    /** GuardEvent.REASON_* the uid is denied for right now, REASON_NONE when it isn't. */
+    private int blockReason(int uid) {
         synchronized (mLock) {
-            return mDenyNow.get(uid);
+            return mDenyNow.get(uid, GuardEvent.REASON_NONE);
         }
     }
 
@@ -1093,13 +1205,31 @@ public final class IchthysGuardService extends SystemService {
     /** Handler thread. */
     private void addEvent(long timestamp, int uid, int type, String host, String[] ips,
             String ip, int port, int returnCode) {
-        final boolean blocked = isBlocked(uid);
+        final int reason = blockReason(uid);
+        final boolean blocked = reason != GuardEvent.REASON_NONE;
         final GuardEvent ev;
         synchronized (mLock) {
             final long seq = ++mSeq;
             ev = new GuardEvent(seq, timestamp, uid, type, host, ips, ip, port, returnCode,
-                    blocked);
+                    blocked, reason, null);
             mRing[(int) ((seq - 1) % RING_SIZE)] = ev;
+            if (blocked) {
+                // IchthysOS: per-app counters for the Apps list and the app page ("3 blocks
+                // today"). The sandbox uid counts for its app.
+                final int appUid = Process.isSdkSandboxUid(uid)
+                        ? Process.getAppUidForSdkSandboxUid(uid) : uid;
+                mBlockedCount.put(appUid, mBlockedCount.get(appUid) + 1);
+                mBlockedLast.put(appUid, timestamp);
+            }
+        }
+        queueForListeners(ev);
+    }
+
+    /** Handler thread or any: hands a new ring entry to the listeners (batched). */
+    private void queueForListeners(GuardEvent ev) {
+        if (!mHandler.getLooper().isCurrentThread()) {
+            mHandler.post(() -> queueForListeners(ev));
+            return;
         }
         if (mListeners.getRegisteredCallbackCount() == 0) {
             mPending.clear();
@@ -1109,6 +1239,114 @@ public final class IchthysGuardService extends SystemService {
         if (!mDispatchScheduled) {
             mDispatchScheduled = true;
             mHandler.postDelayed(mDispatchRunnable, DISPATCH_DELAY_MS);
+        }
+    }
+
+    /**
+     * IchthysOS: a journal entry (GuardEvent.TYPE_JOURNAL) in the same ring as the monitor
+     * events, so Guard's Activity page shows state changes between the connections they explain.
+     * Any thread.
+     */
+    private void addJournal(int uid, int code, @Nullable String detail) {
+        final GuardEvent ev;
+        synchronized (mLock) {
+            final long seq = ++mSeq;
+            ev = GuardEvent.journal(seq, System.currentTimeMillis(), uid, code, detail);
+            mRing[(int) ((seq - 1) % RING_SIZE)] = ev;
+        }
+        Slog.i(TAG, "journal " + code + (uid != 0 ? " uid=" + uid : "") + ": " + detail);
+        queueForListeners(ev);
+    }
+
+    /**
+     * IchthysOS: proof that a data shield decided for an app (GuardEvent.TYPE_SHIELD). The same
+     * (uid, code) is recorded at most every SHIELD_REPEAT_MS, so a location listener at 1 Hz costs
+     * one entry a minute. System uids are never recorded. Any thread.
+     */
+    private void noteShieldInternal(int uid, int code, @Nullable String detail) {
+        if (!isAppUid(uid) || code <= 0) return;
+        final long key = ((long) uid << 8) | (code & 0xff);
+        final long now = SystemClock.elapsedRealtime();
+        final GuardEvent ev;
+        synchronized (mLock) {
+            final Long last = mShieldTimes.get(key);
+            if (last != null && now - last < SHIELD_REPEAT_MS) return;
+            mShieldTimes.put(key, now);
+            if (mShieldTimes.size() > 2000) {
+                mShieldTimes.clear();
+                mShieldTimes.put(key, now);
+            }
+            final long seq = ++mSeq;
+            ev = GuardEvent.shield(seq, System.currentTimeMillis(), uid, code, detail);
+            mRing[(int) ((seq - 1) % RING_SIZE)] = ev;
+        }
+        queueForListeners(ev);
+    }
+
+    /**
+     * IchthysOS: whether a binder caller may report shield decisions: the system, a holder of
+     * MANAGE_ICHTHYS_GUARD, or a preinstalled app (ContactsProvider, CalendarProvider and
+     * TelephonyProvider are; a sideloaded app never is). Cached per uid.
+     */
+    private boolean isTrustedReporter(int uid) {
+        if (UserHandle.getAppId(uid) < Process.FIRST_APPLICATION_UID) return true;
+        synchronized (mLock) {
+            final int i = mTrustedReporters.indexOfKey(uid);
+            if (i >= 0) return mTrustedReporters.valueAt(i);
+        }
+        boolean trusted = getContext().checkPermission(PERMISSION, -1, uid)
+                == PackageManager.PERMISSION_GRANTED;
+        if (!trusted) {
+            final long token = Binder.clearCallingIdentity();
+            try {
+                final PackageManager pm = getContext().getPackageManager();
+                final String[] pkgs = pm.getPackagesForUid(uid);
+                if (pkgs != null) {
+                    for (String p : pkgs) {
+                        try {
+                            final ApplicationInfo ai = pm.getApplicationInfoAsUser(p, 0,
+                                    UserHandle.getUserId(uid));
+                            if ((ai.flags & (ApplicationInfo.FLAG_SYSTEM
+                                    | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0) {
+                                trusted = true;
+                                break;
+                            }
+                        } catch (PackageManager.NameNotFoundException ignored) {
+                            // Gone.
+                        }
+                    }
+                }
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
+        synchronized (mLock) {
+            mTrustedReporters.put(uid, trusted);
+            if (mTrustedReporters.size() > 256) mTrustedReporters.clear();
+        }
+        return trusted;
+    }
+
+    private int healthBits() {
+        int h = 0;
+        if (mMonitorRegistered) h |= IIchthysGuard.HEALTH_MONITOR;
+        if (mFirewallOk) h |= IIchthysGuard.HEALTH_FIREWALL;
+        if (mMeteredOk) h |= IIchthysGuard.HEALTH_METERED;
+        if (mScanner != null) h |= IIchthysGuard.HEALTH_TRACKER_DB;
+        if (mPolicyLoadOk) h |= IIchthysGuard.HEALTH_POLICY_LOADED;
+        return h;
+    }
+
+    /** IchthysOS: the in-process reporting side (see IchthysGuardInternal). */
+    private final class LocalService extends IchthysGuardInternal {
+        @Override
+        public void noteShield(int uid, int code, @Nullable String detail) {
+            noteShieldInternal(uid, code, detail);
+        }
+
+        @Override
+        public void addJournal(int uid, int code, @Nullable String detail) {
+            IchthysGuardService.this.addJournal(uid, code, detail);
         }
     }
 
@@ -1223,6 +1461,8 @@ public final class IchthysGuardService extends SystemService {
         }
         if (changed) {
             Slog.i(TAG, "Restored the rules of reinstalled " + pkgName + " (uid " + uid + ")");
+            addJournal(uid, GuardEvent.JOURNAL_RULES_RESTORED,
+                    "Reinstalled: its earlier rules are back");
             savePolicy();
             applyFirewall();
             applyLan();
@@ -1262,6 +1502,7 @@ public final class IchthysGuardService extends SystemService {
                 synchronized (mLock) {
                     if (mPolicy.indexOfKey(uid) >= 0) {
                         mPolicy.delete(uid);
+                        mPolicyReason.delete(uid);
                         changed = true;
                     }
                     if (mBehaviour.indexOfKey(uid) >= 0) {
@@ -1338,6 +1579,7 @@ public final class IchthysGuardService extends SystemService {
         }
         // Already opened (store "Open", adb install && am start): a new app is in the stopped
         // state until something starts it, so a running process means the user did.
+        final int quarantinedUid;
         try {
             final int uid = userPm.getPackageUid(pkgName, 0);
             synchronized (mLock) {
@@ -1346,6 +1588,7 @@ public final class IchthysGuardService extends SystemService {
                     return;
                 }
             }
+            quarantinedUid = uid;
         } catch (PackageManager.NameNotFoundException e) {
             return;
         }
@@ -1363,6 +1606,9 @@ public final class IchthysGuardService extends SystemService {
                     PackageManager.FLAG_SUSPEND_QUARANTINED, GUARD_HOST_PACKAGE, userId, userId);
             if (failed != null && failed.length > 0) {
                 Slog.i(TAG, "Not quarantining " + pkgName + " (can't be suspended)");
+            } else {
+                addJournal(quarantinedUid, GuardEvent.JOURNAL_QUARANTINE,
+                        "New app held until you open it and pick a preset");
             }
         } catch (RemoteException | RuntimeException e) {
             Slog.w(TAG, "Could not quarantine " + pkgName, e);
@@ -1393,6 +1639,8 @@ public final class IchthysGuardService extends SystemService {
                             user.id);
                     Slog.i(TAG, "Released " + ai.packageName + " (user " + user.id
                             + ") from quarantine: no launcher activity");
+                    addJournal(ai.uid, GuardEvent.JOURNAL_RELEASED,
+                            "Released from quarantine: no launcher icon");
                 } catch (PackageManager.NameNotFoundException | RemoteException
                         | RuntimeException e) {
                     Slog.w(TAG, "Could not check the quarantine of " + ai.packageName, e);
@@ -1809,6 +2057,7 @@ public final class IchthysGuardService extends SystemService {
                     .putExtra("detail", detail)
                     .putExtra(Intent.EXTRA_UID, uid);
             getContext().sendBroadcastAsUser(intent, UserHandle.getUserHandleForUid(uid));
+            addJournal(uid, GuardEvent.JOURNAL_ALERT, detail);
         } catch (PackageManager.NameNotFoundException e) {
             // Gone.
         } catch (RuntimeException e) {
@@ -1978,11 +2227,73 @@ public final class IchthysGuardService extends SystemService {
         }
 
         @Override
+        public void addJournal(int uid, int code, String detail) {
+            enforce();
+            if (code <= 0) return;
+            IchthysGuardService.this.addJournal(uid, code,
+                    detail == null ? null : detail.length() > 200 ? detail.substring(0, 200)
+                            : detail);
+        }
+
+        @Override
+        public void noteShield(int uid, int code, String detail) {
+            if (!isTrustedReporter(Binder.getCallingUid())) {
+                throw new SecurityException("noteShield: not a system app");
+            }
+            noteShieldInternal(uid, code,
+                    detail == null ? null : detail.length() > 80 ? detail.substring(0, 80)
+                            : detail);
+        }
+
+        @Override
+        public long[] getBlockedCounters() {
+            enforce();
+            synchronized (mLock) {
+                final long[] out = new long[mBlockedCount.size() * 3];
+                for (int i = 0; i < mBlockedCount.size(); i++) {
+                    final int uid = mBlockedCount.keyAt(i);
+                    out[3 * i] = uid;
+                    out[3 * i + 1] = mBlockedCount.valueAt(i);
+                    out[3 * i + 2] = mBlockedLast.get(uid, 0L);
+                }
+                return out;
+            }
+        }
+
+        @Override
+        public int getHealth() {
+            enforce();
+            return healthBits();
+        }
+
+        @Override
+        public int[] getDenyNow() {
+            enforce();
+            synchronized (mLock) {
+                final int[] out = new int[mDenyNow.size() * 2];
+                for (int i = 0; i < mDenyNow.size(); i++) {
+                    out[2 * i] = mDenyNow.keyAt(i);
+                    out[2 * i + 1] = mDenyNow.valueAt(i);
+                }
+                return out;
+            }
+        }
+
+        @Override
         protected void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
             if (!DumpUtils.checkDumpPermission(getContext(), TAG, pw)) return;
             synchronized (mLock) {
                 pw.println("IchthysGuardService");
                 pw.println("  monitor registered: " + mMonitorRegistered);
+                pw.println("  health: 0x" + Integer.toHexString(healthBits())
+                        + " (firewall ok=" + mFirewallOk + ", metered ok=" + mMeteredOk
+                        + ", policy loaded=" + mPolicyLoadOk + ")");
+                pw.println("  blocked since boot: " + mBlockedCount.size() + " uids");
+                for (int i = 0; i < mBlockedCount.size(); i++) {
+                    pw.println("    uid " + mBlockedCount.keyAt(i) + ": "
+                            + mBlockedCount.valueAt(i) + " attempts, last "
+                            + mBlockedLast.get(mBlockedCount.keyAt(i), 0L));
+                }
                 pw.println("  paused until: " + mPausedUntil);
                 pw.println("  events: seq=" + mSeq + " buffered="
                         + Math.min(mSeq, RING_SIZE));
@@ -1991,7 +2302,9 @@ public final class IchthysGuardService extends SystemService {
                 for (int i = 0; i < mPolicy.size(); i++) {
                     final int a = mPolicy.valueAt(i);
                     pw.println("    uid " + mPolicy.keyAt(i) + ": "
-                            + (a == IIchthysGuard.ACCESS_DENY ? "DENY" : "UNMETERED_ONLY"));
+                            + (a == IIchthysGuard.ACCESS_DENY ? "DENY" : "UNMETERED_ONLY")
+                            + " reason=" + mPolicyReason.get(mPolicy.keyAt(i),
+                                    GuardEvent.REASON_POLICY));
                 }
                 pw.println("  screen locked: " + mScreenLocked + ", alert mask: " + mAlertMask);
                 pw.println("  behaviours (" + mBehaviour.size() + "):");
@@ -2002,6 +2315,10 @@ public final class IchthysGuardService extends SystemService {
                 }
                 pw.println("  LAN blocked by default: " + mLanDefaultDeny.size() + " uids");
                 pw.println("  on deny chain now: " + mDenyNow.size() + " uids");
+                for (int i = 0; i < mDenyNow.size(); i++) {
+                    pw.println("    uid " + mDenyNow.keyAt(i) + ": reason "
+                            + mDenyNow.valueAt(i));
+                }
                 final TrackerScanner s = mScanner;
                 pw.println("  tracker DB: " + (s == null ? "not loaded"
                         : s.size() + " signatures from " + s.source));

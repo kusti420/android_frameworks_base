@@ -425,7 +425,8 @@ private fun LivingSkyMotion(
 
 /**
  * IchthysOS projected clock (ProjectedClock, the concept's clock on a wall): the Depth face's
- * digits painted onto a wall plane of the wallpaper, in window coordinates like the pictures. Drawn
+ * digits on a surface of the wallpaper (a plane, a corner fold, a curved band, a free mesh) in one
+ * of its styles, in window coordinates like the pictures. Drawn
  * over the backdrop and under the subject: where the quad is, the cut-out is drawn once more over
  * it (minus the X-ray lens's window, so the lens cuts through to the time there too; the cut-out
  * element over the clock's own box draws the same pixels where they overlap). Dozing, the quad in
@@ -445,13 +446,23 @@ private fun ProjectedClockLayer(
     val renderer = remember { com.android.settingslib.ichthys.clock.ProjectedClock.Renderer() }
     val w = layers.backdrop.width
     val h = layers.backdrop.height
-    // The wall's light follows Living Sky's hour (its land exposure, back in sRGB terms).
-    val lightScale =
-        remember(sky, layers) {
+    // The light the styles paint with follows Living Sky's moment (the land's exposure back in
+    // sRGB terms, how far into the night, where the sun is and how low); without it, the hour.
+    val light =
+        remember(sky, layers, now.hour24, now.minute) {
             val info = layers.skyInfo
-            if (sky == null || info == null) 1f
-            else kotlin.math.sqrt(
-                LivingSky.grade(sky.sun, sky.weather, info.horizon, sky.moonPhase).exposure)
+            if (sky == null || info == null) {
+                com.android.settingslib.ichthys.clock.ProjectedClock.Light.forClock(now.hour24, now.minute)
+            } else {
+                val g = LivingSky.grade(sky.sun, sky.weather, info.horizon, sky.moonPhase)
+                com.android.settingslib.ichthys.clock.ProjectedClock.Light(
+                    exposure = kotlin.math.sqrt(g.exposure),
+                    night = g.nightness.coerceIn(0f, 1f),
+                    sunX = g.sunX,
+                    sunY = g.sunY,
+                    lowSun = (1f - sky.sun.elevation / 40f).coerceIn(0f, 1f),
+                )
+            }
         }
     var origin by remember { mutableStateOf(Offset.Zero) }
     Canvas(modifier.onGloballyPositioned { origin = repository.windowOrigin(it, origin) }) {
@@ -459,8 +470,8 @@ private fun ProjectedClockLayer(
         translate(-origin.x + shift.x, -origin.y + shift.y) {
             clipRect(0f, 0f, w.toFloat(), h.toFloat()) {
                 drawIntoCanvas {
-                    renderer.draw(it.nativeCanvas, w, h, now.quad, now.hour, now.minute, now.font,
-                        now.colour, now.alpha * shown, layers.backdrop, layers.thumb, lightScale,
+                    renderer.draw(it.nativeCanvas, w, h, now.surface, now.style, now.hour, now.minute,
+                        now.font, now.colour, now.alpha * shown, layers.backdrop, layers.thumb, light,
                         dozeAmount, density)
                 }
             }
@@ -478,12 +489,12 @@ private fun ProjectedClockLayer(
                 }
         }
         val bounds =
-            remember(now.quad, w, h) {
-                val q = now.quad
-                Rect(
-                    minOf(q[0], q[6]) * w - 8f, minOf(q[1], q[3]) * h - 8f,
-                    maxOf(q[2], q[4]) * w + 8f, maxOf(q[5], q[7]) * h + 8f,
-                )
+            remember(now.surface, now.style, w, h) {
+                // The surface's box (bows included); the signage plate reaches past the digits.
+                val b = now.surface.bounds()
+                val pad = 8f + if (now.style == com.android.settingslib.ichthys.clock.ProjectedClock.STYLE_SIGNAGE)
+                    now.surface.meanHeightPx(w, h) * 0.12f else 0f
+                Rect(b.left * w - pad, b.top * h - pad, b.right * w + pad, b.bottom * h + pad)
             }
         val alpha = (1f - dozeAmount) * shown
         if (sky != null && layers.livingSky) {

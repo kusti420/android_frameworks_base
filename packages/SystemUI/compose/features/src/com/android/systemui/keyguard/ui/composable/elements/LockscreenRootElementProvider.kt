@@ -19,6 +19,8 @@ package com.android.systemui.keyguard.ui.composable.elements
 import android.content.Context
 import android.view.ViewGroup
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -31,13 +33,16 @@ import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.VerticalAlignmentLine
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.android.compose.animation.scene.BaseContentScope
 import com.android.compose.animation.scene.ContentScope
 import com.android.compose.animation.scene.ElementContentScope
 import com.android.compose.modifiers.thenIf
 import com.android.systemui.dagger.SysUISingleton
+import com.android.settingslib.ichthys.clock.LockNotifications
 import com.android.systemui.keyguard.data.repository.IchthysDepthRepository
+import com.android.systemui.keyguard.data.repository.IchthysLockNotifRepository
 import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor
 import com.android.systemui.keyguard.ui.composable.LockscreenTouchHandling
 import com.android.systemui.keyguard.ui.composable.modifier.burnInAware
@@ -80,6 +85,8 @@ constructor(
     private val depthRepository: IchthysDepthRepository,
     private val keyguardInteractor: KeyguardInteractor,
     private val mediaViewController: MediaViewController,
+    private val notifRepository: IchthysLockNotifRepository,
+    private val dockProvider: IchthysNotificationDockProvider,
 ) : LockscreenElementProvider {
     override val elements: List<LockscreenElement> by lazy { listOf(RootElement()) }
 
@@ -141,6 +148,14 @@ constructor(
                         ?.isInitiatedByUserInput ?: false
                 }
                 depthRepository.burnInShift = { viewModel.burnIn.translation }
+                // IchthysOS Quiet dock (tracker#58): the dock's sheet is a lock screen thing only.
+                // It closes as the screen dozes, as any scene change starts (an unlock, the shade)
+                // and when the lock screen leaves composition.
+                val leaving = layoutState.currentTransition != null
+                LaunchedEffect(dozeAmount > 0f, leaving) {
+                    if (dozeAmount > 0f || leaving) notifRepository.setSheetOpen(false)
+                }
+                DisposableEffect(Unit) { onDispose { notifRepository.setSheetOpen(false) } }
                 with(scopeFactory.create(contentScope, innerContext)) {
                     LockscreenSceneLayout(
                         viewModel.isUdfpsSupported,
@@ -167,6 +182,16 @@ constructor(
                         depthCutout = { if (depthOn) IchthysDepthLensOverlay(depthRepository) },
                         depthTouch =
                             if (depthOn) Modifier.ichthysDepthLens(depthRepository) else Modifier,
+                        dock = {
+                            dockProvider.Dock(
+                                dozeAmount,
+                                Modifier.burnInAware(viewModel.burnIn, isClock = false),
+                            )
+                        },
+                        onBottomZone = { keepOutTop, dockTop ->
+                            notifRepository.keepOutTop = keepOutTop
+                            notifRepository.dockTop = dockTop
+                        },
                     )
                 }
             }
@@ -247,6 +272,12 @@ object LockIconAlignmentLines {
  *   as it may be drawn on top of the UDFPS (under display fingerprint sensor).
  * - IchthysOS depth (tracker#58): [depth] fills the screen under everything, [depthCutout] fills it
  *   over the upper region (the clock) and under the lock icon and the lower region.
+ * - IchthysOS Quiet dock (tracker#58): everything at the bottom keeps to one keep-out, the lock
+ *   icon's bounds (the fingerprint sensor's on UDFPS) plus [LockNotifications.KEEP_OUT_MARGIN_DP].
+ *   The [dock] hangs [LockNotifications.DOCK_GAP_DP] above it (never off the screen's bottom, so
+ *   it never meets the sensor); the upper region ends above the dock, or above the keep-out when
+ *   the dock takes no height (cards mode, no notifications). The dock is placed before the upper
+ *   region: the depth subject (drawn with the clock) stays in front of it, as of the clock.
  */
 @Composable
 private fun LockscreenScope<ContentScope>.LockscreenSceneLayout(
@@ -255,11 +286,23 @@ private fun LockscreenScope<ContentScope>.LockscreenSceneLayout(
     depth: @Composable () -> Unit = {},
     depthCutout: @Composable () -> Unit = {},
     depthTouch: Modifier = Modifier,
+    dock: @Composable () -> Unit = {},
+    onBottomZone: (keepOutTop: Int, dockTop: Int) -> Unit = { _, _ -> },
 ) {
+    val keepOutMarginPx = with(androidx.compose.ui.platform.LocalDensity.current) {
+        LockNotifications.KEEP_OUT_MARGIN_DP.dp.roundToPx()
+    }
+    val dockGapPx = with(androidx.compose.ui.platform.LocalDensity.current) {
+        LockNotifications.DOCK_GAP_DP.dp.roundToPx()
+    }
+    val upperGapPx = with(androidx.compose.ui.platform.LocalDensity.current) {
+        LockNotifications.UPPER_GAP_DP.dp.roundToPx()
+    }
     Layout(
         content = {
             Box { depth() }
             LockscreenElement(StatusBar)
+            Box { dock() }
             LockscreenElement(Region.Upper)
             Box { depthCutout() }
             LockscreenElement(LockIcon)
@@ -275,15 +318,16 @@ private fun LockscreenScope<ContentScope>.LockscreenSceneLayout(
                     Modifier.graphicsLayer { alpha = 0f }
                 },
     ) { measurables, constraints ->
-        check(measurables.size == 8)
+        check(measurables.size == 9)
         val depthMeasurable = measurables[0]
         val statusBarMeasurable = measurables[1]
-        val upperRegionMeasurable = measurables[2]
-        val depthCutoutMeasurable = measurables[3]
-        val lockIconMeasurable = measurables[4]
-        val ambientIndicationMeasurable = measurables[5]
-        val lowerRegionMeasurable = measurables[6]
-        val settingsMenuMeasurable = measurables[7]
+        val dockMeasurable = measurables[2]
+        val upperRegionMeasurable = measurables[3]
+        val depthCutoutMeasurable = measurables[4]
+        val lockIconMeasurable = measurables[5]
+        val ambientIndicationMeasurable = measurables[6]
+        val lowerRegionMeasurable = measurables[7]
+        val settingsMenuMeasurable = measurables[8]
         val fullScreen = Constraints.fixed(constraints.maxWidth, constraints.maxHeight)
         val depthPlaceable = depthMeasurable.measure(fullScreen)
         val depthCutoutPlaceable = depthCutoutMeasurable.measure(fullScreen)
@@ -309,7 +353,26 @@ private fun LockscreenScope<ContentScope>.LockscreenSceneLayout(
                 constraints = Constraints.fixedWidth(constraints.maxWidth)
             )
 
-        var upperRegionMaxHeight = lockIconBounds.top - statusBarPlaceable.measuredHeight
+        // IchthysOS Quiet dock: the keep-out around the sensor, and the dock above it. The dock
+        // measures to nothing when it has nothing to show; then the upper region reaches the
+        // keep-out itself.
+        val keepOutTop = lockIconBounds.top - keepOutMarginPx
+        val dockPlaceable =
+            dockMeasurable.measure(
+                Constraints(
+                    minWidth = 0,
+                    maxWidth = constraints.maxWidth.coerceAtLeast(0),
+                    minHeight = 0,
+                    maxHeight = (keepOutTop - dockGapPx - statusBarPlaceable.measuredHeight).coerceAtLeast(0),
+                )
+            )
+        val dockShown = dockPlaceable.measuredHeight > 0
+        val dockBottom = keepOutTop - dockGapPx
+        val dockTop = dockBottom - dockPlaceable.measuredHeight
+        val upperRegionBottom = if (dockShown) dockTop - upperGapPx else keepOutTop
+        onBottomZone(keepOutTop, if (dockShown) dockTop else keepOutTop)
+
+        var upperRegionMaxHeight = upperRegionBottom - statusBarPlaceable.measuredHeight
         var lowerRegionMaxHeight = constraints.maxHeight - lockIconBounds.bottom
 
         if (!isUdfpsSupported) {
@@ -344,6 +407,14 @@ private fun LockscreenScope<ContentScope>.LockscreenSceneLayout(
             // Placement order is drawing order.
             depthPlaceable.place(0, 0)
             statusBarPlaceable.place(0, 0)
+            // IchthysOS Quiet dock: centred, its bottom a gap above the keep-out; under the upper
+            // region, so the depth subject (drawn with the clock) stands in front of it.
+            if (dockShown) {
+                dockPlaceable.placeRelative(
+                    (constraints.maxWidth - dockPlaceable.measuredWidth) / 2,
+                    dockTop,
+                )
+            }
             upperRegionPlaceable.placeRelative(0, statusBarPlaceable.measuredHeight)
             depthCutoutPlaceable.place(0, 0)
             lockIconPlaceable.place(lockIconBounds.left, lockIconBounds.top)
@@ -369,9 +440,9 @@ private fun LockscreenScope<ContentScope>.LockscreenSceneLayout(
 
             // IchthysOS: above an under-display fingerprint sensor that sits at the bottom (the
             // A52s): there the sensor's touch area took the taps and "Customize lock screen"
-            // could not be pressed.
+            // could not be pressed. Above the keep-out, like everything else at the bottom.
             val menuBottom =
-                if (isUdfpsSupported) minOf(constraints.maxHeight, lockIconBounds.top)
+                if (isUdfpsSupported) minOf(constraints.maxHeight, keepOutTop)
                 else constraints.maxHeight
             settingsMenuPlaceable.placeRelative(
                 (constraints.maxWidth - settingsMenuPlaceable.measuredWidth) / 2,

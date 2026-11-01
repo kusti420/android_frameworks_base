@@ -70,6 +70,8 @@ constructor(
     summarizationCoordinator: SummarizationCoordinator,
     highlightsCoordinator: HighlightsCoordinator,
     hsuCoordinator: HsuCoordinator,
+    // IchthysOS: folds ongoing system / silent notifications out of the stack (chips, fold rows).
+    ichthysQuietNotificationsCoordinator: IchthysQuietNotificationsCoordinator,
 ) : NotifCoordinators {
 
     private val mCoreCoordinators: MutableList<CoreCoordinator> = ArrayList()
@@ -88,6 +90,7 @@ constructor(
         mCoordinators.add(unseenKeyguardCoordinator)
         mCoordinators.add(rankingCoordinator)
         mCoordinators.add(colorizedFgsCoordinator)
+        mCoordinators.add(ichthysQuietNotificationsCoordinator) // IchthysOS
         mCoordinators.add(deviceProvisionedCoordinator)
         mCoordinators.add(bubbleCoordinator)
         mCoordinators.add(debugModeCoordinator)

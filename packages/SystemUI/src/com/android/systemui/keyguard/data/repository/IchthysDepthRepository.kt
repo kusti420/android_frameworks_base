@@ -325,18 +325,35 @@ constructor(
     /**
      * IchthysOS projected clock (ProjectedClock): the Depth face stands on a wall plane of the
      * wallpaper. What the depth layers draw this minute, or null (flat, or another face): the
-     * quad for the current wallpaper, the digits' font and colour, the face's opacity, the time.
+     * surface and the style for the current wallpaper, the digits' font and colour, the face's
+     * opacity, the time.
      */
     class ProjectedNow(
-        val quad: FloatArray,
+        /** The surface for the current wallpaper (ProjectedClock.Surface; a plane, a fold, ...). */
+        val surface: com.android.settingslib.ichthys.clock.ProjectedClock.Surface,
+        /** The paint style (ProjectedClock.STYLE_*). */
+        val style: Int,
         val font: Int,
         val colour: Int,
         val alpha: Float,
         val hour: Int,
         val minute: Int,
-    )
+        /** The hour of the day (0..23), for the light without Living Sky. */
+        val hour24: Int,
+    ) {
+        /** The surface's four outer corners (fractions), for whoever needs a quad. */
+        val quad: FloatArray
+            get() = surface.corners()
+    }
 
-    private class ProjectedSettings(val quads: String?, val font: Int, val colour: Int, val alpha: Float)
+    private class ProjectedSettings(
+        val quads: String?,
+        val font: Int,
+        val colour: Int,
+        val alpha: Float,
+        val style: Int,
+        val surfaceKind: Int,
+    )
 
     /** The projected placement's settings, or null when the Depth face isn't projected. */
     private val projectedSettings: StateFlow<ProjectedSettings?> =
@@ -347,6 +364,8 @@ constructor(
                             Settings.Secure.LOCK_SCREEN_CUSTOM_CLOCK_STYLE,
                             com.android.settingslib.ichthys.clock.DepthClockView.KEY_PLACEMENT,
                             com.android.settingslib.ichthys.clock.ProjectedClock.KEY_QUADS,
+                            com.android.settingslib.ichthys.clock.ProjectedClock.KEY_STYLE,
+                            com.android.settingslib.ichthys.clock.ProjectedClock.KEY_SURFACE_KIND,
                             com.android.settingslib.ichthys.clock.DepthClockView.KEY_FONT,
                             KEY_COLOR_MODE,
                             KEY_CUSTOM_COLOR,
@@ -381,6 +400,12 @@ constructor(
                             com.android.settingslib.ichthys.clock.DepthClockView.FONT_ROUNDED),
                         colour,
                         int(KEY_OPACITY, 100).coerceIn(0, 100) / 100f,
+                        int(com.android.settingslib.ichthys.clock.ProjectedClock.KEY_STYLE,
+                            com.android.settingslib.ichthys.clock.ProjectedClock.STYLE_PAINTED)
+                            .coerceIn(0, com.android.settingslib.ichthys.clock.ProjectedClock.STYLE_COUNT - 1),
+                        int(com.android.settingslib.ichthys.clock.ProjectedClock.KEY_SURFACE_KIND,
+                            com.android.settingslib.ichthys.clock.ProjectedClock.KIND_PLANE)
+                            .coerceIn(0, com.android.settingslib.ichthys.clock.ProjectedClock.KIND_COUNT - 1),
                     )
                 }
             }
@@ -427,9 +452,10 @@ constructor(
                             if (android.text.format.DateFormat.is24HourFormat(context)) h24
                             else (h24 % 12).let { if (it == 0) 12 else it }
                         ProjectedNow(
-                            com.android.settingslib.ichthys.clock.ProjectedClock.quadFor(
-                                ps.quads, l?.wallpaperKey),
-                            ps.font, ps.colour, ps.alpha, hour, c.get(java.util.Calendar.MINUTE))
+                            com.android.settingslib.ichthys.clock.ProjectedClock.surfaceFor(
+                                ps.quads, l?.wallpaperKey, ps.surfaceKind),
+                            ps.style, ps.font, ps.colour, ps.alpha, hour,
+                            c.get(java.util.Calendar.MINUTE), h24)
                     }
             }
             .flowOn(bgDispatcher)

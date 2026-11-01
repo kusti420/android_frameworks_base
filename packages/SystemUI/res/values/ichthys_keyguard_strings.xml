@@ -1,5 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
     <!-- IchthysOS: lock screen shortcut that opens the default calculator. -->
     <string name="ichthys_keyguard_calculator">Calculator</string>
+    <!-- IchthysOS lock screen notifications: the Quiet dock (tracker#58). -->
+    <!-- Notifications of apps that got no icon in the dock: "+3" -->
+    <string name="ichthys_dock_more">+<xliff:g id="count" example="3">%1$d</xliff:g></string>
+    <plurals name="ichthys_dock_notifications">
+        <item quantity="one"><xliff:g id="count" example="1">%1$d</xliff:g> notification</item>
+        <item quantity="other"><xliff:g id="count" example="7">%1$d</xliff:g> notifications</item>
+    </plurals>
+    <!-- The dock in glance (private) mode: the content comes after the unlock -->
+    <string name="ichthys_dock_unlock_to_read">unlock to read</string>
+    <!-- Hint in the header of the opened sheet -->
+    <string name="ichthys_sheet_put_away">swipe down to put away</string>
+    <!-- Accessibility: the dock -->
+    <string name="ichthys_dock_a11y">Notifications: <xliff:g id="count" example="7">%1$d</xliff:g>. Tap to show them.</string>
 </resources>

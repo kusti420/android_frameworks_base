@@ -46,6 +46,7 @@ import com.android.systemui.shade.domain.interactor.ShadeStatusBarComponentsInte
 import com.android.systemui.shade.shared.model.ShadeMode
 import com.android.systemui.unfold.domain.interactor.UnfoldTransitionInteractor
 import com.android.systemui.window.domain.interactor.WindowRootViewBlurInteractor
+import com.android.systemui.statusbar.notification.ichthys.quiet.IchthysQuietNotificationsInteractor
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import java.util.concurrent.atomic.AtomicBoolean
@@ -86,6 +87,11 @@ constructor(
      * tiles. Created and activated by the shade scene only while that option is on.
      */
     val brightnessSliderViewModelFactory: BrightnessSliderViewModel.Factory,
+    /**
+     * IchthysOS: quiet notifications. The chip strip above the first notification and the fold
+     * rows under the stack read it (IchthysQuietNotifications.kt).
+     */
+    val ichthysQuietNotifications: IchthysQuietNotificationsInteractor,
 ) : HydratedActivatable() {
 
     /**

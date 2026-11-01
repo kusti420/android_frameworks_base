@@ -86,6 +86,14 @@ constructor(
         dirtyListeners.addIfAbsent(listener)
     }
 
+    /**
+     * IchthysOS: the quiet-notification coordinator flips whether Silent rows are minimized
+     * (SectionStyleProvider); every row's adjustment may have changed, so reinflate.
+     */
+    fun ichthysMarkDirty() {
+        dirtyListeners.forEach(Runnable::run)
+    }
+
     fun removeDirtyListener(listener: Runnable) {
         dirtyListeners.remove(listener)
         if (dirtyListeners.isEmpty()) {
