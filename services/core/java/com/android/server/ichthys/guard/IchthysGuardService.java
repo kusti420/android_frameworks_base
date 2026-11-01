@@ -107,6 +107,9 @@ import java.util.concurrent.Executor;
  *     the uid on the same OEM_DENY_3 chain while the screen is off/locked, or while the uid is not
  *     on screen (uid observer). Local network uses the stock ACCESS_LOCAL_NETWORK runtime
  *     permission, so it looks like a user denial; apps installed after setup start blocked.
+ * <li>Sleep (auto-tighten, decided by Settings): a uid Settings denies with REASON_DORMANT gets
+ *     its network back the moment it comes to the top (uid observer), and Settings is told with
+ *     {@link #ACTION_WOKE}. Asleep apps are not suspended, so opening one needs no review.
  * <li>Alerts (W8b decisions 9, 35): AppOps active/noted callbacks (camera, mic, location while
  *     not visible; wakelocks), install-time manifest checks (boot receivers, battery-exemption
  *     requests) and the battery allowlist broadcast. Delivered to Settings as an explicit
@@ -134,6 +137,13 @@ public final class IchthysGuardService extends SystemService {
     private static final String ACTION_ALERT = "org.ichthys.guard.action.ALERT";
     private static final ComponentName ALERT_RECEIVER = new ComponentName(GUARD_HOST_PACKAGE,
             "com.android.settings.ichthys.guard.notify.AppScannedReceiver");
+    /**
+     * IchthysOS: explicit broadcast to the same receiver (and NETWORK_STACK sender permission)
+     * when an app asleep for being unused (REASON_DORMANT) came to the top: its network is already
+     * back, and Settings clears the app's sleep. Extras: EXTRA_WOKE_PACKAGES, Intent.EXTRA_UID.
+     */
+    private static final String ACTION_WOKE = "org.ichthys.guard.action.WOKE";
+    private static final String EXTRA_WOKE_PACKAGES = "packages";
     private static final String PERMISSION_LOCAL_NETWORK =
             "android.permission.ACCESS_LOCAL_NETWORK";
     /** The same alert (type, app, cause) is reported at most this often. */
@@ -424,6 +434,7 @@ public final class IchthysGuardService extends SystemService {
                 applyFirewall();
             });
             mScanHandler.post(this::releaseLauncherlessQuarantines);
+            mScanHandler.post(this::releaseDormantSuspensions);
             mScanHandler.post(this::backfillScans);
             mHandler.post(this::applyLan);
             // First snapshot only; later changes of the battery allowlist are alerted.
@@ -575,6 +586,7 @@ public final class IchthysGuardService extends SystemService {
     private void onProcState(int uid, int procState) {
         if (!isAppUid(uid)) return;
         final boolean reapply;
+        final boolean woke;
         synchronized (mLock) {
             final boolean was = isVisibleLocked(uid);
             if (procState == ActivityManager.PROCESS_STATE_NONEXISTENT) {
@@ -584,9 +596,53 @@ public final class IchthysGuardService extends SystemService {
             }
             reapply = was != isVisibleLocked(uid)
                     && (mBehaviour.get(uid) & IIchthysGuard.BEHAVIOUR_FOREGROUND_ONLY) != 0;
+            // IchthysOS: an app asleep for being unused that comes to the top was opened by the
+            // user (only TOP: a uid bound by the top app, a job or a service doesn't count). The
+            // sleep is lifted here, not by Settings, so the app has its network before its first
+            // request; Settings then pushes the app's own rule (ACTION_WOKE). Lockdown and
+            // schedules carry their own reasons and are left alone.
+            woke = procState == ActivityManager.PROCESS_STATE_TOP
+                    && mPolicy.indexOfKey(uid) >= 0
+                    && mPolicyReason.get(uid, GuardEvent.REASON_POLICY)
+                            == GuardEvent.REASON_DORMANT;
+            if (woke) {
+                mPolicy.delete(uid);
+                mPolicyReason.delete(uid);
+            }
         }
         // Front of the queue: the app is waiting for its network as it comes on screen.
-        if (reapply) mHandler.postAtFrontOfQueue(this::applyFirewall);
+        if (woke) {
+            mHandler.postAtFrontOfQueue(() -> {
+                applyFirewall();
+                savePolicy();
+                sendWoke(uid);
+            });
+        } else if (reapply) {
+            mHandler.postAtFrontOfQueue(this::applyFirewall);
+        }
+    }
+
+    /**
+     * IchthysOS: tells Settings that {@code uid} woke from sleep (see {@link #onProcState}), so it
+     * clears the sleep of the uid's packages and pushes their own rule. Handler thread.
+     */
+    private void sendWoke(int uid) {
+        final long token = Binder.clearCallingIdentity();
+        try {
+            final String[] pkgs = getContext().getPackageManager().getPackagesForUid(uid);
+            if (pkgs == null || pkgs.length == 0) return;
+            final Intent intent = new Intent(ACTION_WOKE)
+                    .setComponent(ALERT_RECEIVER)
+                    .addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
+                    .putExtra(EXTRA_WOKE_PACKAGES, pkgs)
+                    .putExtra(Intent.EXTRA_UID, uid);
+            getContext().sendBroadcastAsUser(intent, UserHandle.getUserHandleForUid(uid));
+            Slog.i(TAG, "uid " + uid + " opened while asleep: network back");
+        } catch (RuntimeException e) {
+            Slog.w(TAG, "Wake of uid " + uid + " not delivered to Settings", e);
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
     }
 
     private static boolean isAppUid(int uid) {
@@ -1644,6 +1700,47 @@ public final class IchthysGuardService extends SystemService {
                 } catch (PackageManager.NameNotFoundException | RemoteException
                         | RuntimeException e) {
                     Slog.w(TAG, "Could not check the quarantine of " + ai.packageName, e);
+                }
+            }
+        }
+    }
+
+    /**
+     * IchthysOS: apps put to sleep (REASON_DORMANT) used to be suspended by Settings too, so
+     * opening one went through the suspended-app dialog and Guard's review. Sleep is network-only
+     * now and lifted when the app is opened ({@link #onProcState}); this lifts Settings' leftover
+     * suspension of those apps (only Settings' own entry, never a first-launch quarantine) and
+     * keeps their network cut. Scan thread, at boot; nothing to do after the first run.
+     */
+    private void releaseDormantSuspensions() {
+        final ArrayList<Integer> uids = new ArrayList<>();
+        synchronized (mLock) {
+            for (int i = 0; i < mPolicyReason.size(); i++) {
+                if (mPolicyReason.valueAt(i) == GuardEvent.REASON_DORMANT) {
+                    uids.add(mPolicyReason.keyAt(i));
+                }
+            }
+        }
+        if (uids.isEmpty()) return;
+        final Context context = getContext();
+        for (int uid : uids) {
+            final int userId = UserHandle.getUserId(uid);
+            final String[] pkgs = context.getPackageManager().getPackagesForUid(uid);
+            if (pkgs == null) continue;
+            final PackageManager pm = context.createContextAsUser(UserHandle.of(userId), 0)
+                    .getPackageManager();
+            for (String pkg : pkgs) {
+                try {
+                    if (!pm.isPackageSuspended(pkg) || pm.isPackageQuarantined(pkg)) continue;
+                    AppGlobals.getPackageManager().setPackagesSuspendedAsUser(
+                            new String[] {pkg}, false, null, null, null,
+                            0 /* flags, as Settings' own release */, GUARD_HOST_PACKAGE, userId,
+                            userId);
+                    Slog.i(TAG, "Lifted the sleep suspension of " + pkg + " (user " + userId
+                            + "); its network stays cut until it is opened");
+                } catch (PackageManager.NameNotFoundException | RemoteException
+                        | RuntimeException e) {
+                    Slog.w(TAG, "Could not check the sleep suspension of " + pkg, e);
                 }
             }
         }
