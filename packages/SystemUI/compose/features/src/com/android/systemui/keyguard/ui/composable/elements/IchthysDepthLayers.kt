@@ -174,7 +174,9 @@ fun IchthysDepthBackdrop(
     val art = rememberMediaArtCover()
     // Weather and stars move only while awake (nothing on AOD) and out of battery saver.
     LivingSkyMotion(layers, skyNow, moving = dozeAmount == 0f && !finger && art < 1f)
-    if (finger || art >= 1f) return
+    // IchthysOS: a finger on the sensor only freezes the motion (above). The layers used to stop
+    // drawing then, so the raw wallpaper window (ungraded: a day picture at night) showed through.
+    if (art >= 1f) return
     Crossfade(
         targetState = layers,
         animationSpec = tween(LAYERS_FADE_MS),
@@ -251,7 +253,7 @@ fun IchthysDepthCutout(
     }
     // IchthysOS: the media art is the wallpaper while it shows; its subject goes with it.
     val art = rememberMediaArtCover()
-    if (finger || art >= 1f) return
+    if (art >= 1f) return
     // Awake: the subject in colour. On AOD: the subject in black, so the clock's outlines stop
     // behind it (its glowing edge is drawn with the backdrop). They cross-fade with the doze.
     Crossfade(

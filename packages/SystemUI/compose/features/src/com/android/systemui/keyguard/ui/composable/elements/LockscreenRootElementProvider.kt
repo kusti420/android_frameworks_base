@@ -35,6 +35,10 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import android.util.Log
+import com.android.compose.animation.scene.BaseMutableSceneTransitionLayoutState
+import com.android.systemui.keyguard.ICHTHYS_DEPTH_UNLOCK_MS
+import kotlinx.coroutines.delay
 import com.android.compose.animation.scene.BaseContentScope
 import com.android.compose.animation.scene.ContentScope
 import com.android.compose.animation.scene.ElementContentScope
@@ -72,6 +76,12 @@ import com.android.systemui.shade.ShadeDisplayAware
 import javax.inject.Inject
 import kotlin.math.max
 import kotlin.math.min
+
+/**
+ * IchthysOS: how long past its own length a programmatic Lockscreen to Gone transition may run
+ * before the lock screen root settles it at Gone (see RootElement).
+ */
+private const val UNLOCK_SETTLE_GRACE_MS = 2500L
 
 @SysUISingleton
 /** Provides an element representing all lockscreen ui */
@@ -148,6 +158,30 @@ constructor(
                         ?.isInitiatedByUserInput ?: false
                 }
                 depthRepository.burnInShift = { viewModel.burnIn.translation }
+                // IchthysOS: a programmatic unlock (fingerprint, face, tap) always ends. Seen once:
+                // after a fingerprint unlock the lock screen stayed over the launcher, its
+                // fingerprint icon on it, and nothing unlocked until the next lock. Should such a
+                // Lockscreen to Gone transition still run well past its length, it is settled at
+                // Gone (where it was going). A swipe is the finger's to hold, so it is left alone.
+                val programmaticUnlock =
+                    layoutState.currentTransition?.takeIf {
+                        it.fromContent == Scenes.Lockscreen &&
+                            it.toContent == Scenes.Gone &&
+                            !it.isInitiatedByUserInput
+                    }
+                LaunchedEffect(programmaticUnlock) {
+                    val unlock = programmaticUnlock ?: return@LaunchedEffect
+                    delay(ICHTHYS_DEPTH_UNLOCK_MS + UNLOCK_SETTLE_GRACE_MS)
+                    if (layoutState.currentTransition === unlock && unlock.currentScene == Scenes.Gone) {
+                        Log.w(
+                            "IchthysLockscreen",
+                            "Lockscreen to Gone still running after " +
+                                "${ICHTHYS_DEPTH_UNLOCK_MS + UNLOCK_SETTLE_GRACE_MS} ms " +
+                                "(progress ${unlock.progress}): settling at Gone",
+                        )
+                        (layoutState as? BaseMutableSceneTransitionLayoutState)?.snapTo(Scenes.Gone)
+                    }
+                }
                 // IchthysOS Quiet dock (tracker#58): the dock's sheet is a lock screen thing only.
                 // It closes as the screen dozes, as any scene change starts (an unlock, the shade)
                 // and when the lock screen leaves composition.
@@ -192,6 +226,8 @@ constructor(
                             notifRepository.keepOutTop = keepOutTop
                             notifRepository.dockTop = dockTop
                         },
+                        // IchthysOS: chrome goes at the very start of every unlock.
+                        chrome = Modifier.ichthysUnlockChrome(depthRepository),
                     )
                 }
             }
@@ -288,6 +324,7 @@ private fun LockscreenScope<ContentScope>.LockscreenSceneLayout(
     depthTouch: Modifier = Modifier,
     dock: @Composable () -> Unit = {},
     onBottomZone: (keepOutTop: Int, dockTop: Int) -> Unit = { _, _ -> },
+    chrome: Modifier = Modifier,
 ) {
     val keepOutMarginPx = with(androidx.compose.ui.platform.LocalDensity.current) {
         LockNotifications.KEEP_OUT_MARGIN_DP.dp.roundToPx()
@@ -302,13 +339,18 @@ private fun LockscreenScope<ContentScope>.LockscreenSceneLayout(
         content = {
             Box { depth() }
             LockscreenElement(StatusBar)
-            Box(with(contentScope) { Modifier.element(IchthysDockElementKey) }) { dock() }
+            // IchthysOS: [chrome] (ichthysUnlockChrome) on everything that is not a depth layer:
+            // the dock, the fingerprint icon, the indication line, the shortcuts and "Customize
+            // lock screen" leave at the very start of every unlock.
+            Box(with(contentScope) { Modifier.element(IchthysDockElementKey) }.then(chrome)) {
+                dock()
+            }
             LockscreenElement(Region.Upper)
             Box { depthCutout() }
-            LockscreenElement(LockIcon)
-            LockscreenElement(AmbientIndicationArea)
-            LockscreenElement(Region.Lower)
-            LockscreenElement(SettingsMenu)
+            LockscreenElement(LockIcon, chrome)
+            LockscreenElement(AmbientIndicationArea, chrome)
+            LockscreenElement(Region.Lower, chrome)
+            LockscreenElement(SettingsMenu, chrome)
         },
         // Hide the lock screen elements when an overlay is shown above.
         modifier =

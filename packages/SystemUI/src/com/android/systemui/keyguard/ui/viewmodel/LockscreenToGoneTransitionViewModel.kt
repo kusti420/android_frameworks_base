@@ -118,6 +118,21 @@ constructor(
         )
     }
 
+    /**
+     * IchthysOS: the fingerprint icon's disc goes at the very start of every unlock (about the
+     * first 6 %), with the rest of the lock screen's chrome (ichthysUnlockChrome). Without this
+     * the background view model had no Lockscreen to Gone value: the disc kept its full alpha,
+     * and its blur region (BackgroundBlurDrawable, composited by SurfaceFlinger, so no parent
+     * layer's alpha reaches it) stayed on the sensor through the whole depth reveal.
+     */
+    val deviceEntryBackgroundViewAlpha: Flow<Float> =
+        transitionAnimation.sharedFlow(
+            duration = 40.milliseconds,
+            onStep = { 1f - it },
+            onCancel = { 1f },
+            onFinish = { 0f },
+        )
+
     override val deviceEntryParentViewAlpha: Flow<Float> =
         transitionAnimation.sharedFlowWithShade(
             duration = 600.milliseconds,

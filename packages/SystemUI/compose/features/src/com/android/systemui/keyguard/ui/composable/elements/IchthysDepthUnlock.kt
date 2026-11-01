@@ -38,6 +38,12 @@ enum class IchthysDepthPlane {
 /** Share of the unlock spent pulling the layers apart; the rest folds them into the home screen. */
 private const val SPLIT = 0.6f
 
+/**
+ * IchthysOS: share of the unlock over which the lock screen's chrome leaves ([ichthysUnlockChrome]):
+ * about 70 ms of the 1.2 s depth unlock, the first moment of the stock one.
+ */
+private const val CHROME_END = 0.06f
+
 /** A swipe shorter than this has no direction of its own yet: the layers go straight up. */
 private const val SWIPE_DIR_DP = 24f
 
@@ -108,4 +114,20 @@ fun Modifier.ichthysDepthPlane(
             }
         }
     }
+}
+
+/**
+ * IchthysOS: the lock screen's chrome (the notification dock, "Customize lock screen", the
+ * fingerprint icon, the media player, the shortcuts and the indication line) is not part of the
+ * depth reveal: it leaves at the very start of every unlock (swipe, fingerprint, face, tap; AOD to
+ * Gone too) and comes back if the unlock is cancelled. Read straight from the Lockscreen to Gone
+ * transition ([IchthysDepthRepository.unlockProgress]), like Pulse in LockscreenContent: the outer
+ * transition's fade() did not reach all of it (the media player sits in the upper region's nested
+ * clock scenes; the fingerprint icon's own view alpha runs over 600 ms of the stock timing) and
+ * does nothing for a transition key without that fade. Draw phase only; the layer is the node's
+ * own size.
+ */
+fun Modifier.ichthysUnlockChrome(repository: IchthysDepthRepository): Modifier = graphicsLayer {
+    val p = repository.unlockProgress()
+    alpha = if (p <= 0f) 1f else (1f - p / CHROME_END).coerceIn(0f, 1f)
 }

@@ -86,9 +86,7 @@ import com.android.systemui.deviceentry.domain.interactor.DeviceEntryInteractor
 import com.android.systemui.keyguard.data.repository.IchthysLockNotifRepository
 import com.android.systemui.plugins.FalsingManager
 import com.android.systemui.res.R
-import com.android.systemui.settings.UserTracker
 import com.android.systemui.shade.ui.ShoalShade
-import com.android.systemui.statusbar.NotificationLockscreenUserManager
 import com.android.systemui.statusbar.notification.collection.NotifPipeline
 import com.android.systemui.statusbar.notification.domain.interactor.ActiveNotificationsInteractor
 import com.android.systemui.statusbar.notification.shared.ActiveNotificationModel
@@ -96,6 +94,7 @@ import dagger.Lazy
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.withContext
 
 /** IchthysOS: the dock as a scene element, so the unlock transitions can fade it. */
@@ -121,8 +120,6 @@ constructor(
     private val repository: IchthysLockNotifRepository,
     private val activeNotificationsInteractor: ActiveNotificationsInteractor,
     private val notifPipeline: Lazy<NotifPipeline>,
-    private val lockscreenUserManager: Lazy<NotificationLockscreenUserManager>,
-    private val userTracker: UserTracker,
     private val deviceEntryInteractor: Lazy<DeviceEntryInteractor>,
     private val falsingManager: Lazy<FalsingManager>,
 ) {
@@ -152,13 +149,24 @@ constructor(
         return Model(apps, list.size, list.maxByOrNull { it.whenTime })
     }
 
-    /** What the newest notification says, as the lock screen may say it (null: nothing). */
-    private fun line(newest: ActiveNotificationModel?, redact: Boolean): String? {
+    /**
+     * What the newest notification says, as the lock screen would show it (null: nothing to say).
+     * IchthysOS: [sensitive] is the system's own decision for this notification (the entry's
+     * isSensitive, from SensitiveContentCoordinator: the lock screen is public and the
+     * notification needs redaction, because the user hides private content, the app marked it
+     * private, a per-app override or detected sensitive content). Content shows whenever the
+     * stack itself would show it; when it is hidden, the app's public version if it has one, like
+     * the stack's redacted row. (A global "public mode and private content not allowed" check
+     * read once at first composition said "unlock to read" with content allowed: asked before
+     * the user's setting was loaded it answers "redact", and it was only re-read on a new list.)
+     */
+    private fun line(newest: ActiveNotificationModel?, sensitive: Boolean): String? {
         newest ?: return null
-        if (redact) return null
         val entry = notifPipeline.get().getEntry(newest.key) ?: return null
-        if (entry.isSensitive.value) return null
-        val extras = entry.sbn.notification.extras ?: return null
+        val notification =
+            if (sensitive) entry.sbn.notification.publicVersion ?: return null
+            else entry.sbn.notification
+        val extras = notification.extras ?: return null
         val title =
             extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.takeIf { it.isNotBlank() }
                 ?: extras.getCharSequence(Notification.EXTRA_TITLE)?.takeIf { it.isNotBlank() }
@@ -168,13 +176,6 @@ constructor(
                 ?: extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.takeIf { it.isNotBlank() }
         val first = text?.toString()?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trim()
         return if (first != null) "$title  ·  $first" else title.toString()
-    }
-
-    /** Lock screen in public mode and the user keeps private content for after the unlock. */
-    private fun redacted(): Boolean {
-        val m = lockscreenUserManager.get()
-        val user = userTracker.userId
-        return m.isLockscreenPublicMode(user) && !m.userAllowsPrivateNotificationsInPublic(user)
     }
 
     private suspend fun appIcon(app: App): ImageBitmap? {
@@ -257,14 +258,21 @@ constructor(
             }
             seen = key
         }
-        val redact = remember(list, settings.glance) { settings.glance || redacted() }
+        // IchthysOS: followed live, so the line changes as the system's decision does (a setting
+        // loaded or changed, a face unlock that keeps the lock screen, the device locking again).
+        val newestEntry =
+            remember(model.newest?.key) { model.newest?.let { notifPipeline.get().getEntry(it.key) } }
+        val sensitive by
+            remember(newestEntry) { newestEntry?.isSensitive ?: MutableStateFlow(false) }
+                .collectAsStateWithLifecycle()
         val text =
-            remember(model.newest?.key, redact, settings.glance, model.total) {
-                if (settings.glance) null else line(model.newest, redact)
+            remember(model.newest, sensitive, settings.glance, model.total) {
+                if (settings.glance) null else line(model.newest, sensitive)
             }
         val unlockToRead = stringResource(R.string.ichthys_dock_unlock_to_read)
         val counted = pluralStringResource(R.plurals.ichthys_dock_notifications, model.total, model.total)
-        val shownLine = text ?: if (settings.glance || redact) "$counted  ·  $unlockToRead" else counted
+        val shownLine =
+            text ?: if (settings.glance || sensitive) "$counted  ·  $unlockToRead" else counted
 
         fun act() {
             if (settings.glance) {

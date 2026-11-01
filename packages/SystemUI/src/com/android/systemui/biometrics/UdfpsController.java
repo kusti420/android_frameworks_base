@@ -152,6 +152,8 @@ import javax.inject.Inject;
 public class UdfpsController implements DozeReceiver, Dumpable {
     private static final String TAG = "UdfpsController";
     private static final long AOD_SEND_FINGER_UP_DELAY_MILLIS = 1000;
+    /** IchthysOS: the longest onUiReady waits for the dim / illumination to draw (onFingerDown). */
+    private static final long UI_READY_FALLBACK_MS = 250;
 
     private static final long MIN_UNCHANGED_INTERACTION_LOG_INTERVAL = 50;
 
@@ -937,6 +939,13 @@ public class UdfpsController implements DozeReceiver, Dumpable {
             Log.v(TAG, "hideUdfpsOverlay | removing window: " + removed);
         } else {
             Log.v(TAG, "hideUdfpsOverlay | the overlay is already hidden");
+            // IchthysOS: nothing of a touch may outlive its overlay (an illumination disc or dim
+            // left over the launcher after the unlock).
+            if (mIlluminationView != null || mFodDimView != null) {
+                Log.w(TAG, "hideUdfpsOverlay | removing stray illumination/dim windows");
+                hideIlluminationOverlay();
+                hideDimLayer();
+            }
         }
 
         mOverlay = null;
@@ -1190,16 +1199,30 @@ public class UdfpsController implements DozeReceiver, Dumpable {
                 final long token = ++mUiReadyToken;
                 final android.view.ViewTreeObserver.OnDrawListener[] self =
                         new android.view.ViewTreeObserver.OnDrawListener[1];
+                // IchthysOS: once per touch, whichever comes first (the gate's frame or the
+                // fallback below), and only while this touch's illumination is still up.
+                final boolean[] fired = new boolean[1];
+                final Runnable fire = () -> {
+                    if (fired[0] || token != mUiReadyToken || mIlluminationView == null) {
+                        return;
+                    }
+                    fired[0] = true;
+                    if (gate.getViewTreeObserver().isAlive()) {
+                        gate.getViewTreeObserver().removeOnDrawListener(self[0]);
+                    }
+                    ready.run();
+                };
                 self[0] = () -> gate.post(() -> {
                     if (gate.getViewTreeObserver().isAlive()) {
                         gate.getViewTreeObserver().removeOnDrawListener(self[0]);
                     }
-                    gate.postOnAnimation(() -> {
-                        if (token == mUiReadyToken && mIlluminationView != null) {
-                            ready.run();
-                        }
-                    });
+                    gate.postOnAnimation(fire);
                 });
+                // IchthysOS: never wait for ever. A gate that does not draw again (a session-held
+                // dim layer that drew long ago and is static, a window that is not drawing) left
+                // the sensor scanning without HBM: no match until the next lock. Then onUiReady
+                // goes out a little late instead.
+                mFgExecutor.executeDelayed(fire, UI_READY_FALLBACK_MS);
                 if (gate.isAttachedToWindow()) {
                     gate.getViewTreeObserver().addOnDrawListener(self[0]);
                 } else {

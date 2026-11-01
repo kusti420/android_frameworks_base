@@ -73,6 +73,8 @@ constructor(
     toLockscreenEndStateTransitionViewModel: ToLockscreenEndStateTransitionViewModel,
     toAodEndStateTransitionViewModel: ToAodEndStateTransitionViewModel,
     toDozingEndStateTransitionViewModel: ToDozingEndStateTransitionViewModel,
+    // IchthysOS: the disc leaves at the very start of the unlock (see deviceEntryBackgroundViewAlpha).
+    lockscreenToGoneTransitionViewModel: LockscreenToGoneTransitionViewModel,
     windowRootViewBlurInteractor: WindowRootViewBlurInteractor,
     private val sceneInteractor: Lazy<SceneInteractor>,
 ) {
@@ -141,6 +143,7 @@ constructor(
                         toLockscreenEndStateTransitionViewModel.deviceEntryBackgroundViewAlpha,
                         toAodEndStateTransitionViewModel.deviceEntryBackgroundViewAlpha,
                         toDozingEndStateTransitionViewModel.deviceEntryBackgroundViewAlpha,
+                        lockscreenToGoneTransitionViewModel.deviceEntryBackgroundViewAlpha,
                     )
                     .merge()
                     .onStart {

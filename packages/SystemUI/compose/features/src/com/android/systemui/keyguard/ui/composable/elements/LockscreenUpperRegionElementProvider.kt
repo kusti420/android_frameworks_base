@@ -282,7 +282,13 @@ constructor(
             LockscreenElement(
                 MediaCarousel,
                 modifier =
-                    Modifier.then(widthModifier).padding(bottom = bottomPadding).then(modifier),
+                    Modifier.then(widthModifier)
+                        .padding(bottom = bottomPadding)
+                        .then(modifier)
+                        // IchthysOS: the player is chrome, not part of the depth reveal: it goes
+                        // at the very start of every unlock (it sits in the nested clock scenes,
+                        // where the outer transition's fade(MediaCarousel) does not reach).
+                        .ichthysUnlockChrome(depthRepository),
             )
         }
 
