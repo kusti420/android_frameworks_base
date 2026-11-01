@@ -21,6 +21,7 @@ import com.android.compose.animation.Easings
 import com.android.compose.animation.scene.TransitionBuilder
 import com.android.systemui.notifications.ui.composable.Notifications
 import com.android.systemui.qs.shared.ui.QuickSettings
+import com.android.systemui.qs.ui.composable.IchthysQsNotes
 import com.android.systemui.qs.ui.composable.ShoalMediaDock
 import com.android.systemui.shade.ui.composable.Shade
 import com.android.systemui.shade.ui.composable.ShadeHeader
@@ -42,6 +43,8 @@ fun TransitionBuilder.quickSettingsToAlwaysOnDisplayTransition() {
         fade(ShadeHeader.Elements.CollapsedContentEnd)
         fade(QuickSettings.Elements.BrightnessSlider)
         fade(QuickSettings.Elements.QuickSettingsContent)
+        // IchthysOS: the quick settings notes page, when the screen goes off on it.
+        fade(IchthysQsNotes.Elements.Page)
         fade(QuickSettings.Elements.FooterActions)
         // IchthysOS "Shoal": the docked media strip goes with the footer actions.
         fade(ShoalMediaDock.Elements.Dock)

@@ -23,6 +23,7 @@ import com.android.systemui.brightness.ui.compose.BrightnessSlider
 import com.android.systemui.brightness.ui.compose.BrightnessSliderDimensions
 import com.android.systemui.notifications.ui.composable.Notifications
 import com.android.systemui.qs.shared.ui.QuickSettings.Elements
+import com.android.systemui.qs.ui.composable.IchthysQsNotes
 import com.android.systemui.qs.ui.composable.QuickSettingsScene
 import com.android.systemui.shade.ui.composable.Shade
 import com.android.systemui.shade.ui.composable.ShadeHeader
@@ -47,6 +48,8 @@ fun TransitionBuilder.toQuickSettingsSceneTransition(durationScale: Double = 1.0
         fade(ShadeHeader.Elements.CollapsedContentStart)
         fade(ShadeHeader.Elements.CollapsedContentEnd)
         fade(Elements.BrightnessSlider)
+        // IchthysOS: the quick settings notes page, when quick settings collapses from it.
+        fade(IchthysQsNotes.Elements.Page)
     }
 
     fade(Notifications.Elements.HeadsUpNotificationPlaceholder)
@@ -59,6 +62,11 @@ fun TransitionBuilder.toQuickSettingsSceneTransition(durationScale: Double = 1.0
     // not support that yet.
     translate(
         Elements.QuickSettingsContent,
+        y = -ShadeHeader.Dimensions.ExpandedHeight - BrightnessSliderDimensions.Default.thumbHeight,
+    )
+    // IchthysOS: the notes page moves with the tile content it stands in for.
+    translate(
+        IchthysQsNotes.Elements.Page,
         y = -ShadeHeader.Dimensions.ExpandedHeight - BrightnessSliderDimensions.Default.thumbHeight,
     )
     translate(Notifications.Elements.NotificationScrim, Edge.Top, false)

@@ -41,6 +41,7 @@ import androidx.compose.foundation.overscroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -450,16 +451,23 @@ private fun ContentScope.QuickSettingsContent(
                     WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND
                 )
             val fixedHeader = shoalHeader || notesPage
-            if (shoalHeader) {
-                ExpandedShadeHeader(viewModel = headerViewModel)
-            } else if (notesPage) {
-                if (usesCollapsedHeader) {
-                    CollapsedShadeHeader(viewModel = headerViewModel, isSplitShade = false)
-                } else {
-                    ExpandedShadeHeader(
-                        viewModel = headerViewModel,
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                    )
+            // IchthysOS: the header's tile-page-only parts (the Shoal ringer pill) fade out while
+            // the pager swipes to the notes page; the pager host attaches its state here.
+            val notesProgress = remember { IchthysNotesPagerProgress() }
+            CompositionLocalProvider(
+                LocalIchthysNotesPagerProgress provides notesProgress.takeIf { notesPage }
+            ) {
+                if (shoalHeader) {
+                    ExpandedShadeHeader(viewModel = headerViewModel)
+                } else if (notesPage) {
+                    if (usesCollapsedHeader) {
+                        CollapsedShadeHeader(viewModel = headerViewModel, isSplitShade = false)
+                    } else {
+                        ExpandedShadeHeader(
+                            viewModel = headerViewModel,
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                        )
+                    }
                 }
             }
             // IchthysOS "Shoal": the media player is a strip docked between the scrolling part and
@@ -481,6 +489,7 @@ private fun ContentScope.QuickSettingsContent(
                     notesViewModel = notesViewModel,
                     enabled = notesPage,
                     isScrollable = isScrollable,
+                    progress = notesProgress,
                     modifier = Modifier.fillMaxSize(),
                 ) {
                     Column(
@@ -540,6 +549,7 @@ private fun ContentScope.IchthysQsTilesHost(
     notesViewModel: IchthysQsNotesViewModel,
     enabled: Boolean,
     isScrollable: Boolean,
+    progress: IchthysNotesPagerProgress,
     modifier: Modifier = Modifier,
     tiles: @Composable BoxScope.() -> Unit,
 ) {
@@ -548,6 +558,7 @@ private fun ContentScope.IchthysQsTilesHost(
             viewModel = notesViewModel,
             isScrollable = isScrollable,
             modifier = modifier,
+            progress = progress,
             tiles = tiles,
         )
     } else {

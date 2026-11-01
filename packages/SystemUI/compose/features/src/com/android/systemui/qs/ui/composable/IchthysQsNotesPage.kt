@@ -17,6 +17,8 @@
 package com.android.systemui.qs.ui.composable
 
 import android.icu.text.MessageFormat
+import android.text.format.DateUtils
+import java.text.DateFormat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -39,6 +41,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
@@ -47,14 +50,19 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -64,9 +72,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.isSpecified
+import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -74,12 +85,14 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.android.compose.animation.scene.ContentScope
+import com.android.compose.animation.scene.ElementKey
 import com.android.systemui.compose.modifiers.sysuiResTag
 import com.android.systemui.qs.notes.IchthysNote
 import com.android.systemui.qs.notes.IchthysNoteKind
@@ -108,6 +121,17 @@ object IchthysQsNotes {
     const val PAGE_NOTES = 0
     const val PAGE_TILES = 1
 
+    object Elements {
+        /**
+         * IchthysOS: the notes page. A scene element of the Quick Settings scene, so the scene
+         * transitions that collapse quick settings can fade and move it like the tile content
+         * (QuickSettings.Elements.QuickSettingsContent, which only lives on the tiles page).
+         * Without a key the page was plain scene content with no transformation: it stayed fully
+         * drawn under the collapsing tile row and the notification panel for the whole swipe.
+         */
+        val Page = ElementKey("IchthysQsNotesPage")
+    }
+
     // Layout constants: SystemUI must not get new <dimen>s (resource-ID skew crash-loops Shell).
     val INDICATOR_HEIGHT = 24.dp
     val INDICATOR_PIN = 14.dp
@@ -115,24 +139,48 @@ object IchthysQsNotes {
     val INDICATOR_PILL = 18.dp
     val INDICATOR_SPACE = 6.dp
 
-    val PAGE_PADDING = 4.dp
-    val CARD_RADIUS = 16.dp
-    val CARD_PADDING = 12.dp
+    val CARD_RADIUS = 20.dp
+    val CARD_PADDING = 14.dp
     val CARD_GAP = 10.dp
     val COLOR_DOT = 8.dp
-    val CHECK_BOX = 10.dp
+    val CHECK_BOX = 11.dp
     val BAR_HEIGHT = 8.dp
-    val BUTTON_HEIGHT = 36.dp
-    val TITLE_SIZE = 18.sp
+    val BUTTON_HEIGHT = 40.dp
+    val BUTTON_ICON = 18.dp
+    val HEADER_ICON = 18.dp
+    val COUNT_HEIGHT = 22.dp
+    val EMPTY_BADGE = 48.dp
+    val TITLE_SIZE = 20.sp
     val LABEL_SIZE = 11.sp
-    val TEXT_SIZE = 13.sp
-    val TEXT_LINE_HEIGHT = 17.sp
-    const val WIDE_MAX_LINES = 8
-    const val MAX_LINES = 6
+    val TEXT_SIZE = 14.sp
+    val TEXT_LINE_HEIGHT = 19.sp
+    const val WIDE_MAX_LINES = 6
+    const val MAX_LINES = 5
 
     /** Colour dots a note can carry (index = [IchthysNote.color]); 0 is the theme accent. */
     val Colors = listOf(Color.Unspecified, Color(0xFF2DE2E6), Color(0xFFC6FF3D), Color(0xFFD27BFF), Color(0xFFF2F4F1))
 }
+
+/**
+ * IchthysOS: how far the notes pager is on the notes page, for elements outside the pager that
+ * belong to the tile pages only (the Shoal header's ringer pill). Provided around the header by
+ * QuickSettingsScene through [LocalIchthysNotesPagerProgress]; [IchthysQsNotesPagerHost] attaches its
+ * pager. Read [notesFraction] in a draw or layer block, so following the swipe only redraws.
+ */
+@Stable
+class IchthysNotesPagerProgress {
+    internal var pagerState by mutableStateOf<PagerState?>(null)
+
+    /** 0 on the tiles, 1 on the notes page, in between while swiping. */
+    fun notesFraction(): Float {
+        val state = pagerState ?: return 0f
+        val position = state.currentPage + state.currentPageOffsetFraction
+        return (IchthysQsNotes.PAGE_TILES - position).coerceIn(0f, 1f)
+    }
+}
+
+/** IchthysOS: see [IchthysNotesPagerProgress]; null outside expanded quick settings. */
+val LocalIchthysNotesPagerProgress = compositionLocalOf<IchthysNotesPagerProgress?> { null }
 
 /** Page count and current page of the tile pager inside the tiles page, for the indicator. */
 class IchthysTilePagerInfo {
@@ -225,6 +273,7 @@ fun ContentScope.IchthysQsNotesPagerHost(
     viewModel: IchthysQsNotesViewModel,
     isScrollable: Boolean,
     modifier: Modifier = Modifier,
+    progress: IchthysNotesPagerProgress? = null,
     tiles: @Composable BoxScope.() -> Unit,
 ) {
     val pagerState = rememberPagerState(initialPage = IchthysQsNotes.PAGE_TILES) { 2 }
@@ -232,6 +281,27 @@ fun ContentScope.IchthysQsNotesPagerHost(
     val tokens = rememberIchthysNotesTokens()
 
     LaunchedEffect(Unit) { viewModel.start() }
+
+    if (progress != null) {
+        DisposableEffect(progress, pagerState) {
+            progress.pagerState = pagerState
+            onDispose { if (progress.pagerState === pagerState) progress.pagerState = null }
+        }
+    }
+
+    // IchthysOS: on the notes page the tiles page is still composed, one page width to the right.
+    // A collapse to the shade would then animate the tiles as shared elements from there and they
+    // would fly in from the right edge. Stock quick settings has the same case for its later tile
+    // pages and fades the tiles instead of moving them (AnimateQsTilesViewModel reads "in first
+    // page"): report the notes page as "not the first page" too.
+    LaunchedEffect(pagerState, tilePager) {
+        snapshotFlow {
+                pagerState.currentPage == IchthysQsNotes.PAGE_TILES && tilePager.currentPage == 0
+            }
+            .collect { viewModel.setTilesOnFirstPage(it) }
+    }
+    // Back to the repository's default when the host goes (the notes page switched off on it).
+    DisposableEffect(viewModel) { onDispose { viewModel.setTilesOnFirstPage(true) } }
 
     val visible = isAlwaysComposedContentVisible()
     LaunchedEffect(visible, isScrollable) {
@@ -257,7 +327,13 @@ fun ContentScope.IchthysQsNotesPagerHost(
             key = { it },
         ) { page ->
             if (page == IchthysQsNotes.PAGE_NOTES) {
-                IchthysQsNotesPage(viewModel, tokens, Modifier.fillMaxSize())
+                // IchthysOS: an element, so the collapse transitions fade and move it (see
+                // IchthysQsNotes.Elements.Page).
+                IchthysQsNotesPage(
+                    viewModel,
+                    tokens,
+                    Modifier.fillMaxSize().element(IchthysQsNotes.Elements.Page),
+                )
             } else {
                 CompositionLocalProvider(LocalIchthysTilePager provides tilePager) {
                     Box(Modifier.fillMaxSize(), content = tiles)
@@ -336,7 +412,15 @@ fun ContentScope.IchthysQsNotesPage(
     // IchthysOS: the editor is IchthysNoteEditorActivity (viewModel.openEditor), launched with the
     // shade collapsing; it finishes itself when the device locks.
 
-    Column(modifier.padding(horizontal = IchthysQsNotes.PAGE_PADDING)) {
+    // IchthysOS: the same side inset as the tile content (QuickSettingsScene pads it with the
+    // panel margin, QuickSettingsContent with qs_horizontal_margin), so cards, header and button
+    // line up with the tiles and the footer actions when paging.
+    val sideInset =
+        dimensionResource(R.dimen.notification_panel_margin_horizontal) +
+            dimensionResource(R.dimen.qs_horizontal_margin)
+
+    Column(modifier.padding(horizontal = sideInset)) {
+        NotesHeader(count = notes.size, locked = locked, tokens = tokens)
         Column(
             modifier =
                 Modifier.weight(1f)
@@ -346,42 +430,32 @@ fun ContentScope.IchthysQsNotesPage(
                     .sysuiResTag("ichthys_qs_notes_page"),
             verticalArrangement = Arrangement.spacedBy(IchthysQsNotes.CARD_GAP),
         ) {
-            NotesHeader(count = notes.size, locked = locked, tokens = tokens)
-
             if (notes.isEmpty()) {
                 if (!locked) {
-                    BasicText(
-                        text = stringResource(R.string.ichthys_qs_notes_empty),
-                        style =
-                            TextStyle(
-                                color = tokens.muted,
-                                fontSize = IchthysQsNotes.TEXT_SIZE,
-                                lineHeight = IchthysQsNotes.TEXT_LINE_HEIGHT,
-                                fontFamily = tokens.body,
-                            ),
-                        modifier = Modifier.padding(vertical = IchthysQsNotes.CARD_PADDING),
-                    )
+                    NotesEmptyState(tokens = tokens, onClick = { viewModel.openEditor(null) })
                 }
             } else {
                 val card: @Composable (IchthysNote, Boolean, Modifier) -> Unit =
                     { note, wide, m ->
                         if (locked) {
-                            LockedNoteCard(note, wide, tokens, m.clickable { viewModel.unlockToOpen() })
+                            LockedNoteCard(
+                                note = note,
+                                wide = wide,
+                                tokens = tokens,
+                                onClick = { viewModel.unlockToOpen() },
+                                modifier = m,
+                            )
                         } else {
                             NoteCard(
                                 note = note,
                                 wide = wide,
                                 tokens = tokens,
-                                modifier =
-                                    m.combinedClickable(
-                                        onLongClick = {
-                                            haptics.performHapticFeedback(
-                                                HapticFeedbackType.LongPress
-                                            )
-                                            scope.launch { viewModel.repository.remove(note.id) }
-                                        },
-                                        onClick = { viewModel.openEditor(note.id) },
-                                    ),
+                                onClick = { viewModel.openEditor(note.id) },
+                                onLongClick = {
+                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    scope.launch { viewModel.repository.remove(note.id) }
+                                },
+                                modifier = m,
                             )
                         }
                     }
@@ -401,7 +475,9 @@ fun ContentScope.IchthysQsNotesPage(
         }
 
         Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = IchthysQsNotes.CARD_GAP),
+            modifier =
+                Modifier.fillMaxWidth()
+                    .padding(top = IchthysQsNotes.CARD_GAP / 2, bottom = IchthysQsNotes.CARD_GAP),
             horizontalArrangement = Arrangement.spacedBy(IchthysQsNotes.CARD_GAP),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -417,6 +493,7 @@ fun ContentScope.IchthysQsNotesPage(
                     text = stringResource(R.string.ichthys_qs_notes_new),
                     filled = true,
                     tokens = tokens,
+                    icon = rememberVectorPainter(Icons.Rounded.Add),
                     onClick = { viewModel.openEditor(null) },
                 )
             }
@@ -424,18 +501,21 @@ fun ContentScope.IchthysQsNotesPage(
     }
 }
 
+/** IchthysOS: pin glyph, "Notes" in the display face, and the count as a small hairline chip. */
 @Composable
 private fun NotesHeader(count: Int, locked: Boolean, tokens: IchthysNotesTokens) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(top = IchthysQsNotes.CARD_GAP),
+        modifier =
+            Modifier.fillMaxWidth()
+                .padding(top = IchthysQsNotes.CARD_GAP, bottom = IchthysQsNotes.CARD_GAP + 2.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(IchthysQsNotes.CARD_GAP),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Icon(
             painter = painterResource(R.drawable.ic_ichthys_pin),
             contentDescription = null,
             tint = tokens.accent,
-            modifier = Modifier.size(IchthysQsNotes.TITLE_SIZE.value.dp),
+            modifier = Modifier.size(IchthysQsNotes.HEADER_ICON),
         )
         BasicText(
             text = stringResource(R.string.ichthys_qs_notes_title),
@@ -446,36 +526,101 @@ private fun NotesHeader(count: Int, locked: Boolean, tokens: IchthysNotesTokens)
                     fontWeight = FontWeight.SemiBold,
                     fontFamily = tokens.display,
                 ),
+            maxLines = 1,
         )
+        Spacer(Modifier.weight(1f))
         val pattern =
             stringResource(
                 if (locked) R.string.ichthys_qs_notes_locked_count
                 else R.string.ichthys_qs_notes_pinned_count
             )
+        val shape = RoundedCornerShape(IchthysQsNotes.COUNT_HEIGHT / 2)
+        Box(
+            modifier =
+                Modifier.height(IchthysQsNotes.COUNT_HEIGHT)
+                    .border(1.dp, tokens.hairline, shape)
+                    .padding(horizontal = 10.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            BasicText(
+                text = MessageFormat.format(pattern, mapOf<String, Any>("count" to count)),
+                style =
+                    TextStyle(
+                        color = tokens.muted,
+                        fontSize = IchthysQsNotes.LABEL_SIZE,
+                        fontFamily = tokens.mono,
+                    ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/** IchthysOS: nothing pinned yet: a quiet badge and the hint; a tap starts a new note. */
+@Composable
+private fun NotesEmptyState(tokens: IchthysNotesTokens, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(IchthysQsNotes.CARD_RADIUS)
+    Column(
+        modifier =
+            Modifier.fillMaxWidth()
+                .clip(shape)
+                .border(1.dp, tokens.hairline, shape)
+                .clickable(onClick = onClick)
+                .padding(horizontal = 24.dp, vertical = 28.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Box(
+            modifier =
+                Modifier.size(IchthysQsNotes.EMPTY_BADGE)
+                    .background(tokens.accent.copy(alpha = 0.14f), CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_ichthys_pin),
+                contentDescription = null,
+                tint = tokens.accent,
+                modifier = Modifier.size(22.dp),
+            )
+        }
         BasicText(
-            text = MessageFormat.format(pattern, mapOf<String, Any>("count" to count)),
+            text = stringResource(R.string.ichthys_qs_notes_empty),
             style =
                 TextStyle(
                     color = tokens.muted,
-                    fontSize = IchthysQsNotes.LABEL_SIZE,
-                    fontFamily = tokens.mono,
+                    fontSize = IchthysQsNotes.TEXT_SIZE,
+                    lineHeight = IchthysQsNotes.TEXT_LINE_HEIGHT,
+                    fontFamily = tokens.body,
+                    textAlign = TextAlign.Center,
                 ),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.widthIn(max = 260.dp),
         )
     }
 }
 
+/** IchthysOS: the shape, fill and hairline every note card shares; the ripple stays inside. */
+private fun Modifier.noteCardSurface(tokens: IchthysNotesTokens): Modifier {
+    val shape = RoundedCornerShape(IchthysQsNotes.CARD_RADIUS)
+    return clip(shape).background(tokens.card).border(1.dp, tokens.hairline, shape)
+}
+
 @Composable
-private fun NoteCard(note: IchthysNote, wide: Boolean, tokens: IchthysNotesTokens, modifier: Modifier) {
+private fun NoteCard(
+    note: IchthysNote,
+    wide: Boolean,
+    tokens: IchthysNotesTokens,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    modifier: Modifier,
+) {
     Column(
         modifier =
             modifier
-                .clip(RoundedCornerShape(IchthysQsNotes.CARD_RADIUS))
-                .background(tokens.card)
-                .border(1.dp, tokens.hairline, RoundedCornerShape(IchthysQsNotes.CARD_RADIUS))
+                .noteCardSurface(tokens)
+                .combinedClickable(onLongClick = onLongClick, onClick = onClick)
                 .padding(IchthysQsNotes.CARD_PADDING),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         CardLabel(note, tokens)
         val maxLines = if (wide) IchthysQsNotes.WIDE_MAX_LINES else IchthysQsNotes.MAX_LINES
@@ -487,28 +632,48 @@ private fun NoteCard(note: IchthysNote, wide: Boolean, tokens: IchthysNotesToken
                 fontFamily = tokens.body,
             )
         if (note.kind == IchthysNoteKind.LIST) {
-            note.items.take(maxLines).forEach { item ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Box(
-                        Modifier.size(IchthysQsNotes.CHECK_BOX)
-                            .border(1.dp, if (item.done) tokens.muted else tokens.text, RoundedCornerShape(2.dp))
-                            .padding(2.dp)
-                            .background(if (item.done) tokens.muted else Color.Transparent)
-                    )
-                    BasicText(
-                        text = item.text,
-                        style =
-                            if (item.done)
-                                bodyStyle.copy(
-                                    color = tokens.muted,
-                                    textDecoration = TextDecoration.LineThrough,
+            // One line per item; past the clamp the last line says how many more there are.
+            val items = note.items
+            val shown = if (items.size > maxLines) items.take(maxLines - 1) else items
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                shown.forEach { item ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        val boxShape = RoundedCornerShape(3.dp)
+                        Box(
+                            Modifier.size(IchthysQsNotes.CHECK_BOX)
+                                .border(1.dp, if (item.done) tokens.muted else tokens.text, boxShape)
+                                .padding(2.dp)
+                                .background(
+                                    if (item.done) tokens.muted else Color.Transparent,
+                                    RoundedCornerShape(1.dp),
                                 )
-                            else bodyStyle,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                        )
+                        BasicText(
+                            text = item.text,
+                            style =
+                                if (item.done)
+                                    bodyStyle.copy(
+                                        color = tokens.muted,
+                                        textDecoration = TextDecoration.LineThrough,
+                                    )
+                                else bodyStyle,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                if (shown.size < items.size) {
+                    BasicText(
+                        text = "+" + (items.size - shown.size),
+                        style =
+                            TextStyle(
+                                color = tokens.muted,
+                                fontSize = IchthysQsNotes.LABEL_SIZE,
+                                fontFamily = tokens.mono,
+                            ),
                     )
                 }
             }
@@ -523,21 +688,23 @@ private fun NoteCard(note: IchthysNote, wide: Boolean, tokens: IchthysNotesToken
     }
 }
 
+/** IchthysOS: colour dot, label, and when it was pinned (time today, date before). */
 @Composable
 private fun CardLabel(note: IchthysNote, tokens: IchthysNotesTokens) {
+    val labelStyle =
+        TextStyle(color = tokens.muted, fontSize = IchthysQsNotes.LABEL_SIZE, fontFamily = tokens.mono)
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         Box(Modifier.size(IchthysQsNotes.COLOR_DOT).background(tokens.noteColor(note.color), CircleShape))
-        BasicText(
-            text = stringResource(note.kind.labelRes()),
-            style =
-                TextStyle(
-                    color = tokens.muted,
-                    fontSize = IchthysQsNotes.LABEL_SIZE,
-                    fontFamily = tokens.mono,
-                ),
-        )
+        BasicText(text = stringResource(note.kind.labelRes()), style = labelStyle, maxLines = 1)
+        Spacer(Modifier.weight(1f))
+        BasicText(text = ichthysNoteTime(note.createdAt), style = labelStyle, maxLines = 1)
     }
 }
+
+/** IchthysOS: a note's pin time as the card and the editor show it: time today, date before. */
+internal fun ichthysNoteTime(createdAt: Long): String =
+    DateUtils.formatSameDayTime(createdAt, System.currentTimeMillis(), DateFormat.SHORT, DateFormat.SHORT)
+        .toString()
 
 fun IchthysNoteKind.labelRes(): Int =
     when (this) {
@@ -547,11 +714,17 @@ fun IchthysNoteKind.labelRes(): Int =
     }
 
 /**
- * Locked: the card's colour dot and grey bars, nothing of its text. The bars' widths come from the
- * note's id, not its contents, so nothing about the text leaks.
+ * Locked: the card's colour dot and grey bars, nothing of its text (nor its time). The bars' widths
+ * come from the note's id, not its contents, so nothing about the text leaks.
  */
 @Composable
-private fun LockedNoteCard(note: IchthysNote, wide: Boolean, tokens: IchthysNotesTokens, modifier: Modifier) {
+private fun LockedNoteCard(
+    note: IchthysNote,
+    wide: Boolean,
+    tokens: IchthysNotesTokens,
+    onClick: () -> Unit,
+    modifier: Modifier,
+) {
     val description = stringResource(R.string.ichthys_qs_notes_card_locked)
     val widths = remember(note.id) {
         val seed = (note.id % 3).toInt().let { if (it < 0) it + 3 else it }
@@ -561,9 +734,8 @@ private fun LockedNoteCard(note: IchthysNote, wide: Boolean, tokens: IchthysNote
     Column(
         modifier =
             modifier
-                .clip(RoundedCornerShape(IchthysQsNotes.CARD_RADIUS))
-                .background(tokens.card)
-                .border(1.dp, tokens.hairline, RoundedCornerShape(IchthysQsNotes.CARD_RADIUS))
+                .noteCardSurface(tokens)
+                .clickable(onClick = onClick)
                 .padding(IchthysQsNotes.CARD_PADDING)
                 .semantics { contentDescription = description },
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -585,6 +757,10 @@ private fun LockedNoteCard(note: IchthysNote, wide: Boolean, tokens: IchthysNote
     }
 }
 
+/**
+ * IchthysOS: the notes page's pill button (page and editor): accent-filled or hairline, with an
+ * optional leading [icon]. Disabled = dimmed and not clickable, so a row of them never jumps.
+ */
 @Composable
 internal fun PillButton(
     text: String,
@@ -592,24 +768,38 @@ internal fun PillButton(
     tokens: IchthysNotesTokens,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    icon: Painter? = null,
+    enabled: Boolean = true,
 ) {
     val shape = RoundedCornerShape(IchthysQsNotes.BUTTON_HEIGHT / 2)
-    Box(
+    val fill = if (filled) tokens.accent else Color.Transparent
+    val content = if (filled) tokens.onAccent else tokens.text
+    val dim = if (enabled) 1f else 0.38f
+    Row(
         modifier =
             modifier
                 .height(IchthysQsNotes.BUTTON_HEIGHT)
                 .clip(shape)
-                .background(if (filled) tokens.accent else Color.Transparent)
-                .border(1.dp, if (filled) tokens.accent else tokens.hairline, shape)
-                .clickable(onClick = onClick)
-                .padding(horizontal = 16.dp),
-        contentAlignment = Alignment.Center,
+                .background(if (filled) fill.copy(alpha = fill.alpha * dim) else fill)
+                .border(1.dp, if (filled) Color.Transparent else tokens.hairline, shape)
+                .clickable(enabled = enabled, onClick = onClick)
+                .padding(start = if (icon != null) 14.dp else 18.dp, end = 18.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        if (icon != null) {
+            Icon(
+                painter = icon,
+                contentDescription = null,
+                tint = content.copy(alpha = content.alpha * dim),
+                modifier = Modifier.size(IchthysQsNotes.BUTTON_ICON),
+            )
+        }
         BasicText(
             text = text,
             style =
                 TextStyle(
-                    color = if (filled) tokens.onAccent else tokens.text,
+                    color = content.copy(alpha = content.alpha * dim),
                     fontSize = IchthysQsNotes.TEXT_SIZE,
                     fontWeight = FontWeight.SemiBold,
                     fontFamily = tokens.body,

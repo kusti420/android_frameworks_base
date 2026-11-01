@@ -22,6 +22,7 @@ import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.deviceentry.domain.interactor.DeviceEntryInteractor
 import com.android.systemui.plugins.ActivityStarter
+import com.android.systemui.qs.panels.domain.interactor.InFirstPageInteractor
 import com.android.systemui.qs.ui.composable.IchthysNoteEditorActivity
 import com.android.systemui.settings.UserTracker
 import com.android.systemui.shade.ShadeController
@@ -46,6 +47,7 @@ constructor(
     private val activityStarter: Lazy<ActivityStarter>,
     private val shadeController: Lazy<ShadeController>,
     private val userTracker: UserTracker,
+    private val inFirstPageInteractor: InFirstPageInteractor,
 ) {
     val notes: StateFlow<List<IchthysNote>>
         get() = repository.notes
@@ -58,6 +60,15 @@ constructor(
     val openNotesWhenShown: StateFlow<Boolean> = _openNotesWhenShown.asStateFlow()
 
     fun start() = repository.start()
+
+    /**
+     * IchthysOS: whether the tiles are on screen on their first page. False on the notes page:
+     * the shade transition then fades the tiles instead of moving them as shared elements (see
+     * IchthysQsNotesPagerHost).
+     */
+    fun setTilesOnFirstPage(onFirstPage: Boolean) {
+        inFirstPageInteractor.inFirstPage = onFirstPage
+    }
 
     fun consumeOpenNotes() {
         _openNotesWhenShown.value = false

@@ -40,6 +40,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -48,12 +49,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
+import com.android.compose.modifiers.thenIf
+import com.android.systemui.qs.ui.composable.LocalIchthysNotesPagerProgress
 import com.android.systemui.res.R
 
 /**
@@ -91,6 +96,15 @@ fun ShoalRingerPill(
         onDispose { context.unregisterReceiver(receiver) }
     }
 
+    // IchthysOS: the pill belongs to the tile pages of expanded quick settings: it fades out with
+    // the swipe to the notes page (alpha read in the layer, so the swipe only redraws it) and takes
+    // no taps or focus once mostly gone. Outside quick settings there is no progress: always shown.
+    val notesProgress = LocalIchthysNotesPagerProgress.current
+    val hiddenByNotes by
+        remember(notesProgress) {
+            derivedStateOf { (notesProgress?.notesFraction() ?: 0f) > 0.5f }
+        }
+
     val index = Segments.indexOfFirst { it.mode == mode }.coerceAtLeast(0)
     val thumbOffset by
         animateDpAsState(
@@ -103,6 +117,11 @@ fun ShoalRingerPill(
     Box(
         modifier =
             modifier
+                .then(
+                    if (notesProgress == null) Modifier
+                    else Modifier.graphicsLayer { alpha = 1f - notesProgress.notesFraction() }
+                )
+                .thenIf(hiddenByNotes) { Modifier.clearAndSetSemantics {} }
                 .height(PillHeight)
                 .width(SegmentWidth * Segments.size)
                 .clip(CircleShape)
@@ -132,6 +151,7 @@ fun ShoalRingerPill(
                             .clip(CircleShape)
                             .selectable(
                                 selected = selected,
+                                enabled = !hiddenByNotes,
                                 role = Role.RadioButton,
                                 onClick = {
                                     if (mode != segment.mode) {

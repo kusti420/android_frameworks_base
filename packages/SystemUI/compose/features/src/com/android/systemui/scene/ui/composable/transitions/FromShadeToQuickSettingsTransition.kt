@@ -14,6 +14,7 @@ import com.android.systemui.media.remedia.ui.compose.Media.Elements.MediaCarouse
 import com.android.systemui.notifications.ui.composable.Notifications
 import com.android.systemui.qs.shared.ui.QuickSettings.Elements
 import com.android.systemui.qs.shared.ui.QuickSettings.SHARED_TILE_PICKER_THRESHOLD
+import com.android.systemui.qs.ui.composable.IchthysQsNotes
 import com.android.systemui.qs.ui.composable.ShoalMediaDock
 import com.android.systemui.scene.shared.model.Scenes
 import com.android.systemui.shade.ui.composable.ShadeHeader
@@ -57,9 +58,17 @@ fun TransitionBuilder.shadeToQuickSettingsTransition(
 
     fractionRange(start = 0.43f, end = 1f - SHARED_TILE_PICKER_THRESHOLD) {
         fade(Elements.QuickSettingsContent)
+        // IchthysOS: the notes page (Quick Settings only) goes with the tile content: it fades and
+        // rises with the grid. Without this it stayed fully drawn under the collapsing tile row
+        // and over the notification panel until the scene was gone.
+        fade(IchthysQsNotes.Elements.Page)
     }
 
-    anchoredTranslate(Elements.QuickSettingsContent, Elements.GridAnchor)
+    // IchthysOS: PagedAnchoredTranslate instead of anchoredTranslate: the grid anchor is a page
+    // to the right while the notes page shows; only its vertical travel may move the content.
+    val gridTravel = PagedAnchoredTranslate.Factory(Elements.GridAnchor)
+    transformation(Elements.QuickSettingsContent, gridTravel)
+    transformation(IchthysQsNotes.Elements.Page, gridTravel)
 
     sharedElement(Elements.TileElementMatcher, enabled = animateQsTilesAsShared())
 
@@ -68,7 +77,7 @@ fun TransitionBuilder.shadeToQuickSettingsTransition(
     // overlap, but because they are really faint, it looks better than complete black without
     // overlap.
     fractionRange(end = 0.5f) { fade(QqsTileElementMatcher) }
-    anchoredTranslate(QqsTileElementMatcher, Elements.GridAnchor)
+    transformation(QqsTileElementMatcher, gridTravel)
 
     // IchthysOS "Shoal": both scenes draw the one header at the same place (ShoalShadeHeader),
     // so its date, pill and icons are shared elements that must not be moved or faded here:
