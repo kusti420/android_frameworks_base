@@ -234,6 +234,14 @@ open class SettingsPreferenceGroupAdapter @JvmOverloads constructor(
         if (v.background is ShoalOwnRowDrawable) {
             // IchthysOS: the preference painted its own card (the crDroid danger card). Only
             // drive its corner state; no round-corner surface or Shoal slice over it.
+            // IchthysOS: but the same insets as a plain row (the stateful round background's
+            // padding): without them the danger row's icon and switch sat 17dp further out
+            // than their neighbours'.
+            v.context.getDrawable(R.drawable.settingslib_round_background_stateful)?.let { ref ->
+                val p = Rect()
+                ref.getPadding(p)
+                v.setPadding(p.left, p.top, p.right, p.bottom)
+            }
             if (drawableStateLayout != null && position < mItemPositionStates.size) {
                 val iconFrame =
                     holder.findViewById(androidx.preference.R.id.icon_frame)
