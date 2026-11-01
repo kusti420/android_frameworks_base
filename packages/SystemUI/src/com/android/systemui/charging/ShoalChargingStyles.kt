@@ -217,13 +217,18 @@ internal fun ShoalChargingView.drawOneUi(canvas: Canvas) {
     if (d != null) {
         d.progress = if (lottieMs > 0f) (t / lottieMs).coerceIn(0f, 1f) else 1f
         d.alpha = (a * 255).toInt()
-        d.setBounds(
-            (cx - size / 2f).toInt(),
-            (cy - size / 2f).toInt(),
-            (cx + size / 2f).toInt(),
-            (cy + size / 2f).toInt(),
-        )
+        // IchthysOS: placed by the canvas, not by setBounds: LottieDrawable draws its
+        // composition at its own intrinsic size from the bounds' corner, which put the ring up and
+        // to the left of the centred icon and level. Bounds at the intrinsic size, then moved
+        // and scaled so the composition's square is exactly the 176 dp square around the centre.
+        val iw = d.intrinsicWidth.coerceAtLeast(1)
+        val ih = d.intrinsicHeight.coerceAtLeast(1)
+        d.setBounds(0, 0, iw, ih)
+        canvas.save()
+        canvas.translate(cx - size / 2f, cy - size / 2f)
+        canvas.scale(size / iw, size / ih)
         d.draw(canvas)
+        canvas.restore()
     } else {
         stroke.color = Color.WHITE
         stroke.alpha = (0.25f * a * 255).toInt()
