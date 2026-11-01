@@ -1453,8 +1453,25 @@ public class UdfpsController implements DozeReceiver, Dumpable {
     private static final String PROP_CIRCLE_COLOR = "persist.sys.udfps.circle_color";
 
     private boolean isDimSessionHeld() {
-        return SystemProperties.getBoolean(PROP_DIM_SESSION, false);
+        // IchthysOS: in sync mode the dim IS the HBM trigger, so it must follow the finger.
+        return !isUdfpsSync() && SystemProperties.getBoolean(PROP_DIM_SESSION, false);
     }
+
+    /**
+     * IchthysOS: frame-synced mask HBM ({@code persist.ichthys.udfps_sync}, default off; read by
+     * the composer and the fingerprint HAL too). On: the dim below is always shown while the finger
+     * is down, nits-matched, as the window {@link #UDFPS_MASK_WINDOW_TITLE}. SurfaceFlinger flags
+     * that layer and the composer switches the panel's mask HBM in the same atomic commit that
+     * first shows (and later first drops) it, so dim and HBM change on the same frame and the
+     * screen keeps its brightness. Off: exactly the old behaviour (HAL raises HBM at onUiReady).
+     */
+    private static boolean isUdfpsSync() {
+        return SystemProperties.getBoolean(PROP_UDFPS_SYNC, false);
+    }
+
+    private static final String PROP_UDFPS_SYNC = "persist.ichthys.udfps_sync";
+    /** Matched by name in SurfaceFlinger (OutputLayer.cpp, "UdfpsFodMask#"); keep both in sync. */
+    private static final String UDFPS_MASK_WINDOW_TITLE = "UdfpsFodMask";
 
     private int getCircleColor() {
         try {
@@ -1551,7 +1568,14 @@ public class UdfpsController implements DozeReceiver, Dumpable {
         // changes brightness"), so the compensation only darkened the screen. -1 keeps the
         // nits-matched dim available for experiments.
         final int configured = SystemProperties.getInt(PROP_DIM_ALPHA, 0);
-        final int alpha = configured >= 0 ? configured : computeAutoDimAlpha();
+        final boolean sync = isUdfpsSync();
+        int alpha = configured >= 0 ? configured : computeAutoDimAlpha();
+        if (sync) {
+            // IchthysOS: the mask window must exist whenever the finger is down (it is what turns
+            // the HBM on), so a pinned alpha wins, otherwise nits-matched; never fully transparent
+            // (alpha 1 when already brighter than the mask level: invisible, still a layer).
+            alpha = Math.max(1, configured > 0 ? configured : computeAutoDimAlpha());
+        }
         if (alpha <= 0) {
             return;
         }
@@ -1578,12 +1602,12 @@ public class UdfpsController implements DozeReceiver, Dumpable {
             dimParams.setFitInsetsTypes(0);
             dimParams.layoutInDisplayCutoutMode =
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
-            dimParams.setTitle("UdfpsFodDimLayer");
+            dimParams.setTitle(sync ? UDFPS_MASK_WINDOW_TITLE : "UdfpsFodDimLayer");
             dimParams.privateFlags = WindowManager.LayoutParams.PRIVATE_FLAG_TRUSTED_OVERLAY;
 
             mWindowManager.addView(dimView, dimParams);
             mFodDimView = dimView;
-            Log.e(TAG, "showDimLayer | added, alpha=" + alpha);
+            Log.e(TAG, "showDimLayer | added, alpha=" + alpha + (sync ? " (udfps_sync mask)" : ""));
         } catch (RuntimeException e) {
             Log.e(TAG, "showDimLayer | failed", e);
         }
