@@ -55,7 +55,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -64,6 +66,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
@@ -79,6 +82,9 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.constrainHeight
+import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
@@ -86,8 +92,10 @@ import androidx.compose.ui.unit.max
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.android.compose.animation.scene.ContentScope
+import com.android.compose.animation.scene.ContentKey
 import com.android.compose.animation.scene.ElementKey
 import com.android.compose.animation.scene.LowestZIndexContentPicker
+import com.android.compose.animation.scene.SceneKey
 import com.android.compose.animation.scene.SceneTransitionLayoutState
 import com.android.compose.animation.scene.ValueKey
 import com.android.compose.animation.scene.animateElementFloatAsState
@@ -113,6 +121,7 @@ import com.android.systemui.scene.shared.model.Scenes
 import com.android.systemui.shade.ui.composable.ShadeHeader.Values.ClockScale
 import com.android.systemui.shade.ui.viewmodel.ShadeHeaderViewModel
 import com.android.systemui.statusbar.phone.StatusBarLocation
+import com.android.systemui.statusbar.phone.StatusIconContainer
 import com.android.systemui.statusbar.phone.domain.interactor.IsAreaDark
 import com.android.systemui.statusbar.pipeline.battery.ui.composable.BatteryWithEstimate
 import com.android.systemui.statusbar.pipeline.mobile.StatusBarMobileIconKairos
@@ -135,6 +144,7 @@ import com.android.systemui.util.kotlin.toDp
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.WeakHashMap
 import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
@@ -530,12 +540,15 @@ private fun ContentScope.ShoalShadeHeader(
             ShadeHighlightChip(isClickable = false) {
                 val paddingEnd = with(LocalDensity.current) { 3.sp.toDp() }
                 // One format in both scenes, so the icons keep their size during the transition.
+                // One container too, composed in one scene at a time (see ShoalSharedStatusIcons),
+                // so the icon set and the lattice cannot differ between the scenes.
                 StatusIcons(
                     viewModel = viewModel,
                     useExpandedFormat = false,
                     foregroundColor = textColor.toArgb(),
                     backgroundColor = ShadeHeader.Colors.inverseTextColor.toArgb(),
                     modifier = Modifier.padding(end = paddingEnd).weight(1f, fill = false),
+                    shareBetweenShadeAndQs = true,
                 )
                 BatteryInfo(
                     viewModel = viewModel,
@@ -566,6 +579,105 @@ private fun ContentScope.ShoalShadeHeader(
 }
 
 private val ShoalHeaderPaddingTop = 10.dp
+
+/**
+ * IchthysOS "Shoal": the [StatusIconContext] cache key of the ONE status icon container that the
+ * Shade and Quick Settings scenes share (see [ShoalSharedStatusIcons]). Not a real scene, so it
+ * never collides with the per-scene containers of the stock headers (e.g. the split shade's).
+ */
+private val ShoalStatusIconsCacheKey = SceneKey("ShoalShadeHeaderStatusIcons")
+
+/** The scenes that show the Shoal header, and so the shared status icon container. */
+private val ShoalHeaderScenes = setOf<ContentKey>(Scenes.Shade, Scenes.QuickSettings)
+
+/**
+ * The size, measured in the lookahead (idle layout) pass, of the shared container where it is
+ * composed, read by the placeholder that stands in for it in the other scene. Per container, so
+ * per scene window.
+ */
+private class ShoalStatusIconsSize {
+    var size by mutableStateOf(IntSize.Zero)
+}
+
+private val shoalStatusIconsSizes = WeakHashMap<StatusIconContainer, ShoalStatusIconsSize>()
+
+/**
+ * The scene that composes (and so draws) the shared status icons now, or null if none does.
+ *
+ * During a Shade <-> Quick Settings swipe this is the Shade: SceneContainerConfig puts it above
+ * Quick Settings, so it is the scene whose copy of [ShadeHeader.Elements.CollapsedContentEnd]
+ * (HighestZIndexContentPicker) STL draws. Otherwise the scene of the two that takes part in the
+ * transition, or the current scene when idle. Both scenes evaluate this on the same state in the
+ * same composition, so at most one of them composes the container (one View, one icon group).
+ */
+private fun shoalStatusIconsScene(layoutState: SceneTransitionLayoutState): ContentKey? {
+    val state = layoutState.transitionState
+    if (state is TransitionState.Transition) {
+        val inFrom = state.fromContent in ShoalHeaderScenes
+        val inTo = state.toContent in ShoalHeaderScenes
+        when {
+            inFrom && inTo -> return Scenes.Shade
+            inTo -> return state.toContent
+            inFrom -> return state.fromContent
+        }
+    }
+    return state.currentScene.takeIf { it in ShoalHeaderScenes }
+}
+
+/**
+ * IchthysOS "Shoal": the header's status icons as ONE [StatusIconContainer] shared by the Shade and
+ * Quick Settings scenes. It is composed only in the scene that draws it
+ * ([shoalStatusIconsScene]); the other lays out an empty placeholder of the same size.
+ *
+ * With one container per scene, the Shade's container drew the Shade -> Quick Settings swipe while
+ * STL measured the shared header end ([ShadeHeader.Elements.CollapsedContentEnd]) at a size
+ * interpolated between its idle sizes in the two scenes. The Quick Settings scene's idle size came
+ * from its own container (that scene is always composed, but laid out only while shown) and did
+ * not match; the difference came out of the status icons, the only weighted child of the row, and
+ * the lattice dropped the icons that no longer fit (mute) until the swipe ended and Quick
+ * Settings' container took over, with mute stacked above Wi-Fi. Clock, date and battery stayed.
+ *
+ * Not an STL MovableElement on purpose: its placeholder keeps the size the element last had in
+ * that scene (Quick Settings is always composed, so that is the size from the last time Quick
+ * Settings was shown), which is the same stale-width interpolation again. This placeholder follows
+ * the container's live idle size, so the two scenes' idle sizes are always the same.
+ */
+@Composable
+private fun ContentScope.ShoalSharedStatusIcons(
+    iconContainer: StatusIconContainer,
+    modifier: Modifier,
+    icons: @Composable (Modifier) -> Unit,
+) {
+    val measured = remember(iconContainer) {
+        shoalStatusIconsSizes.getOrPut(iconContainer) { ShoalStatusIconsSize() }
+    }
+    val composeHere by
+        remember(layoutState, contentKey) {
+            derivedStateOf { shoalStatusIconsScene(layoutState) == contentKey }
+        }
+    if (composeHere) {
+        icons(
+            modifier.layout { measurable, constraints ->
+                val placeable = measurable.measure(constraints)
+                // Only the idle size: during a transition the approach pass measures at the size
+                // STL interpolates, which must not feed back into the placeholder.
+                if (isLookingAhead || layoutState.currentTransition == null) {
+                    measured.size = IntSize(placeable.width, placeable.height)
+                }
+                layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+            }
+        )
+    } else {
+        Layout(modifier = modifier) { _, constraints ->
+            val size = measured.size
+            layout(
+                constraints.constrainWidth(size.width),
+                constraints.constrainHeight(size.height),
+            ) {}
+        }
+    }
+}
+
 /**
  * How far below the date's bottom edge the ringer pill's bottom edge sits: (pill height 24 dp -
  * the 13 sp date's line) / 2, so the pill's centre is the date's.
@@ -1060,10 +1172,20 @@ private fun ContentScope.StatusIcons(
     @ColorInt foregroundColor: Int,
     @ColorInt backgroundColor: Int,
     modifier: Modifier = Modifier,
+    /**
+     * IchthysOS "Shoal": use the one container shared by the Shade and Quick Settings scenes
+     * ([ShoalSharedStatusIcons]) instead of this content's own.
+     */
+    shareBetweenShadeAndQs: Boolean = false,
 ) {
     val statusIconContext = LocalStatusIconContext.current
-    val iconContainer = statusIconContext.iconContainer(contentKey)
-    val iconManager = statusIconContext.iconManager(contentKey)
+    val shared =
+        shareBetweenShadeAndQs &&
+            !SystemStatusIconsInCompose.isEnabled &&
+            contentKey in ShoalHeaderScenes
+    val cacheKey = if (shared) ShoalStatusIconsCacheKey else contentKey
+    val iconContainer = statusIconContext.iconContainer(cacheKey)
+    val iconManager = statusIconContext.iconManager(cacheKey)
     val movableContent =
         remember(statusIconContext, iconManager) { statusIconContext.movableContent(iconManager) }
 
@@ -1077,21 +1199,28 @@ private fun ContentScope.StatusIcons(
     } else {
         val isTransitioning = layoutState.isTransitioningBetween(Scenes.Shade, Scenes.QuickSettings)
 
-        SystemStatusIconsLegacy(
-            iconContainer = iconContainer,
-            iconManager = iconManager,
-            statusBarIconController = viewModel.statusBarIconController,
-            useExpandedFormat = useExpandedFormat,
-            isTransitioning = isTransitioning,
-            foregroundColor = foregroundColor,
-            backgroundColor = backgroundColor,
-            isSingleCarrier = viewModel.isSingleCarrier,
-            isMicCameraIndicationEnabled = viewModel.isMicCameraIndicationEnabled,
-            isPrivacyChipEnabled = viewModel.isPrivacyChipVisible,
-            isLocationIndicationEnabled = viewModel.isLocationIndicationEnabled,
-            modifier = modifier,
-            content = movableContent,
-        )
+        val icons: @Composable (Modifier) -> Unit = { iconsModifier ->
+            SystemStatusIconsLegacy(
+                iconContainer = iconContainer,
+                iconManager = iconManager,
+                statusBarIconController = viewModel.statusBarIconController,
+                useExpandedFormat = useExpandedFormat,
+                isTransitioning = isTransitioning,
+                foregroundColor = foregroundColor,
+                backgroundColor = backgroundColor,
+                isSingleCarrier = viewModel.isSingleCarrier,
+                isMicCameraIndicationEnabled = viewModel.isMicCameraIndicationEnabled,
+                isPrivacyChipEnabled = viewModel.isPrivacyChipVisible,
+                isLocationIndicationEnabled = viewModel.isLocationIndicationEnabled,
+                modifier = iconsModifier,
+                content = movableContent,
+            )
+        }
+        if (shared) {
+            ShoalSharedStatusIcons(iconContainer = iconContainer, modifier = modifier, icons = icons)
+        } else {
+            icons(modifier)
+        }
     }
 }
 
