@@ -1096,6 +1096,10 @@ android_app {
     // Custom Options: lineage-sdk shared library (LineageSettings) for crDroid backends.
     optional_uses_libs: ["org.lineageos.platform"],
     resource_dirs: [],
+    // IchthysOS: assets of the app itself (no resource IDs): the One UI charger-connected
+    // animation rings (charging/ShoalChargingStyles.kt). Only here, so no static library
+    // carries a second copy.
+    asset_dirs: ["ichthys-assets"],
     enable_ksp: true,
 
     use_resource_processor: true,

@@ -17,14 +17,23 @@
 package com.android.systemui.charging
 
 import android.animation.ValueAnimator
+import android.app.KeyguardManager
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.res.Configuration
 import android.graphics.PixelFormat
 import android.graphics.PointF
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock as OsSystemClock
 import android.os.SystemProperties
+import android.telecom.TelecomManager
 import android.util.Log
 import android.view.RoundedCorner
 import android.view.Surface
@@ -59,6 +68,11 @@ private const val TAG = "WiredChargingRipple"
 private const val WAIT_FOR_SCREEN_MS = 500L
 // IchthysOS: the stock ripple runs 1.75 s; the charging animations are kept to ~1.5 s.
 private const val RIPPLE_DURATION_MS = 1500L
+// IchthysOS: waking the screen to play: how long to wait for it, and for the panel to light.
+private const val WAKE_TIMEOUT_MS = 1500L
+private const val SCREEN_ON_SETTLE_MS = 250L
+private const val PROXIMITY_TIMEOUT_MS = 300L
+private const val PROXIMITY_NEAR_CM = 5f
 
 /**
  * Controls the ripple effect that shows when wired charging begins. The ripple uses the accent
@@ -67,9 +81,11 @@ private const val RIPPLE_DURATION_MS = 1500L
  * IchthysOS: this is the charger-connected animation for wired and wireless charging. The style
  * is Settings.System [ChargingAnimationSettings.KEY] (Look > Lock screen): "ripple" plays the
  * stock ripple (wired) or the stock wireless animation, recoloured to the Shoal accent;
- * "pulse", "fill" and "spark" play a [ShoalChargingView] on the same kind of untouchable overlay
- * window; "off" plays nothing. Nothing plays with the screen off (or dozing) or with animations
- * turned off (animator duration scale 0).
+ * the other styles play a [ShoalChargingView] on the same kind of untouchable overlay window;
+ * "off" plays nothing. With the screen off (or dozing) nothing plays, unless "Turn on the screen to
+ * play" ([ChargingAnimationSettings.WAKE_KEY]) is on: then the screen is woken (not in a pocket,
+ * not during a call) and the animation plays once it is on. Nothing plays with animations turned
+ * off (animator duration scale 0).
  */
 @SysUISingleton
 class WiredChargingRippleController
@@ -300,9 +316,118 @@ constructor(
         }
         if (isScreenOn()) {
             play.run()
+        } else if (ChargingAnimationSettings.readWake(context) && !isInCall()) {
+            // IchthysOS: "Turn on the screen to play" - wake it unless the phone is in a pocket
+            // (proximity covered), then play once the display is on.
+            checkProximity { near ->
+                if (near || isScreenOn()) {
+                    if (!near) play.run()
+                    return@checkProximity
+                }
+                try {
+                    powerManager?.wakeUp(
+                        OsSystemClock.uptimeMillis(),
+                        PowerManager.WAKE_REASON_PLUGGED_IN,
+                        "ichthys:charging",
+                    )
+                } catch (e: Exception) {
+                    Log.w(TAG, "wake for the charging animation failed", e)
+                    return@checkProximity
+                }
+                pendingPlay = play
+                waitForScreen(play, OsSystemClock.uptimeMillis() + WAKE_TIMEOUT_MS)
+            }
         } else {
+            // The platform's own wake on plug (if on) turns the screen on a moment later.
             pendingPlay = play
             mainHandler.postDelayed(play, WAIT_FOR_SCREEN_MS)
+        }
+    }
+
+    /** Runs [play] shortly after the screen is on (the panel needs a moment), or drops it. */
+    private fun waitForScreen(play: Runnable, deadline: Long) {
+        if (pendingPlay !== play) return
+        if (isScreenOn()) {
+            mainHandler.postDelayed(play, SCREEN_ON_SETTLE_MS)
+        } else if (OsSystemClock.uptimeMillis() < deadline) {
+            mainHandler.postDelayed({ waitForScreen(play, deadline) }, 50L)
+        } else {
+            pendingPlay = null
+        }
+    }
+
+    private fun isInCall(): Boolean =
+        try {
+            context.getSystemService(TelecomManager::class.java)?.isInCall ?: false
+        } catch (e: Exception) {
+            // Without the permission, don't risk waking the screen against an ear.
+            true
+        }
+
+    /**
+     * One proximity reading: [done] gets true when the sensor is covered (pocket, face down).
+     * No sensor, or no reading within [PROXIMITY_TIMEOUT_MS], counts as uncovered.
+     */
+    private fun checkProximity(done: (Boolean) -> Unit) {
+        val sm = context.getSystemService(SensorManager::class.java)
+        val sensor = sm?.getDefaultSensor(Sensor.TYPE_PROXIMITY)
+        if (sm == null || sensor == null) {
+            done(false)
+            return
+        }
+        var finished = false
+        lateinit var listener: SensorEventListener
+        val timeout = Runnable {
+            if (finished) return@Runnable
+            finished = true
+            sm.unregisterListener(listener)
+            done(false)
+        }
+        listener =
+            object : SensorEventListener {
+                override fun onSensorChanged(event: SensorEvent) {
+                    if (finished) return
+                    finished = true
+                    sm.unregisterListener(this)
+                    mainHandler.removeCallbacks(timeout)
+                    val v = event.values.firstOrNull() ?: Float.MAX_VALUE
+                    done(v < min(sensor.maximumRange, PROXIMITY_NEAR_CM))
+                }
+
+                override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+            }
+        if (!sm.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_FASTEST, mainHandler)) {
+            done(false)
+            return
+        }
+        mainHandler.postDelayed(timeout, PROXIMITY_TIMEOUT_MS)
+    }
+
+    /**
+     * The charger's advertised power, as One UI's charging levels: 0 normal, 1 fast (7.5 W+,
+     * the platform's fast threshold), 2 super fast (20 W+), 3 super fast 2.0 (35 W+).
+     */
+    private fun chargeSpeed(): Int {
+        val intent =
+            try {
+                context.registerReceiver(
+                    null,
+                    IntentFilter(Intent.ACTION_BATTERY_CHANGED),
+                    Context.RECEIVER_NOT_EXPORTED,
+                )
+            } catch (e: Exception) {
+                null
+            } ?: return 0
+        val ua = intent.getIntExtra(android.os.BatteryManager.EXTRA_MAX_CHARGING_CURRENT, -1)
+        var uv = intent.getIntExtra(android.os.BatteryManager.EXTRA_MAX_CHARGING_VOLTAGE, -1)
+        if (ua <= 0) return 0
+        if (uv <= 0) uv = 5_000_000
+        val microWatts = (ua / 1000L) * (uv / 1000L)
+        return when {
+            microWatts >= 35_000_000L -> 3
+            microWatts >= 20_000_000L -> 2
+            microWatts >= 7_500_000L -> 1
+            else -> 0
         }
     }
 
@@ -338,7 +463,9 @@ constructor(
                 insets.getRoundedCorner(RoundedCorner.POSITION_BOTTOM_LEFT)?.radius ?: 0,
             )
         try {
-            view.configure(style, level, p.x, p.y, width, height, corners)
+            val locked =
+                context.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked ?: false
+            view.configure(style, level, p.x, p.y, width, height, corners, chargeSpeed(), locked)
         } catch (e: Exception) {
             Log.w(TAG, "charging animation setup failed", e)
             return
@@ -363,7 +490,7 @@ constructor(
         // Belt and braces: the window never outlives the animation by much.
         mainHandler.postDelayed(
             { removeShoal(view) },
-            ShoalChargingView.DURATION_MS.toLong() + 1000L,
+            view.durationMs.toLong() + 1000L,
         )
         uiEventLogger.log(WiredChargingRippleEvent.CHARGING_RIPPLE_PLAYED)
     }
@@ -400,7 +527,11 @@ constructor(
 
         override fun help(pw: PrintWriter) {
             pw.println("Usage: adb shell cmd statusbar charging-ripple [STYLE [LEVEL]]")
-            pw.println("  STYLE: ripple, pulse, fill, spark (default: the stock ripple)")
+            pw.println(
+                "  STYLE: " + ChargingAnimationSettings.STYLES.filter {
+                    it != ChargingAnimationSettings.OFF
+                }.joinToString(", ") + " (default: the stock ripple)"
+            )
             pw.println("  LEVEL: battery level 0-100 (default: the current level)")
         }
     }

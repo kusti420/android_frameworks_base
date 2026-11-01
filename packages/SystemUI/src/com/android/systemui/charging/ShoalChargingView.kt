@@ -58,11 +58,41 @@ object ChargingAnimationSettings {
     const val FILL = "fill"
     const val SPARK = "spark"
     const val OFF = "off"
+    const val ONEUI = "oneui"
+    const val CAPSULE = "capsule"
+    const val DOTS = "dots"
+    const val AURORA = "aurora"
+    const val BUBBLES = "bubbles"
+    const val BOLT = "bolt"
+    const val WAVE = "wave"
+    const val NUMBER = "number"
+
+    /**
+     * Settings.System, 0/1: with the screen off, connecting power turns it on to play the
+     * animation (system.chargingAnimation.wakeScreen, default off).
+     */
+    const val WAKE_KEY = "ichthys_charging_animation_wake"
 
     /** Unset means the option default (lockscreen.chargingAnimation = "pulse"). */
     const val DEFAULT = PULSE
 
-    private val STYLES = setOf(RIPPLE, PULSE, FILL, SPARK, OFF)
+    /** Every style, in the order of the Settings list ("off" last). */
+    val STYLES =
+        listOf(
+            PULSE,
+            ONEUI,
+            FILL,
+            SPARK,
+            CAPSULE,
+            DOTS,
+            AURORA,
+            BUBBLES,
+            BOLT,
+            WAVE,
+            NUMBER,
+            RIPPLE,
+            OFF,
+        )
 
     fun isStyle(value: String?): Boolean = value != null && value in STYLES
 
@@ -79,6 +109,14 @@ object ChargingAnimationSettings {
             }
         return if (isStyle(v)) v!! else DEFAULT
     }
+
+    fun readWake(context: Context): Boolean =
+        try {
+            Settings.System.getIntForUser(context.contentResolver, WAKE_KEY, 0,
+                UserHandle.USER_CURRENT) != 0
+        } catch (e: Exception) {
+            false
+        }
 }
 
 /**
@@ -102,49 +140,84 @@ object ChargingAnimationSettings {
  */
 class ShoalChargingView(context: Context) : View(context) {
 
-    private var style = ChargingAnimationSettings.PULSE
-    private var level = 0
-    private var levelText = ""
+    internal var style = ChargingAnimationSettings.PULSE
+    internal var level = 0
+    internal var levelText = ""
 
     // Port position in view coordinates and the unit vector pointing from its edge into the
     // screen.
-    private val port = PointF()
-    private val inward = PointF(0f, -1f)
-    private val cornerRadii = FloatArray(8)
+    internal val port = PointF()
+    internal val inward = PointF(0f, -1f)
+    internal val cornerRadii = FloatArray(8)
 
-    private var t = 0f // elapsed ms
+    internal var t = 0f // elapsed ms
 
-    private var accent = 0
-    private var ink = 0
-    private var card = 0
-    private var hairline = 0
-    private var cream = 0
-    private var onAccent = 0
+    /** 0 normal, 1 fast, 2 super fast (the charger's advertised power; see the controller). */
+    internal var chargeSpeed = 0
 
-    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    private val stroke =
+    /** Whether the keyguard is showing (One UI picks its lock screen variant then). */
+    internal var onLockScreen = false
+
+    /** How long this play runs; most styles 1.5 s, One UI follows its animation. */
+    internal var durationMs = DURATION_MS
+
+    // One UI: the Lottie ring for the charger's speed, and its own length.
+    internal var lottie: com.airbnb.lottie.LottieDrawable? = null
+    internal var lottieMs = 0f
+
+    // Bubbles: per-bubble parameters (see prepareStyle).
+    internal val bubbles = FloatArray(BUBBLE_COUNT * BUBBLE_FIELDS)
+
+    // Scratch state of the styles in ShoalChargingStyles.kt, set up by prepareStyle.
+    internal val frame = FloatArray(3)
+    internal val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    internal val centerGlow = Paint(Paint.ANTI_ALIAS_FLAG)
+    internal val auroraPaint =
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeJoin = Paint.Join.ROUND
+        }
+    internal val plain = Paint(Paint.ANTI_ALIAS_FLAG)
+    internal val shaderMatrix = android.graphics.Matrix()
+    internal var waveShader: android.graphics.LinearGradient? = null
+    internal var oneUiIcon: Path? = null
+    internal val iconBounds = RectF()
+    internal val boltPath = Path()
+    internal val boltMeasure = PathMeasure()
+    internal var boltLength = 0f
+    internal val boltSeg = Path()
+
+    internal var accent = 0
+    internal var ink = 0
+    internal var card = 0
+    internal var hairline = 0
+    internal var cream = 0
+    internal var onAccent = 0
+
+    internal val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    internal val stroke =
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
             strokeCap = Paint.Cap.ROUND
         }
-    private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
-    private val scrimPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    internal val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
+    internal val scrimPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    internal val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
-    private val rect = RectF()
-    private val inner = RectF()
-    private val path = Path()
-    private val path2 = Path()
-    private val clip = Path()
+    internal val rect = RectF()
+    internal val inner = RectF()
+    internal val path = Path()
+    internal val path2 = Path()
+    internal val clip = Path()
 
     // Spark line: the screen-edge path, its measure and where along it the port is.
-    private val edgePath = Path()
-    private val measure = PathMeasure()
-    private var edgeLength = 0f
-    private var portAt = 0f
-    private val pos = FloatArray(2)
+    internal val edgePath = Path()
+    internal val measure = PathMeasure()
+    internal var edgeLength = 0f
+    internal var portAt = 0f
+    internal val pos = FloatArray(2)
 
-    private val animator =
+    internal val animator =
         ValueAnimator.ofFloat(0f, DURATION_MS).apply {
             duration = DURATION_MS.toLong()
             interpolator = LinearInterpolator()
@@ -172,8 +245,13 @@ class ShoalChargingView(context: Context) : View(context) {
         width: Int,
         height: Int,
         corners: IntArray,
+        chargeSpeed: Int = 0,
+        onLockScreen: Boolean = false,
     ) {
         this.style = style
+        this.chargeSpeed = chargeSpeed
+        this.onLockScreen = onLockScreen
+        durationMs = DURATION_MS
         this.level = level.coerceIn(0, 100)
         levelText =
             if (level < 0) "" else NumberFormat.getPercentInstance().format(this.level / 100.0)
@@ -243,11 +321,16 @@ class ShoalChargingView(context: Context) : View(context) {
                 Shader.TileMode.CLAMP,
             )
 
-        if (style == ChargingAnimationSettings.SPARK) buildEdge(w, h, corners)
+        if (style == ChargingAnimationSettings.SPARK || style == ChargingAnimationSettings.AURORA) {
+            buildEdge(w, h, corners)
+        }
+        prepareStyle(w, h)
         t = 0f
     }
 
     fun start(onEnd: Runnable) {
+        animator.setFloatValues(0f, durationMs)
+        animator.duration = durationMs.toLong()
         animator.removeAllListeners()
         animator.addListener(
             object : AnimatorListenerAdapter() {
@@ -267,6 +350,7 @@ class ShoalChargingView(context: Context) : View(context) {
         super.onDetachedFromWindow()
         animator.removeAllListeners()
         animator.cancel()
+        lottie = null
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -274,12 +358,20 @@ class ShoalChargingView(context: Context) : View(context) {
             ChargingAnimationSettings.PULSE -> drawPulse(canvas)
             ChargingAnimationSettings.FILL -> drawFill(canvas)
             ChargingAnimationSettings.SPARK -> drawSpark(canvas)
+            ChargingAnimationSettings.ONEUI -> drawOneUi(canvas)
+            ChargingAnimationSettings.CAPSULE -> drawCapsule(canvas)
+            ChargingAnimationSettings.DOTS -> drawDots(canvas)
+            ChargingAnimationSettings.AURORA -> drawAurora(canvas)
+            ChargingAnimationSettings.BUBBLES -> drawBubbles(canvas)
+            ChargingAnimationSettings.BOLT -> drawBoltStyle(canvas)
+            ChargingAnimationSettings.WAVE -> drawWave(canvas)
+            ChargingAnimationSettings.NUMBER -> drawNumber(canvas)
         }
     }
 
     // region pulse ring
 
-    private fun drawPulse(canvas: Canvas) {
+    internal fun drawPulse(canvas: Canvas) {
         val diag = min(width, height).toFloat()
         // Vignette in, hold, out.
         val env = min(seg(t, 0f, 260f), 1f - seg(t, 1120f, 380f))
@@ -327,7 +419,7 @@ class ShoalChargingView(context: Context) : View(context) {
 
     // region liquid fill
 
-    private fun drawFill(canvas: Canvas) {
+    internal fun drawFill(canvas: Canvas) {
         val tIn = easeOut(seg(t, 0f, 240f))
         val tOut = easeIn(seg(t, 1150f, 350f))
         val a = tIn * (1f - tOut)
@@ -402,7 +494,7 @@ class ShoalChargingView(context: Context) : View(context) {
     }
 
     /** Liquid from [box]'s left edge to [edge], whose right side is a sine wave. */
-    private fun wave(out: Path, box: RectF, edge: Float, amp: Float, phase: Float) {
+    internal fun wave(out: Path, box: RectF, edge: Float, amp: Float, phase: Float) {
         out.rewind()
         out.moveTo(box.left - dp(2f), box.top)
         val steps = 12
@@ -420,7 +512,7 @@ class ShoalChargingView(context: Context) : View(context) {
 
     // region spark line
 
-    private fun buildEdge(w: Float, h: Float, corners: IntArray) {
+    internal fun buildEdge(w: Float, h: Float, corners: IntArray) {
         val inset = dp(1.5f)
         for (i in 0 until 4) {
             val r = max(0f, corners.getOrElse(i) { 0 }.toFloat() - inset)
@@ -459,7 +551,7 @@ class ShoalChargingView(context: Context) : View(context) {
         portAt = best
     }
 
-    private fun drawSpark(canvas: Canvas) {
+    internal fun drawSpark(canvas: Canvas) {
         if (edgeLength <= 0f) return
         val half = edgeLength / 2f
         val head = half * easeInOut(seg(t, 0f, 900f))
@@ -539,7 +631,7 @@ class ShoalChargingView(context: Context) : View(context) {
     }
 
     /** Appends the edge between [from] and [to] (may wrap past either end). */
-    private fun addSegment(out: Path, from: Float, to: Float) {
+    internal fun addSegment(out: Path, from: Float, to: Float) {
         if (to <= from) return
         val a = wrap(from)
         val b = a + (to - from)
@@ -551,7 +643,7 @@ class ShoalChargingView(context: Context) : View(context) {
         }
     }
 
-    private fun wrap(s: Float): Float {
+    internal fun wrap(s: Float): Float {
         if (edgeLength <= 0f) return 0f
         var v = s % edgeLength
         if (v < 0f) v += edgeLength
@@ -563,7 +655,7 @@ class ShoalChargingView(context: Context) : View(context) {
     // region helpers
 
     /** A small lightning bolt centred at ([cx], [cy]), [h] tall. */
-    private fun drawBolt(canvas: Canvas, cx: Float, cy: Float, h: Float, color: Int) {
+    internal fun drawBolt(canvas: Canvas, cx: Float, cy: Float, h: Float, color: Int) {
         val w = h * 0.62f
         val l = cx - w / 2f
         val tp = cy - h / 2f
@@ -580,33 +672,36 @@ class ShoalChargingView(context: Context) : View(context) {
         canvas.drawPath(path, fill)
     }
 
-    private fun dp(v: Float): Float = v * resources.displayMetrics.density
+    internal fun dp(v: Float): Float = v * resources.displayMetrics.density
 
-    private fun sp(v: Float): Float =
+    internal fun sp(v: Float): Float =
         TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, v, resources.displayMetrics)
 
     companion object {
         const val DURATION_MS = 1500f
-        private val RING_ALPHA = floatArrayOf(0.95f, 0.65f, 0.40f)
-
-        /** Progress of [t] through [start] .. [start] + [dur], clamped to 0..1. */
-        private fun seg(t: Float, start: Float, dur: Float): Float =
-            ((t - start) / dur).coerceIn(0f, 1f)
-
-        private fun easeOut(x: Float): Float = 1f - (1f - x).pow(3)
-
-        private fun easeIn(x: Float): Float = x * x * x
-
-        private fun easeInOut(x: Float): Float =
-            if (x < 0.5f) 4f * x * x * x else 1f - (-2f * x + 2f).pow(3) / 2f
-
-        private fun opaque(c: Int): Int = c or 0xFF000000.toInt()
-
-        private fun withAlpha(c: Int, a: Float): Int =
-            ColorUtils.setAlphaComponent(c, (a.coerceIn(0f, 1f) * 255).toInt())
-
-        private fun blend(a: Int, b: Int, r: Float): Int = ColorUtils.blendARGB(a, b, r)
+        internal const val BUBBLE_COUNT = 26
+        internal const val BUBBLE_FIELDS = 7
+        internal val RING_ALPHA = floatArrayOf(0.95f, 0.65f, 0.40f)
     }
 
     // endregion
 }
+
+// IchthysOS: timing and colour helpers shared by the styles (ShoalChargingStyles.kt too).
+
+/** Progress of [t] through [start] .. [start] + [dur], clamped to 0..1. */
+internal fun seg(t: Float, start: Float, dur: Float): Float = ((t - start) / dur).coerceIn(0f, 1f)
+
+internal fun easeOut(x: Float): Float = 1f - (1f - x).pow(3)
+
+internal fun easeIn(x: Float): Float = x * x * x
+
+internal fun easeInOut(x: Float): Float =
+    if (x < 0.5f) 4f * x * x * x else 1f - (-2f * x + 2f).pow(3) / 2f
+
+internal fun opaque(c: Int): Int = c or 0xFF000000.toInt()
+
+internal fun withAlpha(c: Int, a: Float): Int =
+    ColorUtils.setAlphaComponent(c, (a.coerceIn(0f, 1f) * 255).toInt())
+
+internal fun blend(a: Int, b: Int, r: Float): Int = ColorUtils.blendARGB(a, b, r)

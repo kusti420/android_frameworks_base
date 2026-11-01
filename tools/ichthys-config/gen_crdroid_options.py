@@ -156,6 +156,10 @@ PATHS = {
     'ichthys_statusbar_notif_icons': 'statusBar.notificationIcons',
     'ichthys_screenshot_preview_timeout': 'system.ui.screenshotPreviewTimeout',
     'pm_low_target_sdk_allowed': 'apps.compat.allowLowTargetSdk',
+    # IchthysOS: the charger-connected animation, on System > Battery and display (it was briefly
+    # lockscreen.chargingAnimation on the lock screen page, never in a release).
+    'ichthys_charging_animation': 'system.chargingAnimation.style',
+    'ichthys_charging_animation_wake': 'system.chargingAnimation.wakeScreen',
 }
 # Old path -> new path. The old path stays valid as an alias, so configs written before the
 # rename still apply. (statusBar.clockEnabled was the clock *position*: the "option that is also
