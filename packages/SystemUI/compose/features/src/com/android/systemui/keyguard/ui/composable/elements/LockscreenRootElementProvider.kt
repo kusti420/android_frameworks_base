@@ -443,7 +443,9 @@ private fun LockscreenScope<ContentScope>.LockscreenSceneLayout(
                 )
             )
 
-        val settingsMenuPlaceable = settingsMenuMeasurable.measure(constraints)
+        // IchthysOS: at its own size (the root's constraints may be the whole screen).
+        val settingsMenuPlaceable =
+            settingsMenuMeasurable.measure(constraints.copy(minWidth = 0, minHeight = 0))
 
         layout(constraints.maxWidth, constraints.maxHeight) {
             // Placement order is drawing order.
@@ -480,15 +482,17 @@ private fun LockscreenScope<ContentScope>.LockscreenSceneLayout(
                 constraints.maxHeight - lowerRegionPlaceable.measuredHeight,
             )
 
-            // IchthysOS: above an under-display fingerprint sensor that sits at the bottom (the
-            // A52s): there the sensor's touch area took the taps and "Customize lock screen"
-            // could not be pressed. Above the keep-out, like everything else at the bottom.
-            val menuBottom =
-                if (isUdfpsSupported) minOf(constraints.maxHeight, keepOutTop)
-                else constraints.maxHeight
+            // IchthysOS: "Customize lock screen" hangs from the status bar, centred. The bottom
+            // has no free room on the A52s: the stock spot (between the shortcuts) is on the
+            // under-display fingerprint sensor, and just above the keep-out it covered the Quiet
+            // dock (the dock's bottom is DOCK_GAP_DP above the keep-out, the menu was 48 dp tall
+            // plus 32 dp of padding), with the indication line and the shortcuts under it. Up
+            // here it only ever lies over the clock face, never anything tappable; the element
+            // keeps clear of a top-corner weather line and closes the dock's sheet itself
+            // (SettingsMenuElementProvider). Drawn last, in front of the clock and the subject.
             settingsMenuPlaceable.placeRelative(
                 (constraints.maxWidth - settingsMenuPlaceable.measuredWidth) / 2,
-                menuBottom - settingsMenuPlaceable.measuredHeight,
+                statusBarPlaceable.measuredHeight,
             )
         }
     }

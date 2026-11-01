@@ -17,17 +17,31 @@
 package com.android.systemui.keyguard.ui.composable.elements
 
 import android.content.Context
+import android.database.ContentObserver
+import android.os.Handler
+import android.os.Looper
+import android.os.UserHandle
+import android.provider.Settings
 import android.view.LayoutInflater
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.dimensionResource
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.isVisible
 import com.android.compose.animation.scene.ElementContentScope
+import com.android.settingslib.ichthys.clock.LockWeather
 import com.android.systemui.dagger.SysUISingleton
+import com.android.systemui.keyguard.data.repository.IchthysLockNotifRepository
 import com.android.systemui.keyguard.ui.binder.KeyguardSettingsViewBinder
 import com.android.systemui.keyguard.ui.viewmodel.KeyguardSettingsMenuViewModel
 import com.android.systemui.keyguard.ui.viewmodel.KeyguardTouchHandlingViewModel
@@ -43,6 +57,7 @@ import com.android.systemui.statusbar.VibratorHelper
 import javax.inject.Inject
 import kotlin.collections.List
 import kotlinx.coroutines.DisposableHandle
+import kotlinx.coroutines.flow.filter
 
 @SysUISingleton
 class SettingsMenuElementProvider
@@ -53,6 +68,7 @@ constructor(
     private val touchHandlingViewModelFactory: KeyguardTouchHandlingViewModel.Factory,
     private val vibratorHelper: VibratorHelper,
     private val activityStarter: ActivityStarter,
+    private val notifRepository: IchthysLockNotifRepository,
 ) : LockscreenElementProvider {
     override val elements: List<LockscreenElement> by lazy { listOf(SettingsMenuElement()) }
 
@@ -72,6 +88,12 @@ constructor(
     fun SettingsMenu(modifier: Modifier = Modifier) {
         val (disposableHandle, setDisposableHandle) =
             remember { mutableStateOf<DisposableHandle?>(null) }
+        // IchthysOS: the menu hangs from the status bar (LockscreenSceneLayout), where the Quiet
+        // dock's sheet has its header: the sheet goes away as the menu comes up.
+        LaunchedEffect(Unit) {
+            viewModel.isVisible.filter { it }.collect { notifRepository.setSheetOpen(false) }
+        }
+        val weatherClearance = rememberTopWeatherClearance()
         AndroidView(
             factory = { context ->
                 LayoutInflater.from(context)
@@ -96,15 +118,68 @@ constructor(
                     }
             },
             onRelease = { disposableHandle?.dispose() },
+            // IchthysOS: a small gap under the status bar (and under a top-corner weather line);
+            // no padding under it: the padding counts as "inside" for the outside-tap dismissal.
             modifier =
                 modifier
-                    .padding(
-                        bottom = dimensionResource(R.dimen.keyguard_affordance_vertical_offset)
-                    )
+                    .padding(top = MENU_TOP_GAP_DP.dp + weatherClearance)
                     .padding(
                         horizontal =
                             dimensionResource(R.dimen.keyguard_affordance_horizontal_offset)
                     ),
         )
+    }
+
+    /**
+     * IchthysOS: the room a top-corner weather line takes under the status bar (LockWeatherView
+     * SLOT_TOP: [LockscreenUpperRegionElementProvider.WEATHER_TOP_DP] down, a 15 sp line at the
+     * weather's size in a pill with 5 dp above and under it), so the menu sits under it rather
+     * than over it; 0 while the weather is off or elsewhere.
+     */
+    @Composable
+    private fun rememberTopWeatherClearance(): Dp {
+        val size by
+            produceState(initialValue = topWeatherSize(), context) {
+                val resolver = context.contentResolver
+                val observer =
+                    object : ContentObserver(Handler(Looper.getMainLooper())) {
+                        override fun onChange(selfChange: Boolean) {
+                            value = topWeatherSize()
+                        }
+                    }
+                for (key in LockWeather.SECURE_KEYS) {
+                    resolver.registerContentObserver(
+                        Settings.Secure.getUriFor(key), false, observer, UserHandle.USER_ALL)
+                }
+                for (key in LockWeather.SYSTEM_KEYS) {
+                    resolver.registerContentObserver(
+                        Settings.System.getUriFor(key), false, observer, UserHandle.USER_ALL)
+                }
+                value = topWeatherSize()
+                awaitDispose { resolver.unregisterContentObserver(observer) }
+            }
+        if (size <= 0) return 0.dp
+        val line =
+            with(LocalDensity.current) {
+                (WEATHER_TOP_SP * WEATHER_LINE_HEIGHT * size / 100f).sp.toDp()
+            }
+        return LockscreenUpperRegionElementProvider.WEATHER_TOP_DP.dp + WEATHER_PILL_DP.dp + line
+    }
+
+    /** The weather's size in percent when it shows in a top corner, else 0. */
+    private fun topWeatherSize(): Int {
+        val o = LockWeather.readOptions(context)
+        val top = o.pos == LockWeather.POS_TOP_START || o.pos == LockWeather.POS_TOP_END
+        return if (o.enabled && top) o.size else 0
+    }
+
+    private companion object {
+        /** IchthysOS: the menu's distance under the status bar (or the top-corner weather). */
+        const val MENU_TOP_GAP_DP = 8
+        /** IchthysOS: LockWeatherView's top-corner text size at 100 %, and a line's height in it. */
+        const val WEATHER_TOP_SP = 15f
+        const val WEATHER_LINE_HEIGHT = 1.4f
+        /** IchthysOS: the top-corner pill's padding above and under the line (5 dp each, +2). */
+        const val WEATHER_PILL_DP = 12
     }
 }

@@ -38,6 +38,7 @@ import com.android.systemui.keyguard.util.WallpaperPickerIntentUtils.LAUNCH_SOUR
 import com.android.systemui.lifecycle.repeatWhenAttached
 import com.android.systemui.plugins.ActivityStarter
 import com.android.systemui.res.R
+import com.android.systemui.shade.ui.ShoalShade
 import com.android.systemui.statusbar.VibratorHelper
 import kotlinx.coroutines.DisposableHandle
 import kotlinx.coroutines.flow.combine
@@ -91,6 +92,9 @@ object KeyguardSettingsViewBinder {
                                         view = view.requireViewById(R.id.icon),
                                     )
                                     TextViewBinder.bind(view = textView, viewModel = viewModel.text)
+                                    // IchthysOS: the Shoal body font (theme.font.text), read as
+                                    // the menu comes up so a font change needs no restart.
+                                    textView.typeface = ShoalShade.text(view.context, 500)
                                     textView.sendAccessibilityEvent(TYPE_VIEW_FOCUSED)
                                 }
                             }

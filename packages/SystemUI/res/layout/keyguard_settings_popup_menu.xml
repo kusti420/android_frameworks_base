@@ -25,14 +25,21 @@
     android:orientation="horizontal"
     android:gravity="center_vertical"
     android:background="@drawable/keyguard_settings_popup_menu_background"
-    android:padding="@dimen/keyguard_settings_popup_menu_padding">
+    android:paddingTop="@dimen/keyguard_settings_popup_menu_padding"
+    android:paddingBottom="@dimen/keyguard_settings_popup_menu_padding"
+    android:paddingStart="16dp"
+    android:paddingEnd="20dp">
+
+    <!-- IchthysOS: the Shoal look, an ink pill with a hairline (the drawable), the accent icon
+         and the theme's text colour; the binder sets the theme's body font. Framework ichthys_*
+         tokens, so it follows the theme, dark and light. -->
 
     <ImageView
         android:id="@+id/icon"
         android:layout_width="@dimen/keyguard_settings_popup_menu_icon_height"
         android:layout_height="@dimen/keyguard_settings_popup_menu_icon_width"
         android:layout_marginEnd="@dimen/keyguard_settings_popup_menu_icon_end_margin"
-        android:tint="@color/materialColorOnSecondaryFixed"
+        android:tint="@*android:color/ichthys_accent"
         android:importantForAccessibility="no"
         tools:ignore="UseAppTint" />
 
@@ -41,7 +48,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:textAppearance="?android:attr/textAppearanceMedium"
-        android:textColor="@color/materialColorOnSecondaryFixed"
+        android:textColor="@*android:color/ichthys_text"
         android:maxLines="1"
         android:ellipsize="end" />
 
