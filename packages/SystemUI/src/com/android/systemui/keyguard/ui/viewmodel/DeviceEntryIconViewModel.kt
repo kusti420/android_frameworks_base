@@ -67,6 +67,9 @@ constructor(
     burnInInteractor: BurnInInteractor,
     shadeInteractor: ShadeInteractor,
     private val deviceEntryUdfpsInteractor: DeviceEntryUdfpsInteractor,
+    // IchthysOS: whether fingerprint can unlock right now (not after a restart / lockout).
+    private val biometricsAllowedInteractor:
+        com.android.systemui.deviceentry.domain.interactor.DeviceEntryBiometricsAllowedInteractor,
     transitionInteractor: KeyguardTransitionInteractor,
     private val keyguardInteractor: KeyguardInteractor,
     private val keyguardViewController: Lazy<KeyguardViewController>,
@@ -263,13 +266,17 @@ constructor(
             deviceEntryUdfpsInteractor.isListeningForUdfps,
             deviceEntryUdfpsInteractor.isUdfpsEnrolledAndEnabled,
             isUnlocked,
-        ) { isListeningForUdfps, udfpsEnrolled, isUnlocked ->
+            biometricsAllowedInteractor.isFingerprintAuthCurrentlyAllowed,
+        ) { isListeningForUdfps, enrolled, isUnlocked, fingerprintAllowed ->
+            // IchthysOS: after a restart (strong auth required) or a lockout fingerprint cannot
+            // unlock, so the padlock shows; otherwise the fingerprint even while the sensor pauses.
+            val udfpsEnrolled = enrolled && fingerprintAllowed
             // IchthysOS: with a fingerprint enrolled the icon is the fingerprint, listening or
             // not: the padlock showed whenever the sensor paused (after a lockout, a failed
             // attempt, a timing gap on wake), which read as fingerprint being unavailable.
             // Only a lockout / strong-auth state really needs the padlock, and those also stop
             // the sensor; the icon stays a fingerprint and a tap on it still explains why.
-            if (isListeningForUdfps || udfpsEnrolled) {
+            if ((isListeningForUdfps && fingerprintAllowed) || udfpsEnrolled) {
                 if (isUnlocked) {
                     // Don't show any UI until isUnlocked=false. This covers the case
                     // when the "Power button instantly locks > 0s" or the device doesn't lock
