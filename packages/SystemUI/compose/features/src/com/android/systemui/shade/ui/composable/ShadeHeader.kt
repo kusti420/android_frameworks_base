@@ -518,13 +518,20 @@ private fun ContentScope.ShoalShadeHeader(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             modifier =
                 Modifier.element(ShadeHeader.Elements.CollapsedContentEnd)
-                    // IchthysOS: the content always takes its natural width, pinned to the end.
-                    // During a Shade <-> Quick Settings swipe STL measures this shared element at
-                    // a size interpolated between its idle sizes in the two scenes; squeezing the
-                    // row to that size took the difference out of the status icon lattice, which
-                    // then dropped the icon(s) that no longer fit. The element's end edge is the
-                    // header's end in both scenes, so the content never moves.
-                    .wrapContentWidth(Alignment.End, unbounded = true),
+                    // IchthysOS: the content always takes its natural size, pinned to the end and
+                    // centred vertically. During a Shade <-> Quick Settings swipe STL measures this
+                    // shared element at a FIXED size interpolated between its idle sizes in the two
+                    // scenes. Squeezing the row's width to it took the difference out of the
+                    // status icon lattice, which dropped the icon(s) that no longer fit; squeezing
+                    // its height (the first frames of a Quick Settings -> Shade swipe, while the
+                    // freshly composed Shade's idle size is not settled yet) shrank the lattice's
+                    // discs to the height left (StatusIconContainer sizes its cell from the height
+                    // it is given): mute and Wi-Fi drawn small on top of each other, the column
+                    // narrower and the weather shifted, then snapping back. Natural size on both
+                    // axes makes every frame of the swipe lay the row out as when idle. The
+                    // content is bounded (weather, a few icons, battery), so nothing gets an
+                    // unbounded size, only unbounded constraints.
+                    .wrapContentSize(Alignment.CenterEnd, unbounded = true),
         ) {
             // Inside the shared element, so it stays put between the Shade and Quick Settings
             // scenes like the icons beside it.

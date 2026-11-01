@@ -370,7 +370,10 @@ public class StatusIconContainer extends AlphaOptimizedLinearLayout {
         final int heightMode = MeasureSpec.getMode(heightMeasureSpec);
         final float avail = heightMode == MeasureSpec.UNSPECIFIED ? -1f
                 : MeasureSpec.getSize(heightMeasureSpec) - getPaddingTop() - getPaddingBottom();
-        final float cell = IchthysZigzag.cellFor(this, avail);
+        // IchthysOS: the cell shrinks to the height given only where icons are restricted (the
+        // status bar row). The shade header's lattice (setShouldRestrictIcons(false)) keeps its
+        // design cell whatever height a transition hands it, so it never draws smaller discs.
+        final float cell = IchthysZigzag.cellFor(this, mShouldRestrictIcons ? avail : -1f);
         mZzCell = cell;
         mZzHalfPitch = IchthysZigzag.halfPitch(cell);
 
