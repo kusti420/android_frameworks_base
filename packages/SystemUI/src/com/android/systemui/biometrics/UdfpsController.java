@@ -1416,7 +1416,7 @@ public class UdfpsController implements DozeReceiver, Dumpable {
     }
 
     // ---- Runtime-tunable UDFPS optics (no rebuild needed to sweep these) ----
-    //   persist.sys.udfps.dim_alpha    -1 = auto (nits-matched, 0-245), 0 = no dim,
+    //   persist.sys.udfps.dim_alpha    0 = no dim (default), -1 = auto (nits-matched, 0-245),
     //                                  1-255 = fixed alpha                      (default -1)
     //   persist.sys.udfps.dim_session  bool   dim held for whole enroll session (default false:
     //                                         dim only while the finger is down)
@@ -1523,7 +1523,11 @@ public class UdfpsController implements DozeReceiver, Dumpable {
         // Default -1 = brightness-scaled dim (computeAutoDimAlpha). A fully black surround (255)
         // hid the HBM jump completely but also hid the lockscreen and the enrollment UI, so the
         // user could not see what they were unlocking into. Any value >= 0 pins the alpha.
-        final int configured = SystemProperties.getInt(PROP_DIM_ALPHA, -1);
+        // IchthysOS 2026-11-01: default is NO dim. On this panel the fingerprint mask does not
+        // visibly brighten the surround (the owner only ever saw the dim itself as "the screen
+        // changes brightness"), so the compensation only darkened the screen. -1 keeps the
+        // nits-matched dim available for experiments.
+        final int configured = SystemProperties.getInt(PROP_DIM_ALPHA, 0);
         final int alpha = configured >= 0 ? configured : computeAutoDimAlpha();
         if (alpha <= 0) {
             return;
