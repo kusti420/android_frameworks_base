@@ -17,6 +17,7 @@ import com.android.systemui.qs.shared.ui.QuickSettings.SHARED_TILE_PICKER_THRESH
 import com.android.systemui.qs.ui.composable.ShoalMediaDock
 import com.android.systemui.scene.shared.model.Scenes
 import com.android.systemui.shade.ui.composable.ShadeHeader
+import com.android.systemui.shade.ui.composable.ShoalRingerElement
 import kotlin.time.Duration.Companion.milliseconds
 
 fun TransitionBuilder.shadeToQuickSettingsTransition(
@@ -72,7 +73,10 @@ fun TransitionBuilder.shadeToQuickSettingsTransition(
     // IchthysOS "Shoal": both scenes draw the one header at the same place (ShoalShadeHeader),
     // so its date, pill and icons are shared elements that must not be moved or faded here:
     // these stock moves slid them down and blinked them on every swipe.
-    if (!shoalHeader()) {
+    if (shoalHeader()) {
+        // The ringer pill is expanded Quick Settings' alone: it fades in late in the swipe.
+        fractionRange(start = .58f) { fade(ShoalRingerElement) }
+    } else {
         val translationY = ShadeHeader.Dimensions.CollapsedHeightForTransitions
         translate(ShadeHeader.Elements.CollapsedContentStart, y = translationY)
         translate(ShadeHeader.Elements.CollapsedContentEnd, y = translationY)

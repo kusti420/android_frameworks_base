@@ -336,12 +336,18 @@ internal fun ShoalBrightnessSlider(
                         fun gammaAt(x: Float): Int = minGamma + (fracAt(x) * range).roundToInt()
                         fun clampToFloor(g: Int): Int =
                             if (currentShowFloor) maxOf(g, floorState.intValue) else g
+                        val knobEdge =
+                            maxOf(trackCorner.toPx(), MarkerInset.toPx() + MarkerWidth.toPx() / 2f)
+                        fun floorX(): Float =
+                            drawnFloorX(floorState.intValue, minGamma, range, size.width, rtl, knobEdge)
+                        val grab = FloorGrab.toPx()
                         detectTapGestures(
                             onTap = { offset ->
                                 when {
                                     isRestricted -> currentOnRestrictedClick()
                                     !enabled -> {}
                                     currentOverridden -> currentShowToast()
+                                    currentShowFloor && abs(offset.x - floorX()) <= grab -> {}
                                     else -> {
                                         val g = clampToFloor(gammaAt(offset.x))
                                         valueState.intValue = g
@@ -358,11 +364,14 @@ internal fun ShoalBrightnessSlider(
                             return if (rtl) 1f - f else f
                         }
                         fun gammaAt(x: Float): Int = minGamma + (fracAt(x) * range).roundToInt()
-                        fun floorX(): Float {
-                            val f = (floorState.intValue - minGamma).toFloat() / range
-                            val x = f.coerceIn(0f, 1f) * size.width
-                            return if (rtl) size.width - x else x
-                        }
+                        // Where the floor knob is drawn (drawShoalTrack keeps it clear of the
+                        // track's ends), not where the floor value falls: with the floor at its
+                        // minimum the knob sits a corner radius in from the edge, and a finger on
+                        // the knob missed the value's x by that much and dragged the brightness.
+                        val knobEdge =
+                            maxOf(trackCorner.toPx(), MarkerInset.toPx() + MarkerWidth.toPx() / 2f)
+                        fun floorX(): Float =
+                            drawnFloorX(floorState.intValue, minGamma, range, size.width, rtl, knobEdge)
                         val grab = FloorGrab.toPx()
                         // The interaction of the brightness drag in progress, if any.
                         var dragInteraction: DragInteraction.Start? = null
@@ -502,6 +511,26 @@ private fun rememberShoalBrightnessColors(): ShoalBrightnessColors {
     }
 }
 
+/**
+ * The x the floor bar is drawn at for [floorGamma], in a track [width] px wide: its value's x,
+ * kept [knobEdge] px in from either end exactly as drawShoalTrack draws it. The touch tests use
+ * this, so the bar is grabbed where the eye sees it (at 0 % the value's x is the track's edge,
+ * a corner radius away from the bar).
+ */
+private fun drawnFloorX(
+    floorGamma: Int,
+    minGamma: Int,
+    range: Int,
+    width: Int,
+    rtl: Boolean,
+    knobEdge: Float,
+): Float {
+    val w = width.toFloat()
+    val f = ((floorGamma - minGamma).toFloat() / range).coerceIn(0f, 1f)
+    val x = if (rtl) w - f * w else f * w
+    return x.coerceIn(knobEdge, (w - knobEdge).coerceAtLeast(knobEdge))
+}
+
 private enum class DragMode {
     None,
     Main,
@@ -512,11 +541,15 @@ private enum class DragMode {
 private val TrackHeight = 56.dp
 private val LabelRowGap = 10.dp
 private val PanelPadding = 14.dp
+// IchthysOS: the floor marker is a slim 4 dp bar; what makes it easy to grab is the touch test,
+// not its width: a horizontal drag that starts within FloorGrab of where the bar is DRAWN (the
+// bar is kept a corner radius in from the track's ends, so at 0 % it is not at x = 0) moves the
+// floor, whatever the brightness is; everything else moves the brightness.
 private val MarkerWidth = 4.dp
 private val MarkerInset = 7.dp
 private val SunStart = 18.dp
 private val SunSize = 18.dp
-private val FloorGrab = 20.dp
+private val FloorGrab = 32.dp
 
 private fun DrawScope.drawShoalTrack(
     valueFrac: Float,

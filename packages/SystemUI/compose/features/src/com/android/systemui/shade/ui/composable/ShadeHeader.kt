@@ -214,9 +214,11 @@ fun ContentScope.CollapsedShadeHeader(
 
     // IchthysOS "Shoal": the one header shared with the Quick Settings scene (see ShoalShadeHeader).
     if (!isSplitShade && ShoalShade.isActive(LocalContext.current)) {
+        // IchthysOS: the ringer pill belongs to expanded Quick Settings only.
         ShoalShadeHeader(
             viewModel = viewModel,
             horizontalPadding = ShoalHeaderHorizontalPadding,
+            showRinger = false,
             modifier = modifier,
         )
         return
@@ -312,12 +314,13 @@ fun ContentScope.ExpandedShadeHeader(
     modifier: Modifier = Modifier,
 ) {
     // IchthysOS "Shoal": the same header as the Shade scene's, at the same place, so nothing moves
-    // during Shade <-> Quick Settings. QuickSettingsScene already pads this header by
-    // QsSceneHeaderPadding on each side; only the rest is added here.
+    // during Shade <-> Quick Settings.
     if (ShoalShade.isActive(LocalContext.current)) {
+        // IchthysOS: QuickSettingsScene no longer pads this header, so the full padding applies.
         ShoalShadeHeader(
             viewModel = viewModel,
-            horizontalPadding = ShoalHeaderHorizontalPadding - QsSceneHeaderPadding,
+            horizontalPadding = ShoalHeaderHorizontalPadding,
+            showRinger = true,
             modifier = modifier,
         )
         return
@@ -446,6 +449,7 @@ private val QsSceneHeaderPadding = 16.dp
 private fun ContentScope.ShoalShadeHeader(
     viewModel: ShadeHeaderViewModel,
     horizontalPadding: Dp,
+    showRinger: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -466,8 +470,7 @@ private fun ContentScope.ShoalShadeHeader(
             SimpleDateFormat(ShoalDatePattern, Locale.getDefault()).format(Date())
         }
 
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
+    Box(
         modifier =
             modifier
                 .sysuiResTag(ShadeHeader.TestTags.Root)
@@ -477,8 +480,9 @@ private fun ContentScope.ShoalShadeHeader(
                     end = horizontalPadding,
                     top = ShoalHeaderPaddingTop,
                     bottom = ShoalHeaderPaddingBottom,
-                ),
+                )
     ) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.weight(1f)) {
             Clock(
                 onClick = viewModel::onClockClicked,
@@ -486,31 +490,17 @@ private fun ContentScope.ShoalShadeHeader(
                 shoalHeader = true,
                 modifier = Modifier.sysuiResTag("expanded_header_clock"),
             )
-            // The date at the start and Mute | Vibrate | Ring centred on the screen's middle
-            // (not on what is left after the date: a long date pushed the pill to the icons).
-            Box(modifier = Modifier.fillMaxWidth()) {
-                VariableDayDate(
-                    longerDateText = longDate,
-                    shorterDateText = viewModel.shorterDateText,
-                    textColor = mutedColor,
-                    textStyle = TextStyle(fontFamily = textFamily, fontSize = 13.sp),
-                    modifier =
-                        Modifier.align(Alignment.CenterStart)
-                            .element(ShadeHeader.Elements.CollapsedContentStart)
-                            .sysuiResTag("expanded_shade_header_day_date"),
-                )
-                ShoalRingerPill(
-                    accent = accentColor,
-                    onAccent = inkColor,
-                    mutedColor = mutedColor,
-                    modifier =
-                        Modifier.align(Alignment.Center)
-                            // Centred on the screen, not on this column: the icons' width (which
-                            // this column loses on the right) is given back on the left.
-                            .padding(start = ShoalHeaderPillCentreNudge)
-                            .element(ShoalRingerElement),
-                )
-            }
+            // The date, on the clock's line below. Mute | Vibrate | Ring is drawn over the whole
+            // header (after this Row), centred on the screen, whatever the date's width.
+            VariableDayDate(
+                longerDateText = longDate,
+                shorterDateText = viewModel.shorterDateText,
+                textColor = mutedColor,
+                textStyle = TextStyle(fontFamily = textFamily, fontSize = 13.sp),
+                modifier =
+                    Modifier.element(ShadeHeader.Elements.CollapsedContentStart)
+                        .sysuiResTag("expanded_shade_header_day_date"),
+            )
         }
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -556,13 +546,34 @@ private fun ContentScope.ShoalShadeHeader(
             }
         }
     }
+    // Mute | Vibrate | Ring centred on the date's line and on the screen (this Box spans the
+    // header, so its centre is the screen's). The pill is taller than the date's line, so it is
+    // dropped below the content's bottom edge (the date's) by half the difference, into the
+    // header's bottom padding, instead of reaching up over the clock. Expanded Quick Settings
+    // only: it fades in with the scene.
+    if (showRinger) {
+        ShoalRingerPill(
+            accent = accentColor,
+            onAccent = inkColor,
+            mutedColor = mutedColor,
+            modifier =
+                Modifier.align(Alignment.BottomCenter)
+                    .offset(y = ShoalHeaderPillDrop)
+                    .element(ShoalRingerElement),
+        )
+    }
+    }
 }
 
 private val ShoalHeaderPaddingTop = 10.dp
-/** The right-hand icon group's usual width, so the pill's centre lands on the screen's. */
-private val ShoalHeaderPillCentreNudge = 120.dp
+/**
+ * How far below the date's bottom edge the ringer pill's bottom edge sits: (pill height 24 dp -
+ * the 13 sp date's line) / 2, so the pill's centre is the date's.
+ */
+private val ShoalHeaderPillDrop = 6.dp
 /** IchthysOS: the ringer pill, shared between the Shade and Quick Settings scenes. */
-private val ShoalRingerElement = ElementKey("ShoalRinger")
+/** IchthysOS: the ringer pill, expanded Quick Settings' own (faded in by its transition). */
+val ShoalRingerElement = ElementKey("ShoalRinger")
 private val ShoalHeaderPaddingBottom = 8.dp
 private const val ShoalDatePattern = "EEE, d MMMM"
 
@@ -819,6 +830,13 @@ private fun ContentScope.Clock(
                             null,
                         )
                         .apply {
+                            // IchthysOS: Clock re-applies the status bar's 4 dp side padding on
+                            // every "interesting" configuration change (reloadDimens), so of the
+                            // two header clocks (Shade's and Quick Settings') the older one ended
+                            // 4 dp to the right of the other and the shared element moved on every
+                            // swipe. The compose headers do their own padding.
+                            setShouldApplyPadding(false)
+                            setPaddingRelative(0, 0, 0, 0)
                             isSingleLine = true
                             textDirection = View.TEXT_DIRECTION_LOCALE
                             gravity = Gravity.START or Gravity.CENTER_VERTICAL

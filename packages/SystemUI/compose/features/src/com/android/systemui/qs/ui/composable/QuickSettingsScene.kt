@@ -427,6 +427,15 @@ private fun ContentScope.QuickSettingsContent(
             modifier =
                 Modifier.fillMaxSize().overscroll(verticalOverscrollEffect).padding(navBarInsets),
         ) {
+            // IchthysOS "Shoal": the header is a fixed child of this column, laid out exactly as
+            // the Shade scene lays out its header (a fixed slot above the scrolling content), so
+            // the shared clock, date and icons end a Shade <-> Quick Settings swipe where they
+            // started. Inside the scrolling column below (verticalScroll + unbounded height) they
+            // settled about 11 px off, and the transition's end moved them there.
+            val shoalHeader = com.android.systemui.shade.ui.ShoalShade.isActive(LocalContext.current)
+            if (shoalHeader) {
+                ExpandedShadeHeader(viewModel = headerViewModel)
+            }
             // IchthysOS "Shoal": the media player is a strip docked between the scrolling part and
             // the footer actions, in the non-scrolling part, instead of a carousel at the end of
             // the scrolling content. In the grid style the host is the plain box that was here.
@@ -453,13 +462,17 @@ private fun ContentScope.QuickSettingsContent(
                         LocalWindowSizeClass.current.isWidthAtLeastBreakpoint(
                             WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND
                         )
-                    if (usesCollapsedHeader) {
-                        CollapsedShadeHeader(viewModel = headerViewModel, isSplitShade = false)
-                    } else {
-                        ExpandedShadeHeader(
-                            viewModel = headerViewModel,
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                        )
+                    // IchthysOS "Shoal": the header is above this scrolling column (see the
+                    // Column that holds it); only the stock headers are drawn here.
+                    if (!shoalHeader) {
+                        if (usesCollapsedHeader) {
+                            CollapsedShadeHeader(viewModel = headerViewModel, isSplitShade = false)
+                        } else {
+                            ExpandedShadeHeader(
+                                viewModel = headerViewModel,
+                                modifier = Modifier.padding(horizontal = 16.dp),
+                            )
+                        }
                     }
                     Spacer(modifier = Modifier.height(16.dp))
                     QuickSettingsContent(
