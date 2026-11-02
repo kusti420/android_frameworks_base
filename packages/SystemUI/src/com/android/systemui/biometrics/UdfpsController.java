@@ -1503,6 +1503,11 @@ public class UdfpsController implements DozeReceiver, Dumpable {
      * low brightness.
      */
     private int computeAutoDimAlpha() {
+        // IchthysOS: a measured calibration table wins over every model (calibratedDimAlpha).
+        final int calibrated = calibratedDimAlpha();
+        if (calibrated >= 0) {
+            return calibrated;
+        }
         // IchthysOS 2026-11-02: One UI's own model for this device (stock A52s BiometricSetting,
         // UdfpsMaskWindow.updateBackgroundColor fallback): the panel's light at brightness level
         // bl (0..255) is 1.644*bl - (bl <= 128 ? 0.23*bl - 2 : (255 - bl) * 0.215) nits, the
@@ -1510,8 +1515,12 @@ public class UdfpsController implements DozeReceiver, Dumpable {
         // Tunable from adb: Global ichthys_udfps_hbm_nits (525), ichthys_udfps_gamma (1.85).
         if (android.provider.Settings.Global.getInt(
                 mContext.getContentResolver(), "ichthys_udfps_model", 1) == 1) {
-            final float bl = Math.max(0f, Math.min(1f,
-                    mDimDisplayManager.getBrightness(Display.DEFAULT_DISPLAY))) * 255f;
+            // IchthysOS: One UI's bl is the panel level (the backlight node). Here the composer
+            // writes level = f * 485 + 1 (0..486, 255 = top of the normal range, 420 nits), so
+            // the float maps onto that scale, capped at the normal range the model covers.
+            final float f = Math.max(0f, Math.min(1f,
+                    mDimDisplayManager.getBrightness(Display.DEFAULT_DISPLAY)));
+            final float bl = Math.min(255f, f * 485f + 1f);
             final float sub = bl <= 128f ? 0.23f * bl - 2f : (255f - bl) * 0.215f;
             final float current = 1.644f * bl - sub;
             final float optical = android.provider.Settings.Global.getFloat(
@@ -1572,6 +1581,86 @@ public class UdfpsController implements DozeReceiver, Dumpable {
         }
     }
 
+    /**
+     * IchthysOS: the dim alpha from the camera calibration table, or -1 when there is none.
+     *
+     * <p>Settings.Global {@code ichthys_udfps_cal_alpha} = "brightness:alpha,..." (e.g.
+     * "8:213,128:150,230:90"), brightness in Android's 0..255 setting unit (screen_brightness;
+     * float f = (v - 1) / 254), alpha 0..255. Interpolated linearly in brightness between the two
+     * nearest entries, clamped to the end entries. It must hold, per brightness, the alpha the
+     * display HAL's mask curve for that brightness (persist.ichthys.udfps_lut*, levels in
+     * persist.ichthys.udfps_lut_bl, same unit) was recorded with: the curve maps the codes
+     * composed under that dim, so a different alpha invalidates it. Malformed entries are skipped.
+     */
+    private int calibratedDimAlpha() {
+        final String table = android.provider.Settings.Global.getString(
+                mContext.getContentResolver(), "ichthys_udfps_cal_alpha");
+        if (table == null || table.trim().isEmpty()) {
+            return -1;
+        }
+        final java.util.TreeMap<Float, Float> points = new java.util.TreeMap<>();
+        for (String entry : table.split(",")) {
+            final int colon = entry.indexOf(':');
+            if (colon <= 0) {
+                continue;
+            }
+            try {
+                final float level = Float.parseFloat(entry.substring(0, colon).trim());
+                final float alpha = Float.parseFloat(entry.substring(colon + 1).trim());
+                if (level >= 0f && alpha >= 0f && alpha <= 255f) {
+                    points.put(level, alpha);
+                }
+            } catch (NumberFormatException e) {
+                // IchthysOS: skip a malformed entry, keep the rest of the table
+            }
+        }
+        if (points.isEmpty()) {
+            return -1;
+        }
+        final float level = currentBrightnessSetting();
+        final java.util.Map.Entry<Float, Float> lo = points.floorEntry(level);
+        final java.util.Map.Entry<Float, Float> hi = points.ceilingEntry(level);
+        final float alpha;
+        if (lo == null) {
+            alpha = hi.getValue();
+        } else if (hi == null || hi.getKey().equals(lo.getKey())) {
+            alpha = lo.getValue();
+        } else {
+            final float t = (level - lo.getKey()) / (hi.getKey() - lo.getKey());
+            alpha = lo.getValue() + (hi.getValue() - lo.getValue()) * t;
+        }
+        final int result = Math.max(0, Math.min(255, Math.round(alpha)));
+        Log.i(TAG, "udfps cal alpha: brightness=" + level + " -> alpha=" + result);
+        return result;
+    }
+
+    /**
+     * IchthysOS: the screen brightness in Android's 0..255 setting unit (1 + 254 * f), from the
+     * brightness actually applied (BrightnessInfo.adjustedBrightness: after auto-brightness and
+     * the dim before screen-off), which is what the display HAL sees in the panel's backlight node
+     * when it picks the mask curve. Falls back to the brightness setting.
+     */
+    private float currentBrightnessSetting() {
+        float f = Float.NaN;
+        try {
+            final Display display = mDimDisplayManager.getDisplay(Display.DEFAULT_DISPLAY);
+            final android.hardware.display.BrightnessInfo info =
+                    display != null ? display.getBrightnessInfo() : null;
+            if (info != null) {
+                f = info.adjustedBrightness;
+            }
+        } catch (RuntimeException e) {
+            Log.w(TAG, "currentBrightnessSetting: no BrightnessInfo", e);
+        }
+        if (!(f >= 0f && f <= 1f)) {
+            f = mDimDisplayManager.getBrightness(Display.DEFAULT_DISPLAY);
+        }
+        if (!(f >= 0f)) {
+            return 0f;
+        }
+        return 1f + 254f * Math.min(1f, f);
+    }
+
     /** Linear interpolation of the backlight -> nits table at [level]. */
     private static float nitsAt(float level, int[] backlight, float[] nits) {
         if (level <= backlight[0]) {
@@ -1616,6 +1705,8 @@ public class UdfpsController implements DozeReceiver, Dumpable {
             // the HBM on), so a pinned alpha wins, otherwise nits-matched; never fully transparent
             // (alpha 1 when already brighter than the mask level: invisible, still a layer).
             // Settings.Global ichthys_udfps_dim_alpha (> 0) pins it for live calibration from adb.
+            // IchthysOS: unpinned, computeAutoDimAlpha takes the calibration table
+            // (Settings.Global ichthys_udfps_cal_alpha) when set, else the One UI model.
             final int pinned = android.provider.Settings.Global.getInt(
                     mContext.getContentResolver(), "ichthys_udfps_dim_alpha", 0);
             alpha = Math.max(1, pinned > 0 ? pinned
