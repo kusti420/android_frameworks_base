@@ -1563,6 +1563,7 @@ public class UdfpsController implements DozeReceiver, Dumpable {
     private static final int DEFAULT_DIM_ALPHA = 180;
 
     private void showDimLayer() {
+        mDimHideToken++; // IchthysOS: a deferred removal still pending must keep the dim now
         if (mFodDimView != null) {
             return;
         }
@@ -1625,6 +1626,7 @@ public class UdfpsController implements DozeReceiver, Dumpable {
     }
 
     private void hideDimLayer() {
+        mDimHideToken++;
         if (mFodDimView == null) {
             return;
         }
@@ -1650,9 +1652,29 @@ public class UdfpsController implements DozeReceiver, Dumpable {
         // Only tear the dim down here when it is NOT session-held; otherwise it
         // is removed once at hideUdfpsOverlay so it never flashes per touch.
         if (!isDimSessionHeld()) {
-            hideDimLayer();
+            if (isUdfpsSync() && mFodDimView != null) {
+                // IchthysOS: in sync mode the dim IS the mask HBM switch. A failed capture ("bad
+                // quality") makes the sensor report the finger as lifted and the retry re-touches
+                // ~150 ms later; tearing the dim down in between switched dim + HBM off and on
+                // again, a visible flicker while the finger was held. Keep it a moment: a new
+                // touch reuses it (showDimLayer returns early), otherwise it goes, together with
+                // the HBM, on one frame.
+                final int token = ++mDimHideToken;
+                mFgExecutor.executeDelayed(() -> {
+                    if (token == mDimHideToken && mIlluminationView == null) {
+                        hideDimLayer();
+                    }
+                }, DIM_RETOUCH_GRACE_MS);
+            } else {
+                hideDimLayer();
+            }
         }
     }
+
+    /** IchthysOS: how long the sync-mode dim outlives a lifted finger (see hideIlluminationOverlay). */
+    private static final long DIM_RETOUCH_GRACE_MS = 300;
+    /** Bumped by every deferred dim removal and by showDimLayer, so a stale removal does nothing. */
+    private int mDimHideToken;
 
     /**
      * Callback for fingerUp and fingerDown events.
