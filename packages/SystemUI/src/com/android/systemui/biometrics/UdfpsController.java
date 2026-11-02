@@ -1528,7 +1528,11 @@ public class UdfpsController implements DozeReceiver, Dumpable {
             }
             // A black layer at alpha a scales the sRGB value by (1 - a); the light by about
             // (1 - a)^2.2. Solve (1 - a)^2.2 * hbm = current.
-            final double keep = Math.pow(current / hbm, 1.0 / 2.2);
+            // IchthysOS: the panel's gamma, Settings.Global ichthys_udfps_gamma for live
+            // calibration (default 2.2).
+            final float gamma = android.provider.Settings.Global.getFloat(
+                    mContext.getContentResolver(), "ichthys_udfps_gamma", 2.2f);
+            final double keep = Math.pow(current / hbm, 1.0 / Math.max(1f, gamma));
             final int alpha = (int) Math.round((1.0 - keep) * 255.0);
             // Never fully black: the user must still see the lock screen / enrolment UI.
             return Math.max(0, Math.min(MAX_AUTO_DIM_ALPHA, alpha));
