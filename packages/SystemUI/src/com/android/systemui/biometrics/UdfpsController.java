@@ -1515,12 +1515,11 @@ public class UdfpsController implements DozeReceiver, Dumpable {
         // Tunable from adb: Global ichthys_udfps_hbm_nits (525), ichthys_udfps_gamma (1.85).
         if (android.provider.Settings.Global.getInt(
                 mContext.getContentResolver(), "ichthys_udfps_model", 1) == 1) {
-            // IchthysOS: One UI's bl is the panel level (the backlight node). Here the composer
-            // writes level = f * 485 + 1 (0..486, 255 = top of the normal range, 420 nits), so
-            // the float maps onto that scale, capped at the normal range the model covers.
-            final float f = Math.max(0f, Math.min(1f,
-                    mDimDisplayManager.getBrightness(Display.DEFAULT_DISPLAY)));
-            final float bl = Math.min(255f, f * 485f + 1f);
+            // IchthysOS: One UI's bl is 0..255 over the normal range (1.644 * 255 = 420 nits, the
+            // top of config_screenBrightnessNits). The measured best alpha at slider 8 and 22
+            // (213, 199) matches this scale, not the 0..486 HBM-inclusive panel level.
+            final float bl = Math.max(0f, Math.min(1f,
+                    mDimDisplayManager.getBrightness(Display.DEFAULT_DISPLAY))) * 255f;
             final float sub = bl <= 128f ? 0.23f * bl - 2f : (255f - bl) * 0.215f;
             final float current = 1.644f * bl - sub;
             final float optical = android.provider.Settings.Global.getFloat(
@@ -1709,9 +1708,17 @@ public class UdfpsController implements DozeReceiver, Dumpable {
             // (Settings.Global ichthys_udfps_cal_alpha) when set, else the One UI model.
             final int pinned = android.provider.Settings.Global.getInt(
                     mContext.getContentResolver(), "ichthys_udfps_dim_alpha", 0);
-            alpha = Math.max(1, pinned > 0 ? pinned
-                    : configured > 0 ? configured : computeAutoDimAlpha());
-            Log.i(TAG, "udfps_sync dim: alpha=" + alpha + " (pinned=" + pinned + ")");
+            if (isUdfpsModelActive()) {
+                // IchthysOS: the display HAL's parametric mask curve (persist.ichthys.udfps_model)
+                // does all the darkening in 10 bits; the dim is only the small separator that
+                // keeps the content below the illumination disc's code.
+                alpha = udfpsSeparatorAlpha();
+                Log.i(TAG, "udfps_sync dim: separator alpha=" + alpha + " (model curve)");
+            } else {
+                alpha = Math.max(1, pinned > 0 ? pinned
+                        : configured > 0 ? configured : computeAutoDimAlpha());
+                Log.i(TAG, "udfps_sync dim: alpha=" + alpha + " (pinned=" + pinned + ")");
+            }
         }
         if (alpha <= 0) {
             return;
@@ -1742,6 +1749,11 @@ public class UdfpsController implements DozeReceiver, Dumpable {
             dimParams.setTitle(sync ? UDFPS_MASK_WINDOW_TITLE : "UdfpsFodDimLayer");
             dimParams.privateFlags = WindowManager.LayoutParams.PRIVATE_FLAG_TRUSTED_OVERLAY;
 
+            if (sync) {
+                // IchthysOS: tell the display HAL the dim this mask window carries, before the
+                // window exists, so its first frame's curve is built for it.
+                publishAppliedDimAlpha(Math.min(alpha, 255));
+            }
             mWindowManager.addView(dimView, dimParams);
             mFodDimView = dimView;
             Log.e(TAG, "showDimLayer | added, alpha=" + alpha + (sync ? " (udfps_sync mask)" : ""));
@@ -1793,6 +1805,96 @@ public class UdfpsController implements DozeReceiver, Dumpable {
             } else {
                 hideDimLayer();
             }
+        }
+    }
+
+    /** IchthysOS: the display HAL's parametric mask curve model (hw_device_drm.cpp). */
+    private static final String PROP_UDFPS_MODEL = "persist.ichthys.udfps_model";
+    /** IchthysOS: the separator's keep factor, read by the display HAL too (default 0.94). */
+    private static final String PROP_UDFPS_SEP_KEEP = "persist.ichthys.udfps_sep_keep";
+    /** IchthysOS: the dim alpha the current mask window carries, for the display HAL. */
+    private static final String PROP_UDFPS_APPLIED_ALPHA = "ichthys.udfps_applied_alpha";
+    private static final double DEFAULT_SEP_KEEP = 0.94;
+    private static final String UDFPS_LUT_B64 =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+    /**
+     * IchthysOS: whether the display HAL uses its parametric mask curve, exactly its rule:
+     * {@code persist.ichthys.udfps_model} holds 12 finite numbers (|v| <= 100, separated by spaces,
+     * commas or tabs) and no knot calibration point (persist.ichthys.udfps_lut_{r,g,b},
+     * udfps_lut1..3_*) has all three props valid (66 base64url characters each); knots win.
+     */
+    private static boolean isUdfpsModelActive() {
+        final String model = SystemProperties.get(PROP_UDFPS_MODEL, "")
+                .replaceAll("^[ ,\\t]+|[ ,\\t]+$", "");
+        if (model.isEmpty()) {
+            return false;
+        }
+        final String[] fields = model.split("[ ,\\t]+");
+        if (fields.length != 12) {
+            return false;
+        }
+        for (String field : fields) {
+            // Plain decimals only (a subset of what the HAL's strtod takes), so SystemUI never
+            // switches to the separator while the HAL still rejects the model.
+            if (!field.matches("[+-]?(\\d+\\.?\\d*|\\.\\d+)([eE][+-]?\\d+)?")
+                    || !(Math.abs(Double.parseDouble(field)) <= 100.0)) {
+                return false;
+            }
+        }
+        for (int point = 0; point < 4; point++) {
+            final String prefix = "persist.ichthys.udfps_lut" + (point == 0 ? "" : point) + "_";
+            if (isUdfpsKnotProp(prefix + "r") && isUdfpsKnotProp(prefix + "g")
+                    && isUdfpsKnotProp(prefix + "b")) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isUdfpsKnotProp(String name) {
+        final String value = SystemProperties.get(name, "");
+        if (value.length() != 66) {
+            return false;
+        }
+        for (int i = 0; i < value.length(); i++) {
+            if (UDFPS_LUT_B64.indexOf(value.charAt(i)) < 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * IchthysOS: the separator dim for the parametric mask curve. Settings.Global
+     * {@code ichthys_udfps_sep_alpha} (1..255) pins it; otherwise from
+     * {@code persist.ichthys.udfps_sep_keep} (0.5..1, default 0.94) as
+     * max(1, round((1 - keep) * 255)), the same formula the display HAL falls back to.
+     */
+    private int udfpsSeparatorAlpha() {
+        final int pinned = android.provider.Settings.Global.getInt(
+                mContext.getContentResolver(), "ichthys_udfps_sep_alpha", 0);
+        if (pinned > 0) {
+            return Math.min(255, pinned);
+        }
+        double keep = DEFAULT_SEP_KEEP;
+        try {
+            final double v = Double.parseDouble(SystemProperties.get(PROP_UDFPS_SEP_KEEP, ""));
+            if (!Double.isNaN(v) && !Double.isInfinite(v)) {
+                keep = Math.max(0.5, Math.min(1.0, v));
+            }
+        } catch (NumberFormatException e) {
+            // IchthysOS: unset or malformed, keep the default
+        }
+        return (int) Math.max(1, Math.round((1.0 - keep) * 255.0));
+    }
+
+    /** IchthysOS: publishes the mask window's dim alpha for the display HAL's model curve. */
+    private static void publishAppliedDimAlpha(int alpha) {
+        try {
+            SystemProperties.set(PROP_UDFPS_APPLIED_ALPHA, Integer.toString(alpha));
+        } catch (RuntimeException e) {
+            Log.w(TAG, "publishAppliedDimAlpha failed", e);
         }
     }
 
