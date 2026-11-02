@@ -1475,6 +1475,14 @@ public class UdfpsController implements DozeReceiver, Dumpable {
 
     private int getCircleColor() {
         try {
+            // IchthysOS: Settings.Global ichthys_udfps_light_color ("RRGGBB" or "AARRGGBB") wins,
+            // so the light source can be switched from adb (One UI lights this sensor with
+            // #00ff00, its calibration colour).
+            final String g = android.provider.Settings.Global.getString(
+                    mContext.getContentResolver(), "ichthys_udfps_light_color");
+            if (g != null && (g.length() == 6 || g.length() == 8)) {
+                return (int) Long.parseLong(g.length() == 6 ? "FF" + g : g, 16);
+            }
             return (int) Long.parseLong(
                     SystemProperties.get(PROP_CIRCLE_COLOR, "FFFFFFFF"), 16);
         } catch (NumberFormatException e) {
@@ -1495,6 +1503,28 @@ public class UdfpsController implements DozeReceiver, Dumpable {
      * low brightness.
      */
     private int computeAutoDimAlpha() {
+        // IchthysOS 2026-11-02: One UI's own model for this device (stock A52s BiometricSetting,
+        // UdfpsMaskWindow.updateBackgroundColor fallback): the panel's light at brightness level
+        // bl (0..255) is 1.644*bl - (bl <= 128 ? 0.23*bl - 2 : (255 - bl) * 0.215) nits, the
+        // optical mask level is 525 nits, alpha = 1 - (current / 525)^(1 / 1.85), capped at 0.93.
+        // Tunable from adb: Global ichthys_udfps_hbm_nits (525), ichthys_udfps_gamma (1.85).
+        if (android.provider.Settings.Global.getInt(
+                mContext.getContentResolver(), "ichthys_udfps_model", 1) == 1) {
+            final float bl = Math.max(0f, Math.min(1f,
+                    mDimDisplayManager.getBrightness(Display.DEFAULT_DISPLAY))) * 255f;
+            final float sub = bl <= 128f ? 0.23f * bl - 2f : (255f - bl) * 0.215f;
+            final float current = 1.644f * bl - sub;
+            final float optical = android.provider.Settings.Global.getFloat(
+                    mContext.getContentResolver(), "ichthys_udfps_hbm_nits", 525f);
+            final float gamma = android.provider.Settings.Global.getFloat(
+                    mContext.getContentResolver(), "ichthys_udfps_gamma", 1.85f);
+            if (current >= optical) {
+                return 0;
+            }
+            final double a = 1.0 - Math.pow(Math.max(0f, current) / optical,
+                    1.0 / Math.max(1f, gamma));
+            return (int) Math.round(Math.min(0.93, a) * 255.0);
+        }
         try {
             // The panel's backlight -> nits table (the one DisplayDeviceConfig splines), so the
             // dim is computed in light, not in slider units: slider 50 % is ~170 nits here, not
