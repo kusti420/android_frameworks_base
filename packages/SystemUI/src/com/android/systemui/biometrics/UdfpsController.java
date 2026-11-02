@@ -1517,8 +1517,12 @@ public class UdfpsController implements DozeReceiver, Dumpable {
             final float current = nitsAt(brightness * maxBacklight, backlight, nits);
             // What the panel shows while the fingerprint mask is on: the HAL writes
             // mask_brightness = hbm_level (331 on this panel = 547 nits in the same table).
-            final int hbmLevel = SystemProperties.getInt(PROP_HBM_LEVEL, DEFAULT_HBM_LEVEL);
-            final float hbm = nitsAt(hbmLevel, backlight, nits);
+            // IchthysOS 2026-11-02: the mask level (331) lies above this table's end (255 = 420
+            // nits), so looking it up returned 420 and under-dimmed. The mask's light is given in
+            // nits instead: Settings.Global ichthys_udfps_hbm_nits (writable from adb shell for live
+            // calibration), default 547.
+            final float hbm = android.provider.Settings.Global.getFloat(
+                    mContext.getContentResolver(), "ichthys_udfps_hbm_nits", DEFAULT_HBM_NITS);
             if (hbm <= 0f || current >= hbm) {
                 return 0; // already brighter than the mask level: nothing to hide
             }
@@ -1552,6 +1556,8 @@ public class UdfpsController implements DozeReceiver, Dumpable {
     /** IchthysOS: the mask_brightness level the fingerprint HAL writes (Session.cpp setHBM). */
     private static final String PROP_HBM_LEVEL = "persist.sys.udfps.hbm_level";
     private static final int DEFAULT_HBM_LEVEL = 331;
+    /** IchthysOS: the panel's light while the fingerprint mask HBM is on (mask level 331). */
+    private static final float DEFAULT_HBM_NITS = 547f;
     /** The darkest the auto dim goes: alpha 245 keeps ~1 % of the light, enough to see the UI. */
     private static final int MAX_AUTO_DIM_ALPHA = 245;
     private static final int DEFAULT_DIM_ALPHA = 180;
@@ -1574,7 +1580,12 @@ public class UdfpsController implements DozeReceiver, Dumpable {
             // IchthysOS: the mask window must exist whenever the finger is down (it is what turns
             // the HBM on), so a pinned alpha wins, otherwise nits-matched; never fully transparent
             // (alpha 1 when already brighter than the mask level: invisible, still a layer).
-            alpha = Math.max(1, configured > 0 ? configured : computeAutoDimAlpha());
+            // Settings.Global ichthys_udfps_dim_alpha (> 0) pins it for live calibration from adb.
+            final int pinned = android.provider.Settings.Global.getInt(
+                    mContext.getContentResolver(), "ichthys_udfps_dim_alpha", 0);
+            alpha = Math.max(1, pinned > 0 ? pinned
+                    : configured > 0 ? configured : computeAutoDimAlpha());
+            Log.i(TAG, "udfps_sync dim: alpha=" + alpha + " (pinned=" + pinned + ")");
         }
         if (alpha <= 0) {
             return;
