@@ -64,6 +64,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -88,6 +89,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import com.android.internal.jank.InteractionJankMonitor
+import com.android.settingslib.ichthys.ShoalContrast
 import com.android.systemui.animation.DialogCuj
 import com.android.systemui.animation.DialogTransitionAnimator
 import com.android.systemui.animation.Expandable
@@ -186,6 +188,12 @@ class IchthysDialogTokens(
     val accent: Color,
     val onAccent: Color,
     val accentFill: Color,
+    /**
+     * IchthysOS: the accent as a glyph or thin mark (slider thumb, dialog icon): contrast-guarded
+     * against the dialog card, the track and the fill tint, so a dark accent shows as a lighter
+     * tone of itself. [accent] stays for fills (with [onAccent] on them).
+     */
+    val accentMark: Color,
     val radiusSmall: Dp,
     val hairlineWidth: Dp,
     val textFont: FontFamily,
@@ -202,6 +210,18 @@ fun rememberIchthysDialogTokens(): IchthysDialogTokens {
     val accent = colorResource(com.android.internal.R.color.ichthys_accent)
     val onAccent = colorResource(com.android.internal.R.color.ichthys_on_accent)
     val accentFill = colorResource(com.android.internal.R.color.ichthys_accent_fill)
+    val card = colorResource(com.android.internal.R.color.ichthys_card)
+    val accentMark =
+        remember(accent, card, track, accentFill) {
+            Color(
+                ShoalContrast.forGraphic(
+                    accent.toArgb(),
+                    card.toArgb(),
+                    track.toArgb(),
+                    accentFill.toArgb(),
+                )
+            )
+        }
     val radiusSmall = dimensionResource(com.android.internal.R.dimen.ichthys_radius_small)
     val hairlineWidth = dimensionResource(com.android.internal.R.dimen.ichthys_hairline_width)
     val fonts =
@@ -223,6 +243,7 @@ fun rememberIchthysDialogTokens(): IchthysDialogTokens {
         accent = accent,
         onAccent = onAccent,
         accentFill = accentFill,
+        accentMark = accentMark,
         radiusSmall = radiusSmall,
         hairlineWidth = hairlineWidth,
         textFont = fonts.first,
@@ -434,7 +455,7 @@ fun IchthysPillSlider(
                         val tw = ThumbWidth.toPx()
                         val inset = ThumbInset.toPx()
                         drawRoundRect(
-                            color = thumbColor ?: tokens.accent,
+                            color = thumbColor ?: tokens.accentMark,
                             topLeft = Offset(x - tw / 2f, inset),
                             size = Size(tw, h - inset * 2f),
                             cornerRadius = CornerRadius(tw / 2f),

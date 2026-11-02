@@ -39,6 +39,7 @@ import android.view.animation.Interpolator;
 
 import com.android.app.animation.Interpolators;
 import com.android.settingslib.Utils;
+import com.android.settingslib.ichthys.ShoalContrast;
 import com.android.systemui.navigationbar.views.buttons.ButtonInterface;
 import com.android.systemui.navigationbar.views.buttons.IchthysNavStyle;
 import com.android.systemui.res.R;
@@ -217,15 +218,19 @@ public class NavigationHandle extends View implements ButtonInterface {
             final float ichY = navHeight - mBottom - ichHeight + (additionalHeight / 2);
             final float ichRadius = ichHeight / 2;
             final int alpha = Math.round(255 * mStyleOpacity);
-            mIchthysPaint.setColor(IchthysNavStyle.mix(mIchthysTrackDark,
-                    mIchthysTrackLight, mIchthysDarkIntensity));
+            final int track = IchthysNavStyle.mix(mIchthysTrackDark, mIchthysTrackLight,
+                    mIchthysDarkIntensity);
+            mIchthysPaint.setColor(track);
             mIchthysPaint.setAlpha(alpha);
             canvas.drawRoundRect(x, ichY, width, ichY + ichHeight, ichRadius, ichRadius,
                     mIchthysPaint);
             final float cx = (x + width) / 2f;
             final float half = Math.min(11 * dp, (width - x) / 2f);
-            mIchthysPaint.setColor(mIchthysAccent);
-            mIchthysPaint.setAlpha(Math.round(Color.alpha(mIchthysAccent) * mStyleOpacity));
+            // IchthysOS: the accent segment is a thin indicator on the track: contrast-guarded
+            // against it, so a dark accent shows as a lighter tone of itself.
+            final int segment = ShoalContrast.forGraphic(mIchthysAccent, track);
+            mIchthysPaint.setColor(segment);
+            mIchthysPaint.setAlpha(Math.round(Color.alpha(segment) * mStyleOpacity));
             canvas.drawRoundRect(cx - half, ichY, cx + half, ichY + ichHeight, ichRadius,
                     ichRadius, mIchthysPaint);
             return;

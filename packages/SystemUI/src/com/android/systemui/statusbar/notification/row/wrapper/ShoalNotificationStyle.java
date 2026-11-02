@@ -30,6 +30,7 @@ import android.widget.ImageView;
 import android.widget.TextView;
 
 import com.android.internal.widget.EmphasizedNotificationButton;
+import com.android.settingslib.ichthys.ShoalContrast;
 import com.android.systemui.shade.ui.ShoalShade;
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow;
 
@@ -205,8 +206,13 @@ final class ShoalNotificationStyle {
         if (disc == null || glyph == null || glyph instanceof AdaptiveIconDrawable) {
             return;
         }
-        disc.mutate().setColorFilter(ShoalShade.accentTint(context), PorterDuff.Mode.SRC_ATOP);
-        glyph.mutate().setColorFilter(ShoalShade.accent(context), PorterDuff.Mode.SRC_ATOP);
+        final int discColor = ShoalShade.accentTint(context);
+        disc.mutate().setColorFilter(discColor, PorterDuff.Mode.SRC_ATOP);
+        // IchthysOS: the accent glyph on its accent-tinted disc, contrast-guarded against the
+        // disc (a dark accent's glyph sank into its own dark tint).
+        glyph.mutate().setColorFilter(
+                ShoalContrast.forGraphic(ShoalShade.accent(context), discColor),
+                PorterDuff.Mode.SRC_ATOP);
     }
 
     private static void styleAction(View v, Context context) {

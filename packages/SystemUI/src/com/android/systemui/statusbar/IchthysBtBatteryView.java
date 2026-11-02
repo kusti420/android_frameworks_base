@@ -34,6 +34,7 @@ import android.view.View;
 
 import com.android.settingslib.bluetooth.BatteryLevelsInfo;
 import com.android.settingslib.bluetooth.CachedBluetoothDevice;
+import com.android.settingslib.ichthys.ShoalContrast;
 import com.android.settingslib.utils.ThreadUtils;
 import com.android.systemui.Dependency;
 import com.android.systemui.plugins.DarkIconDispatcher.DarkReceiver;
@@ -358,7 +359,11 @@ public class IchthysBtBatteryView extends View implements DarkReceiver,
 
     private void updateColors() {
         final int accent = getContext().getColor(android.R.color.system_accent1_400);
-        mRingPaint.setColor(accent);
+        // IchthysOS: the ring is a thin accent outline on whatever the bar sits on; that ground
+        // is the opposite of the content tint (light tint = dark ground). Contrast-guarded, so a
+        // dark accent is lifted to a lighter tone of itself instead of sinking into a dark bar.
+        mRingPaint.setColor(
+                ShoalContrast.forGraphic(accent, ShoalContrast.onFill(mContentTint)));
         mGlyphPaint.setColor(mContentTint);
         mTextPaint.setColor(mContentTint);
     }

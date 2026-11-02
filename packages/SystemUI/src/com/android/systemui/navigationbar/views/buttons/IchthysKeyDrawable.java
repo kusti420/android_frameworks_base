@@ -27,6 +27,8 @@ import android.graphics.Typeface;
 import android.util.TypedValue;
 import android.view.View;
 
+import com.android.settingslib.ichthys.ShoalContrast;
+
 /**
  * IchthysOS navbar key art (shoal / lattice / mono), drawn in code.
  *
@@ -246,8 +248,11 @@ public class IchthysKeyDrawable extends KeyButtonDrawable {
         final int card = pressed(c(mTokens.cardDark, mTokens.cardLight));
         fill(canvas, cx, cy, r, card);
         if (mKey == KEY_HOME) {
-            ring(canvas, cx, cy, r, mAccent, hair);
-            fill(canvas, cx, cy, dp(5.5f), mAccent);
+            // IchthysOS: a 1 dp ring and a small dot in the accent on the key's card: contrast-
+            // guarded against that card, so a dark accent is drawn in a lighter tone of itself.
+            final int mark = ShoalContrast.forGraphic(mAccent, card);
+            ring(canvas, cx, cy, r, mark, hair);
+            fill(canvas, cx, cy, dp(5.5f), mark);
             return;
         }
         ring(canvas, cx, cy, r, c(mTokens.hairlineDark, mTokens.hairlineLight), hair);
@@ -308,7 +313,10 @@ public class IchthysKeyDrawable extends KeyButtonDrawable {
             mRect.set(b.left, cy - dp(13), b.right, cy + dp(13));
             canvas.drawRoundRect(mRect, dp(13), dp(13), mFill);
         }
-        mText.setColor(mKey == KEY_HOME ? mAccent
+        // IchthysOS: the accent "home" label is text on the bar's ground (ink, or the light ink
+        // on a light bar): contrast-guarded against it.
+        mText.setColor(mKey == KEY_HOME
+                ? ShoalContrast.forText(mAccent, c(mTokens.ink, mTokens.cardLight))
                 : c(mTokens.mutedDark, mTokens.mutedLight));
         applyAlpha(mText);
         final Paint.FontMetrics fm = mText.getFontMetrics();

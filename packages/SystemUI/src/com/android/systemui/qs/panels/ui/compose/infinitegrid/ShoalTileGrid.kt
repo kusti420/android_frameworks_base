@@ -396,7 +396,10 @@ private data class ShoalTileColors(val background: Color, val content: Color)
 
 private fun shoalTileColors(uiState: TileUiState, accent: Color): ShoalTileColors =
     when (uiState.visualState) {
-        STATE_ACTIVE -> ShoalTileColors(accent, ShoalQsColors.OnAccent)
+        // IchthysOS: the glyph and label on the accent fill are chosen against the fill itself
+        // (the raw seed), not the on-accent token, which follows the contrast-adjusted token
+        // accent and can differ from it for a very dark or very light seed.
+        STATE_ACTIVE -> ShoalTileColors(accent, shoalOnFill(accent))
         STATE_UNAVAILABLE ->
             ShoalTileColors(
                 ShoalQsColors.TileOff.copy(alpha = 0.55f),

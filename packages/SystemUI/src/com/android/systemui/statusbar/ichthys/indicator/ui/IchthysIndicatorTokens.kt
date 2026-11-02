@@ -18,6 +18,7 @@ package com.android.systemui.statusbar.ichthys.indicator.ui
 
 import android.content.Context
 import androidx.annotation.ColorInt
+import com.android.settingslib.ichthys.ShoalContrast
 import com.android.systemui.privacy.PrivacyConfig
 import com.android.systemui.privacy.PrivacyType
 import com.android.systemui.res.R
@@ -93,7 +94,10 @@ object IchthysIndicatorTokens {
     @ColorInt
     fun privacyTypeColor(context: Context, type: PrivacyType): Int =
         when (type) {
-            PrivacyType.TYPE_MICROPHONE -> accent(context)
+            // IchthysOS: a thin ring around the (black) camera cutout: contrast-guarded against
+            // black, so a dark accent's ring is drawn in a lighter tone of itself.
+            PrivacyType.TYPE_MICROPHONE ->
+                ShoalContrast.forGraphic(accent(context), android.graphics.Color.BLACK)
             PrivacyType.TYPE_LOCATION ->
                 context.getColor(R.color.privacy_chip_location_only_background)
             else -> context.getColor(R.color.privacy_chip_background)

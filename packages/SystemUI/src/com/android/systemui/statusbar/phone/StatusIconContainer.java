@@ -134,7 +134,6 @@ public class StatusIconContainer extends AlphaOptimizedLinearLayout {
         mZzRingPaint.setStyle(Style.STROKE);
         mZzRingPaint.setStrokeWidth(
                 Math.max(1f, 0.75f * getResources().getDisplayMetrics().density));
-        IchthysZigzag.tintPaint(mZzGlyphPaint, IchthysZigzag.GLYPH_ON_ACCENT);
         updateZigzagColors();
         mZigzag = readZigzag();
     }
@@ -200,6 +199,8 @@ public class StatusIconContainer extends AlphaOptimizedLinearLayout {
     /** The accent follows the system (Monet) accent, which the ichthys theme engine drives. */
     private void updateZigzagColors() {
         mZzAccent = IchthysZigzag.accent(getContext());
+        // IchthysOS: the glyph on an active (accent) disc follows the disc's contrast.
+        IchthysZigzag.tintPaint(mZzGlyphPaint, IchthysZigzag.glyphOnAccent(mZzAccent));
     }
 
     @Override

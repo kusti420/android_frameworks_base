@@ -58,6 +58,7 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.colorResource
@@ -76,6 +77,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.android.systemui.brightness.QsSliderShape
+import com.android.settingslib.ichthys.ShoalContrast
 import com.android.systemui.compose.modifiers.sysuiResTag
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalQsFonts
 import com.android.systemui.qs.tiles.dialog.colordisplay.IchthysNightLightController
@@ -487,7 +489,7 @@ private class ShoalBrightnessColors(
     val label: Color,
     /** The percentage. */
     val value: Color,
-    /** Sun glyph, floor bar, active pill. */
+    /** IchthysOS: fill of an accent-filled pill (foregrounds: [accentText], [accentGraphic]). */
     val accent: Color,
     /** Text on an accent-filled pill. */
     val onAccent: Color,
@@ -495,6 +497,21 @@ private class ShoalBrightnessColors(
     val fill: Color,
     /** Part of the track below the auto-brightness floor. */
     val belowFloor: Color,
+    /**
+     * IchthysOS: the accent as the outline, glyph and text of an active outlined pill on the
+     * ground: [accent] when it already reads there, else a lighter (darker in light theme) tone
+     * of it that reaches ShoalContrast.TEXT (a dark accent such as indigo sank into the ink).
+     */
+    val accentText: Color,
+    /** IchthysOS: [accentText] for a disabled pill: quieter, but never below 3:1. */
+    val accentDimmed: Color,
+    /** IchthysOS: [label] for a disabled pill, on the same 3:1 floor. */
+    val labelDimmed: Color,
+    /**
+     * IchthysOS: the accent as the sun glyph and the floor bar inside the track: readable
+     * (ShoalContrast.GRAPHIC) on the track and on both fill tints it can sit on.
+     */
+    val accentGraphic: Color,
 )
 
 @Composable
@@ -505,10 +522,12 @@ private fun rememberShoalBrightnessColors(): ShoalBrightnessColors {
     val label = colorResource(com.android.internal.R.color.ichthys_body)
     val value = colorResource(com.android.internal.R.color.ichthys_muted)
     val accent = colorResource(com.android.internal.R.color.ichthys_accent)
-    val onAccent = colorResource(com.android.internal.R.color.ichthys_on_accent)
     val fill = colorResource(com.android.internal.R.color.ichthys_accent_fill)
     val belowFloor = colorResource(com.android.internal.R.color.ichthys_accent_dim)
-    return remember(ground, track, hairline, label, value, accent, onAccent, fill, belowFloor) {
+    return remember(ground, track, hairline, label, value, accent, fill, belowFloor) {
+        // IchthysOS: accent foregrounds are contrast-guarded against what they are drawn on;
+        // the on-accent text is chosen against the accent fill it actually sits on.
+        val accentText = ShoalContrast.forText(accent.toArgb(), ground.toArgb())
         ShoalBrightnessColors(
             ground = ground,
             track = track,
@@ -516,9 +535,21 @@ private fun rememberShoalBrightnessColors(): ShoalBrightnessColors {
             label = label,
             value = value,
             accent = accent,
-            onAccent = onAccent,
+            onAccent = Color(ShoalContrast.onFill(accent.toArgb())),
             fill = fill,
             belowFloor = belowFloor,
+            accentText = Color(accentText),
+            accentDimmed = Color(ShoalContrast.dimmed(accentText, ground.toArgb())),
+            labelDimmed = Color(ShoalContrast.dimmed(label.toArgb(), ground.toArgb())),
+            accentGraphic =
+                Color(
+                    ShoalContrast.forGraphic(
+                        accent.toArgb(),
+                        track.toArgb(),
+                        fill.toArgb(),
+                        belowFloor.toArgb(),
+                    )
+                ),
         )
     }
 }
@@ -626,7 +657,7 @@ private fun DrawScope.drawShoalTrack(
             )
         }
         drawRoundRect(
-            color = colors.accent,
+            color = colors.accentGraphic,
             topLeft = Offset(cx - mw / 2f, inset),
             size = Size(mw, h - inset * 2f),
             cornerRadius = CornerRadius(mw / 2f),
@@ -636,7 +667,7 @@ private fun DrawScope.drawShoalTrack(
     // Sun glyph at the start.
     val sun = SunSize.toPx()
     val sunCx = if (rtl) w - SunStart.toPx() - sun / 2f else SunStart.toPx() + sun / 2f
-    drawSun(Offset(sunCx, h / 2f), sun, colors.accent, alpha)
+    drawSun(Offset(sunCx, h / 2f), sun, colors.accentGraphic, alpha)
     // Hairline.
     if (hairline > 0f) {
         drawRoundRect(
@@ -687,16 +718,19 @@ private fun ShoalPill(
 ) {
     val shape = RoundedCornerShape(14.dp)
     val fill = filled && active
+    // IchthysOS: an outlined pill is drawn in the contrast-guarded accent, and a disabled one
+    // (the floor pill while auto brightness is off) in its dimmed tone instead of a 40% alpha,
+    // which made a dark accent's "min NN%" vanish into the ink.
     val contentColor =
         when {
-            fill -> colors.onAccent
-            active -> colors.accent
-            else -> colors.label
-        }.copy(alpha = if (enabled) 1f else 0.4f)
+            fill -> colors.onAccent.copy(alpha = if (enabled) 1f else 0.4f)
+            active -> if (enabled) colors.accentText else colors.accentDimmed
+            else -> if (enabled) colors.label else colors.labelDimmed
+        }
     val outline =
         when {
             fill -> Color.Transparent
-            active -> colors.accent
+            active -> if (enabled) colors.accentText else colors.accentDimmed
             else -> colors.hairline
         }
     val outlineWidth = if (active) 1.5.dp else 1.dp

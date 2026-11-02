@@ -32,6 +32,7 @@ import android.view.ViewGroup;
 import android.view.ViewParent;
 import android.widget.ImageView;
 
+import com.android.settingslib.ichthys.ShoalContrast;
 import com.android.systemui.res.R;
 import com.android.systemui.statusbar.StatusBarIconView;
 
@@ -90,6 +91,14 @@ public final class IchthysZigzag {
      */
     public static int accent(Context context) {
         return context.getColor(com.android.internal.R.color.ichthys_accent);
+    }
+
+    /**
+     * IchthysOS: the glyph on an accent disc: the Shoal dark glyph on a light or mid accent,
+     * white on a dark one (indigo, navy), chosen by contrast with the disc.
+     */
+    static int glyphOnAccent(int accent) {
+        return ShoalContrast.onFill(accent) == Color.WHITE ? Color.WHITE : GLYPH_ON_ACCENT;
     }
 
     static float dp(View view, float value) {

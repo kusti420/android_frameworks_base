@@ -101,6 +101,8 @@ import com.android.systemui.qs.panels.ui.compose.infinitegrid.ShoalQsColors
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalAccent
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalQsEnabled
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalQsFonts
+import com.android.systemui.qs.panels.ui.compose.infinitegrid.shoalGraphic
+import com.android.systemui.qs.panels.ui.compose.infinitegrid.shoalOnFill
 import com.android.systemui.res.R
 import kotlinx.coroutines.launch
 
@@ -202,6 +204,11 @@ class IchthysNotesTokens(
     val muted: Color,
     val accent: Color,
     val onAccent: Color,
+    /**
+     * IchthysOS: the accent as a glyph or thin indicator on the panel (pins, the page pill):
+     * [accent] when it reads there, else a contrast-guarded tone of it (dark accents).
+     */
+    val accentMark: Color,
     val dotInactive: Color,
     val display: FontFamily,
     val mono: FontFamily,
@@ -224,7 +231,9 @@ fun rememberIchthysNotesTokens(): IchthysNotesTokens {
             text = ShoalQsColors.Label,
             muted = ShoalQsColors.Muted,
             accent = accent,
-            onAccent = ShoalQsColors.OnAccent,
+            // IchthysOS: chosen against the (raw seed) accent fill it sits on.
+            onAccent = shoalOnFill(accent),
+            accentMark = accent.shoalGraphic(),
             dotInactive = ShoalQsColors.DotInactive,
             display = fonts.display,
             mono = fonts.mono,
@@ -238,6 +247,7 @@ fun rememberIchthysNotesTokens(): IchthysNotesTokens {
             muted = scheme.onSurfaceVariant,
             accent = scheme.primary,
             onAccent = scheme.onPrimary,
+            accentMark = scheme.primary,
             dotInactive = scheme.onSurfaceVariant.copy(alpha = .5f),
             display = FontFamily.Default,
             mono = FontFamily.Monospace,
@@ -366,7 +376,7 @@ private fun IchthysNotesIndicator(
         Icon(
             painter = painterResource(R.drawable.ic_ichthys_pin),
             contentDescription = stringResource(R.string.ichthys_qs_notes_indicator),
-            tint = if (onNotes) tokens.accent else tokens.dotInactive,
+            tint = if (onNotes) tokens.accentMark else tokens.dotInactive,
             modifier =
                 Modifier.clip(CircleShape)
                     .clickable {
@@ -391,7 +401,7 @@ private fun IchthysNotesIndicator(
                             else IchthysQsNotes.INDICATOR_DOT,
                         height = IchthysQsNotes.INDICATOR_DOT,
                     )
-                    .background(if (active) tokens.accent else tokens.dotInactive, CircleShape)
+                    .background(if (active) tokens.accentMark else tokens.dotInactive, CircleShape)
             )
         }
     }
@@ -514,7 +524,7 @@ private fun NotesHeader(count: Int, locked: Boolean, tokens: IchthysNotesTokens)
         Icon(
             painter = painterResource(R.drawable.ic_ichthys_pin),
             contentDescription = null,
-            tint = tokens.accent,
+            tint = tokens.accentMark,
             modifier = Modifier.size(IchthysQsNotes.HEADER_ICON),
         )
         BasicText(
@@ -580,7 +590,7 @@ private fun NotesEmptyState(tokens: IchthysNotesTokens, onClick: () -> Unit) {
             Icon(
                 painter = painterResource(R.drawable.ic_ichthys_pin),
                 contentDescription = null,
-                tint = tokens.accent,
+                tint = tokens.accentMark,
                 modifier = Modifier.size(22.dp),
             )
         }

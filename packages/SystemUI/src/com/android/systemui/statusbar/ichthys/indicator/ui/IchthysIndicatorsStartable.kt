@@ -35,6 +35,7 @@ import com.android.app.animation.Interpolators
 import com.android.app.displaylib.PerDisplayRepository
 import com.android.app.tracing.coroutines.launchTraced as launch
 import com.android.internal.util.ContrastColorUtil
+import com.android.settingslib.ichthys.ShoalContrast
 import com.android.systemui.CoreStartable
 import com.android.systemui.ScreenDecorations
 import com.android.systemui.SysUICutoutProvider
@@ -484,11 +485,11 @@ constructor(
         darkState: DarkState,
     ): Int =
         when (source) {
-            NotificationDotColor.ACCENT -> IchthysIndicatorTokens.accent(context)
+            NotificationDotColor.ACCENT -> accentDot(device, darkState)
             NotificationDotColor.WHITE -> iconTint(device, darkState)
             NotificationDotColor.APP ->
                 appColor?.let { ContrastColorUtil.ensureTextContrastOnBlack(it) }
-                    ?: IchthysIndicatorTokens.accent(context)
+                    ?: accentDot(device, darkState)
             // IchthysOS Default (Sony): an Xperia lights its LED in the colour the notification
             // names, white when it names none. The notification's own colour first (the one it
             // paints its icon with), then the LED colour it or its channel asks for, then white
@@ -500,6 +501,17 @@ constructor(
         }
 
     /** White on the lock screen and the always-on display, the home status bar's tint otherwise. */
+    /**
+     * IchthysOS: the accent dot, contrast-guarded against the ground the icon tint implies (a
+     * light tint means a dark bar): a small dot in a dark accent such as indigo all but vanished
+     * on a dark status bar, so it is drawn in a lighter tone of the accent there.
+     */
+    private fun accentDot(device: DeviceState, darkState: DarkState): Int =
+        ShoalContrast.forGraphic(
+            IchthysIndicatorTokens.accent(context),
+            ShoalContrast.onFill(iconTint(device, darkState)),
+        )
+
     private fun iconTint(device: DeviceState, darkState: DarkState): Int =
         if (device.dozing || device.keyguardShowing) {
             Color.WHITE

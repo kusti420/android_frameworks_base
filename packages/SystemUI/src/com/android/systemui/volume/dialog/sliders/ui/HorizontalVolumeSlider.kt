@@ -58,6 +58,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
@@ -77,6 +78,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.android.settingslib.ichthys.ShoalContrast
 import com.android.systemui.common.ui.compose.Icon
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalQsFonts
 import com.android.systemui.volume.dialog.sliders.ui.viewmodel.VolumeDialogSliderStateModel
@@ -472,7 +474,12 @@ private fun rememberHorizontalVolumeColors(): HorizontalVolumeColors {
     val accent = colorResource(com.android.internal.R.color.ichthys_accent)
     val fill = colorResource(com.android.internal.R.color.ichthys_accent_fill)
     return remember(card, track, hairline, body, muted, accent, fill) {
-        HorizontalVolumeColors(card, track, hairline, body, muted, accent, fill)
+        // IchthysOS: here the accent only ever draws marks (stream icon, line, knob, lit
+        // segments) on the card, the track or the fill tint, never a filled surface, so it is
+        // contrast-guarded against all three: a dark accent is drawn in a lighter tone of itself.
+        val mark =
+            ShoalContrast.forGraphic(accent.toArgb(), card.toArgb(), track.toArgb(), fill.toArgb())
+        HorizontalVolumeColors(card, track, hairline, body, muted, Color(mark), fill)
     }
 }
 

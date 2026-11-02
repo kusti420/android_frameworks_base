@@ -27,6 +27,7 @@ import android.text.style.MetricAffectingSpan
 import android.text.style.RelativeSizeSpan
 import android.util.AttributeSet
 import android.util.TypedValue
+import com.android.settingslib.ichthys.ShoalContrast
 import com.android.systemui.shade.ui.ShoalShade
 
 /**
@@ -114,7 +115,7 @@ class IchthysHeaderClock(context: Context, attrs: AttributeSet?) : Clock(context
         val end = seconds.range.last + 1
         val spannable = SpannableString(text)
         spannable.setSpan(
-            ForegroundColorSpan(ShoalShade.accent(context)),
+            ForegroundColorSpan(secondsColor()),
             start,
             end,
             Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
@@ -135,6 +136,19 @@ class IchthysHeaderClock(context: Context, attrs: AttributeSet?) : Clock(context
             )
         }
         super.setText(spannable, BufferType.SPANNABLE)
+    }
+
+    /**
+     * IchthysOS: the accent for the seconds, contrast-guarded against what the clock sits on: the
+     * shade ink for the header clock; for the status bar clock the ground its own (dark/light
+     * tinted) text colour implies, light text meaning a dark ground. A dark accent is lifted to a
+     * lighter tone of itself there; one that already reads is used as is.
+     */
+    private fun secondsColor(): Int {
+        val accent = ShoalShade.accent(context)
+        val ground =
+            if (header) ShoalShade.inkColor(context) else ShoalContrast.onFill(currentTextColor)
+        return ShoalContrast.forText(accent, ground)
     }
 
     /** Clears the view's letter spacing inside the span. */

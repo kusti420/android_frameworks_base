@@ -74,6 +74,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -97,6 +98,7 @@ import com.android.compose.animation.scene.ContentScope
 import com.android.compose.animation.scene.ElementKey
 import com.android.compose.modifiers.thenIf
 import com.android.compose.ui.graphics.painter.rememberDrawablePainter
+import com.android.settingslib.ichthys.ShoalContrast
 import com.android.systemui.common.shared.model.Icon
 import com.android.systemui.common.shared.model.asImageBitmap
 import com.android.systemui.common.ui.compose.load
@@ -438,7 +440,7 @@ private fun DockStrip(
                         val width = (size.width - 2 * inset).coerceAtLeast(0f)
                         drawRect(colors.hairline, Offset(inset, top), Size(width, height))
                         drawRect(
-                            colors.accent,
+                            colors.accentMark,
                             Offset(inset, top),
                             Size(width * animatedProgress, height),
                         )
@@ -536,7 +538,7 @@ private fun DockArt(image: Icon?, colors: DockColors, modifier: Modifier = Modif
                 modifier = Modifier.fillMaxSize(),
             )
         } else {
-            Glyph(DockGlyph.Note, colors.accent, Modifier.size(ShoalMediaDock.NoteSize))
+            Glyph(DockGlyph.Note, colors.accentMark, Modifier.size(ShoalMediaDock.NoteSize))
         }
     }
 }
@@ -774,6 +776,11 @@ private class DockColors(
     val onAccent: Color,
     /** Behind the cover art. */
     val artGround: Color,
+    /**
+     * IchthysOS: the accent as the progress line and the placeholder note: contrast-guarded
+     * against the strip, the progress track and the art ground (dark accents get a lighter tone).
+     */
+    val accentMark: Color,
 )
 
 /**
@@ -787,17 +794,26 @@ private fun rememberDockColors(): DockColors {
     val text = colorResource(com.android.internal.R.color.ichthys_text)
     val muted = colorResource(com.android.internal.R.color.ichthys_muted)
     val accent = colorResource(com.android.internal.R.color.ichthys_accent)
-    val onAccent = colorResource(com.android.internal.R.color.ichthys_on_accent)
     val artGround = colorResource(com.android.internal.R.color.ichthys_accent_fill)
-    return remember(surface, hairline, text, muted, accent, onAccent, artGround) {
+    return remember(surface, hairline, text, muted, accent, artGround) {
         DockColors(
             surface = surface,
             hairline = hairline,
             text = text,
             muted = muted,
             accent = accent,
-            onAccent = onAccent,
+            // IchthysOS: chosen against the accent disc it sits on.
+            onAccent = Color(ShoalContrast.onFill(accent.toArgb())),
             artGround = artGround,
+            accentMark =
+                Color(
+                    ShoalContrast.forGraphic(
+                        accent.toArgb(),
+                        surface.toArgb(),
+                        hairline.toArgb(),
+                        artGround.toArgb(),
+                    )
+                ),
         )
     }
 }

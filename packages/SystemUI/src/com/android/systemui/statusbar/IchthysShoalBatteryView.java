@@ -41,6 +41,7 @@ import android.util.TypedValue;
 import android.view.View;
 import android.view.ViewTreeObserver;
 
+import com.android.settingslib.ichthys.ShoalContrast;
 import com.android.systemui.plugins.DarkIconDispatcher;
 import com.android.systemui.plugins.DarkIconDispatcher.DarkReceiver;
 import com.android.systemui.statusbar.phone.ui.StatusBarIconController;
@@ -468,10 +469,12 @@ public class IchthysShoalBatteryView extends View implements DarkReceiver {
 
     /**
      * IchthysOS: a glyph colour that reads on top of the level fill. The Shoal dark glyph, except
-     * on a near-black fill (icon colour "match status bar icons" on a light bar).
+     * on a fill that white contrasts with more (a dark accent such as indigo, or icon colour
+     * "match status bar icons" on a light bar); chosen by WCAG contrast, not a fixed luminance cut.
      */
     private int glyphOnFill() {
-        return Color.luminance(mFillPaint.getColor()) < 0.1f ? Color.WHITE : GLYPH_ON_ACCENT;
+        return ShoalContrast.onFill(mFillPaint.getColor()) == Color.WHITE
+                ? Color.WHITE : GLYPH_ON_ACCENT;
     }
 
     @Override

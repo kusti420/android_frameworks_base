@@ -33,6 +33,7 @@ import android.text.TextUtils;
 import android.util.TypedValue;
 
 import com.android.internal.graphics.ColorUtils;
+import com.android.settingslib.ichthys.ShoalContrast;
 
 /**
  * IchthysOS "Shoal" shade styling: one place that decides whether the Shoal look is on and holds
@@ -156,6 +157,23 @@ public final class ShoalShade {
         } catch (Exception ignored) {
         }
         return 0xFFFF6B3D;
+    }
+
+    /**
+     * IchthysOS: the accent as TEXT on the shade ink (clock seconds, accent labels): the accent
+     * itself when it reads there, else a lighter (darker in light theme) tone of it that reaches
+     * {@link ShoalContrast#TEXT}. A dark accent such as indigo #3949ab sank into the ink.
+     */
+    public static int accentText(Context context) {
+        return ShoalContrast.forText(accent(context), inkColor(context));
+    }
+
+    /**
+     * IchthysOS: the accent as an icon, outline or thin indicator on the shade ink and its card
+     * ({@link ShoalContrast#GRAPHIC}).
+     */
+    public static int accentGraphic(Context context) {
+        return ShoalContrast.forGraphic(accent(context), inkColor(context), cardColor(context));
     }
 
     /** A dark, accent-tinted fill (icon discs): about 10% accent over the ink. */

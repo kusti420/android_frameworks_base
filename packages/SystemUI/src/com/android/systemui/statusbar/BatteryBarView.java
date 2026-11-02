@@ -33,6 +33,7 @@ import android.view.View;
 import android.view.animation.DecelerateInterpolator;
 import android.widget.FrameLayout;
 
+import com.android.settingslib.ichthys.ShoalContrast;
 import com.android.systemui.Dependency;
 import com.android.systemui.statusbar.phone.IchthysZigzag;
 import com.android.systemui.tuner.TunerService;
@@ -198,9 +199,15 @@ public class BatteryBarView extends View implements TunerService.Tunable {
         }
     }
 
-    /** The picked bar colour, or the status bar's accent while none was ever picked. */
+    /**
+     * The picked bar colour, or the status bar's accent while none was ever picked. IchthysOS:
+     * the accent default is a thin line along the top edge, next to the black bezel: contrast-
+     * guarded against black, so a dark accent shows as a lighter tone of itself (a picked colour
+     * is used exactly as picked).
+     */
     private int barColor() {
-        return mColor != COLOR_UNSET ? mColor : IchthysZigzag.accent(getContext());
+        return mColor != COLOR_UNSET ? mColor
+                : ShoalContrast.forGraphic(IchthysZigzag.accent(getContext()), Color.BLACK);
     }
 
     private static int parseColor(String value, int def) {

@@ -45,6 +45,7 @@ import androidx.annotation.NonNull;
 import androidx.constraintlayout.widget.ConstraintLayout;
 
 import com.android.internal.graphics.ColorUtils;
+import com.android.settingslib.ichthys.ShoalContrast;
 import com.android.systemui.common.shared.colors.SurfaceEffectColors;
 import com.android.systemui.res.R;
 import com.android.systemui.scene.shared.flag.SceneContainerFlag;
@@ -500,9 +501,9 @@ public class FooterView extends StackScrollerDecorView {
         final boolean ink = ShoalShade.isInk(context);
         final int accent = ShoalShade.accent(context);
         mClearAllButton.setBackground(ShoalShade.pill(context, accent, 0, 40));
-        // The theme's own colour for content on the accent, right in light and dark.
-        mClearAllButton.setTextColor(
-                context.getColor(com.android.internal.R.color.ichthys_on_accent));
+        // IchthysOS: black or white by contrast with the accent fill the text sits on (the raw
+        // seed here, which the on-accent token, made for the token accent, does not always match).
+        mClearAllButton.setTextColor(ShoalContrast.onFill(accent));
         mClearAllButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f);
         mClearAllButton.setTypeface(ShoalShade.text(context, 600));
 

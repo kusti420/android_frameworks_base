@@ -56,6 +56,7 @@ import com.android.systemui.qs.panels.ui.compose.infinitegrid.ShoalJunctions
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.ShoalQsColors
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalAccent
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalQsEnabled
+import com.android.systemui.qs.panels.ui.compose.infinitegrid.shoalGraphic
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.shoalPages
 import com.android.systemui.qs.panels.ui.compose.toolbar.EditModeButton
 import com.android.systemui.qs.panels.ui.compose.toolbar.rememberEditModeButtonShown
@@ -274,8 +275,10 @@ private fun FooterBar(
         if (showDots) {
             PagerDots(
                 pagerState = pagerState,
+                // IchthysOS: a thin indicator on the ink, so contrast-guarded (dark accents).
                 activeColor =
-                    if (shoal) shoalAccent else MaterialTheme.colorScheme.onSurfaceVariant,
+                    if (shoal) shoalAccent.shoalGraphic()
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
                 nonActiveColor =
                     if (shoal) ShoalQsColors.DotInactive
                     else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .5f),

@@ -619,7 +619,8 @@ private fun ShoalEditPageTabs(
                     text = stringResource(label),
                     style =
                         TextStyle(
-                            color = if (selected) ShoalQsColors.OnAccent else ShoalQsColors.Label,
+                            // IchthysOS: on the accent fill, black or white by contrast.
+                            color = if (selected) shoalOnFill(accent) else ShoalQsColors.Label,
                             fontSize = 12.sp,
                             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                             fontFamily = fonts.text,
@@ -1044,7 +1045,8 @@ private fun ShoalEditSectionLabel(
         horizontalArrangement = spacedBy(8.dp),
     ) {
         BasicText(text = label.uppercase(), style = style.copy(letterSpacing = 0.08.em))
-        BasicText(text = count.toString(), style = style.copy(color = accent))
+        // IchthysOS: accent text on the ink, contrast-guarded (dark accents).
+        BasicText(text = count.toString(), style = style.copy(color = accent.shoalText()))
         Spacer(Modifier.weight(1f))
         if (hint != null) BasicText(text = hint, style = style)
     }
@@ -1098,6 +1100,8 @@ private fun ShoalEditWideTile(
     modifier: Modifier = Modifier,
 ) {
     val layoutDirection = LocalLayoutDirection.current
+    // IchthysOS: rings and marks are thin accent strokes on the ink: contrast-guarded.
+    val mark = accent.shoalGraphic()
     if (tile == null || moving) {
         // Where the dragged tile would land. (No view model at all should not happen; the cell
         // is kept so that the layout's child count holds.)
@@ -1105,8 +1109,8 @@ private fun ShoalEditWideTile(
             modifier.animatePlacement().thenIf(moving) {
                 Modifier.drawBehind {
                     val outline = shape.createOutline(size, layoutDirection, this)
-                    drawOutline(outline, accent, alpha = ShoalEdit.MARK_FILL_ALPHA)
-                    drawOutline(outline, accent, style = dashedStroke())
+                    drawOutline(outline, mark, alpha = ShoalEdit.MARK_FILL_ALPHA)
+                    drawOutline(outline, mark, style = dashedStroke())
                 }
             }
         )
@@ -1129,10 +1133,10 @@ private fun ShoalEditWideTile(
                         val radius = ShoalQs.WIDE_RADIUS.toPx()
                         if (scoops != null) {
                             clipPath(scoops, clipOp = ClipOp.Difference) {
-                                drawSelectionRing(accent, radius)
+                                drawSelectionRing(mark, radius)
                             }
                         } else {
-                            drawSelectionRing(accent, radius)
+                            drawSelectionRing(mark, radius)
                         }
                     }
                 }
@@ -1191,10 +1195,12 @@ internal fun ShoalEditCircleTile(
     modifier: Modifier = Modifier,
     description: String? = null,
 ) {
+    // IchthysOS: rings and marks are thin accent strokes on the ink: contrast-guarded.
+    val mark = accent.shoalGraphic()
     if (tile == null || moving) {
         Box(
             modifier.animatePlacement().thenIf(moving) {
-                Modifier.drawBehind { drawJunctionMark(accent, size.minDimension / 2f) }
+                Modifier.drawBehind { drawJunctionMark(mark, size.minDimension / 2f) }
             }
         )
         return
@@ -1210,7 +1216,7 @@ internal fun ShoalEditCircleTile(
                     onDragStart,
                 )
                 .thenIf(selected) {
-                    Modifier.drawBehind { drawSelectionRing(accent, size.minDimension / 2f) }
+                    Modifier.drawBehind { drawSelectionRing(mark, size.minDimension / 2f) }
                 }
                 .clip(CircleShape)
                 .background(ShoalQsColors.TileOff)
@@ -1253,6 +1259,8 @@ private fun ShoalEditJunction(
     modifier: Modifier = Modifier,
 ) {
     val shown = tile?.takeIf { !moving }
+    // IchthysOS: rings, marks and the plus are thin accent strokes on the ink: contrast-guarded.
+    val mark = accent.shoalGraphic()
     val description =
         if (shown != null) {
             stringResource(R.string.ichthys_qs_edit_junction_tile, shown.label.text, slot + 1)
@@ -1283,15 +1291,15 @@ private fun ShoalEditJunction(
                         drawCircle(ShoalQsColors.TileOff, radius)
                         if (selected) {
                             drawCircle(
-                                accent,
+                                mark,
                                 moat,
                                 style = Stroke(ShoalEdit.SELECTION_STROKE.toPx()),
                             )
                         } else if (marked) {
-                            drawCircle(accent, moat, style = dashedStroke())
+                            drawCircle(mark, moat, style = dashedStroke())
                         }
                     } else if (marked || moving) {
-                        drawJunctionMark(accent, radius)
+                        drawJunctionMark(mark, radius)
                     } else {
                         drawCircle(
                             ShoalQsColors.Muted,
@@ -1319,7 +1327,7 @@ private fun ShoalEditJunction(
         } else {
             ShoalEditGlyph(
                 glyph = ShoalEditGlyphs.Plus,
-                color = if (marked || moving) accent else ShoalQsColors.Muted,
+                color = if (marked || moving) mark else ShoalQsColors.Muted,
             )
         }
     }
@@ -1517,11 +1525,13 @@ internal fun ShoalEditAvailable(
                         fontFamily = fonts.display,
                     ),
             )
-            BasicText(text = available.size.toString(), style = monoStyle.copy(color = accent))
+            // IchthysOS: accent text on the ink, contrast-guarded (dark accents).
+            val accentText = accent.shoalText()
+            BasicText(text = available.size.toString(), style = monoStyle.copy(color = accentText))
             Spacer(Modifier.weight(1f))
             BasicText(
                 text = hint,
-                style = if (hintMarked) monoStyle.copy(color = accent) else monoStyle,
+                style = if (hintMarked) monoStyle.copy(color = accentText) else monoStyle,
                 maxLines = 1,
             )
         }
@@ -1744,14 +1754,16 @@ internal fun ShoalEditOptionsHeader(
     fonts: ShoalQsFonts,
     onDeselect: () -> Unit,
 ) {
+    // IchthysOS: accent ring and glyph on the ink, contrast-guarded (dark accents).
+    val mark = accent.shoalGraphic()
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = spacedBy(12.dp)) {
         Box(
-            modifier = Modifier.size(40.dp).border(1.5.dp, accent, CircleShape),
+            modifier = Modifier.size(40.dp).border(1.5.dp, mark, CircleShape),
             contentAlignment = Alignment.Center,
         ) {
             SmallTileContent(
                 iconProvider = { tile.icon },
-                color = accent,
+                color = mark,
                 animateToEnd = true,
                 size = { ShoalQs.CIRCLE_ICON },
                 modifier = Modifier.clearAndSetSemantics {},
@@ -1825,7 +1837,9 @@ internal fun ShoalEditFoldedTray(
         )
         BasicText(
             text = availableCount.toString(),
-            style = TextStyle(color = accent, fontSize = 11.sp, fontFamily = fonts.mono),
+            // IchthysOS: accent text on the ink, contrast-guarded (dark accents).
+            style =
+                TextStyle(color = accent.shoalText(), fontSize = 11.sp, fontFamily = fonts.mono),
         )
         Spacer(Modifier.weight(1f))
         ShoalEditGlyph(ShoalEditGlyphs.ChevronUp, ShoalQsColors.Label)
@@ -1870,7 +1884,8 @@ internal fun ShoalEditButton(
 ) {
     val content =
         when (style) {
-            ShoalEditButtonStyle.Accent -> ShoalQsColors.OnAccent
+            // IchthysOS: on the accent fill, black or white by contrast.
+            ShoalEditButtonStyle.Accent -> shoalOnFill(accent)
             ShoalEditButtonStyle.Tile -> ShoalQsColors.OnTileOff
             ShoalEditButtonStyle.Outline -> ShoalQsColors.Label
         }
@@ -1932,7 +1947,8 @@ internal fun ShoalEditChip(
             text = text,
             style =
                 TextStyle(
-                    color = if (selected) ShoalQsColors.OnAccent else ShoalQsColors.Label,
+                    // IchthysOS: on the accent fill, black or white by contrast.
+                    color = if (selected) shoalOnFill(accent) else ShoalQsColors.Label,
                     fontSize = 12.sp,
                     fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                     fontFamily = fonts.text,

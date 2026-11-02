@@ -103,7 +103,8 @@ constructor(
                             else R.drawable.ic_qs_ichthys_nightlight_off
                         ),
                     contentDescription = null,
-                    tint = tokens.accent,
+                    // IchthysOS: contrast-guarded accent glyph (dark accents).
+                    tint = tokens.accentMark,
                 )
             },
             title = { Text(stringResource(R.string.quick_settings_night_display_label)) },

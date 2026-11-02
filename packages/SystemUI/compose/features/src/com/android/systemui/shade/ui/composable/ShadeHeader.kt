@@ -94,6 +94,7 @@ import com.android.compose.animation.scene.ValueKey
 import com.android.compose.animation.scene.animateElementFloatAsState
 import com.android.compose.animation.scene.content.state.TransitionState
 import com.android.compose.modifiers.thenIf
+import com.android.settingslib.ichthys.ShoalContrast
 import com.android.systemui.Flags.groupedPrivacyChip
 // IchthysOS: the adaptive-brightness / brightness-floor toggles, moved out of the QS brightness row
 // (where they cost it ~23% of its width) into the empty gap of the expanded header.
@@ -459,7 +460,11 @@ private fun ContentScope.ShoalShadeHeader(
     val textColor = remember(configuration) { Color(ShoalShade.textColor(context)) }
     val mutedColor = remember(configuration) { Color(ShoalShade.mutedColor(context)) }
     val accentColor = remember(configuration) { Color(ShoalShade.accent(context)) }
-    val inkColor = remember(configuration) { Color(ShoalShade.inkColor(context)) }
+    // IchthysOS: the selected ringer glyph sits on the accent fill, so it is black or white by
+    // contrast with that fill; the ink (always near-black in the dark theme) left a dark glyph
+    // on a dark accent such as indigo.
+    val onAccentColor =
+        remember(configuration) { Color(ShoalContrast.onFill(ShoalShade.accent(context))) }
     val textFamily =
         remember(context) {
             FontFamily(Font(DeviceFontFamilyName(ShoalShade.textFamily(context))))
@@ -574,7 +579,7 @@ private fun ContentScope.ShoalShadeHeader(
     if (showRinger) {
         ShoalRingerPill(
             accent = accentColor,
-            onAccent = inkColor,
+            onAccent = onAccentColor,
             mutedColor = mutedColor,
             modifier =
                 Modifier.align(Alignment.BottomCenter)

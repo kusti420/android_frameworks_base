@@ -31,12 +31,14 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.font.DeviceFontFamilyName
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import com.android.settingslib.ichthys.ShoalContrast
 import org.json.JSONObject
 
 /**
@@ -233,6 +235,28 @@ private fun readAccent(context: Context): Color {
         ShoalQsColors.KoiAccent
     }
 }
+
+// endregion
+
+// region contrast
+
+/**
+ * IchthysOS: this colour (normally the accent) as TEXT on [ground] (the panel ink by default):
+ * unchanged when it already reaches ShoalContrast.TEXT there, else a lighter (darker on a light
+ * ground) tone of it that does. See [ShoalContrast].
+ */
+fun Color.shoalText(ground: Color = ShoalQsColors.Ink): Color =
+    Color(ShoalContrast.forText(toArgb(), ground.toArgb()))
+
+/**
+ * IchthysOS: this colour (normally the accent) as an icon, outline, ring or thin indicator on
+ * [ground] (the panel ink by default), at ShoalContrast.GRAPHIC.
+ */
+fun Color.shoalGraphic(ground: Color = ShoalQsColors.Ink): Color =
+    Color(ShoalContrast.forGraphic(toArgb(), ground.toArgb()))
+
+/** IchthysOS: black or white, whichever reads on a surface filled with [fill]. */
+fun shoalOnFill(fill: Color): Color = Color(ShoalContrast.onFill(fill.toArgb()))
 
 // endregion
 
