@@ -129,6 +129,10 @@ public final class IchthysGuardService extends SystemService {
     private static final int RING_SIZE = 20_000;
     private static final int JOIN_CACHE_SIZE = 10_000;
     private static final int MAX_EVENTS_PER_CALL = 2_000;
+    /** Bytes per getEvents page (binder's reply buffer is 1 MB and shared). */
+    private static final long MAX_PAGE_BYTES = 256 * 1024;
+    /** How long getScan waits for the scan thread before answering null. */
+    private static final long GET_SCAN_WAIT_MS = 2500;
     private static final int LISTENER_CHUNK = 500;
     private static final long DISPATCH_DELAY_MS = 500;
     private static final int MAX_PAUSE_MINUTES = 24 * 60;
@@ -157,6 +161,14 @@ public final class IchthysGuardService extends SystemService {
     private static final int LAN_ALLOW = 2;
 
     /** Never firewalled, whatever their uid (on top of every uid below FIRST_APPLICATION_UID). */
+    /** The platform parts that make shield decisions and may report them (noteShield). */
+    private static final Set<String> SHIELD_REPORTER_PACKAGES = Set.of(
+            "com.android.providers.contacts",
+            "com.android.providers.calendar",
+            "com.android.providers.telephony",
+            "com.android.phone",
+            "com.android.server.telecom");
+
     private static final Set<String> CRITICAL_PACKAGES = Set.of(
             "com.android.phone",
             "com.android.providers.telephony",
@@ -479,17 +491,31 @@ public final class IchthysGuardService extends SystemService {
             }
             // IchthysOS: an app's SDK sandbox process shares its fate (it had its own uid and
             // kept the network the app was denied).
+            // Inserting while iterating by index would shift later entries past the loop
+            // (a user-0 sandbox uid sorts before user-10 app uids): collect first.
             final int nApps = d.size();
+            final int[] sandboxUids = new int[nApps];
+            final int[] sandboxReasons = new int[nApps];
+            int nSandbox = 0;
             for (int i = 0; i < nApps; i++) {
                 final int uid = d.keyAt(i);
                 if (Process.isApplicationUid(uid)) {
-                    d.put(Process.toSdkSandboxUid(uid), d.valueAt(i));
+                    sandboxUids[nSandbox] = Process.toSdkSandboxUid(uid);
+                    sandboxReasons[nSandbox++] = d.valueAt(i);
                 }
             }
+            for (int i = 0; i < nSandbox; i++) d.put(sandboxUids[i], sandboxReasons[i]);
             mDenyNow = d;
             deny = new int[d.size()];
             for (int i = 0; i < deny.length; i++) deny[i] = d.keyAt(i);
-            metered = Arrays.copyOf(m, nMetered);
+            // The sandbox of a Wi-Fi-only app is held to unmetered networks too.
+            final int[] mAll = new int[nMetered * 2];
+            int nAll = 0;
+            for (int i = 0; i < nMetered; i++) {
+                mAll[nAll++] = m[i];
+                if (Process.isApplicationUid(m[i])) mAll[nAll++] = Process.toSdkSandboxUid(m[i]);
+            }
+            metered = Arrays.copyOf(mAll, nAll);
             Arrays.sort(metered);
         }
         synchronized (mApplyLock) {
@@ -1194,18 +1220,75 @@ public final class IchthysGuardService extends SystemService {
 
     private final INetdEventCallback mNetdCallback = new BaseNetdEventCallback() {
         // Called in-process on netd's reporting binder thread, inside
-        // NetdEventListenerService's lock: only hand off to our thread.
+        // NetdEventListenerService's lock: only hand off to our thread, through a bounded
+        // queue (one posted Message per event let a looping app grow the handler's queue
+        // without bound inside system_server).
         @Override
         public void onDnsEvent(int netId, int eventType, int returnCode, String hostname,
                 String[] ipAddresses, int ipAddressesCount, long timestamp, int uid) {
-            mHandler.post(() -> recordDns(returnCode, hostname, ipAddresses, timestamp, uid));
+            enqueueNetd(new Object[] {NETD_DNS, returnCode, hostname, ipAddresses, timestamp,
+                    uid});
         }
 
         @Override
         public void onConnectEvent(String ipAddr, int port, long timestamp, int uid) {
-            mHandler.post(() -> recordConnect(ipAddr, port, timestamp, uid));
+            enqueueNetd(new Object[] {NETD_CONNECT, ipAddr, port, timestamp, uid});
         }
     };
+
+    private static final Integer NETD_DNS = 0;
+    private static final Integer NETD_CONNECT = 1;
+    /** Events waiting for the handler thread; past the cap they are dropped and counted. */
+    private static final int NETD_QUEUE_MAX = 8192;
+    /** Events handled per drain before the handler gets to its other work. */
+    private static final int NETD_DRAIN_CHUNK = 1024;
+    @GuardedBy("mNetdQueue")
+    private final java.util.ArrayDeque<Object[]> mNetdQueue = new java.util.ArrayDeque<>();
+    @GuardedBy("mNetdQueue")
+    private boolean mNetdDrainPending;
+    @GuardedBy("mNetdQueue")
+    private long mNetdDropped;
+
+    /** netd's thread: O(1), never blocks. */
+    private void enqueueNetd(Object[] ev) {
+        final boolean post;
+        synchronized (mNetdQueue) {
+            if (mNetdQueue.size() >= NETD_QUEUE_MAX) {
+                mNetdDropped++;
+                return;
+            }
+            mNetdQueue.add(ev);
+            post = !mNetdDrainPending;
+            mNetdDrainPending = true;
+        }
+        if (post) mHandler.post(this::drainNetd);
+    }
+
+    /** Handler thread: records a chunk, then yields and re-posts itself if more is waiting. */
+    private void drainNetd() {
+        for (int n = 0; n < NETD_DRAIN_CHUNK; n++) {
+            final Object[] ev;
+            synchronized (mNetdQueue) {
+                ev = mNetdQueue.poll();
+                if (ev == null) {
+                    mNetdDrainPending = false;
+                    return;
+                }
+            }
+            try {
+                if (NETD_DNS.equals(ev[0])) {
+                    recordDns((Integer) ev[1], (String) ev[2], (String[]) ev[3], (Long) ev[4],
+                            (Integer) ev[5]);
+                } else {
+                    recordConnect((String) ev[1], (Integer) ev[2], (Long) ev[3],
+                            (Integer) ev[4]);
+                }
+            } catch (RuntimeException e) {
+                Slog.w(TAG, "netd event dropped", e);
+            }
+        }
+        mHandler.post(this::drainNetd);
+    }
 
     private void registerMonitor() {
         try {
@@ -1320,7 +1403,16 @@ public final class IchthysGuardService extends SystemService {
      * one entry a minute. System uids are never recorded. Any thread.
      */
     private void noteShieldInternal(int uid, int code, @Nullable String detail) {
-        if (!isAppUid(uid) || code <= 0) return;
+        noteShieldInternal(uid, code, detail, Process.SYSTEM_UID);
+    }
+
+    /** As above; {@code reporterUid} is kept in the detail when it isn't the system. */
+    private void noteShieldInternal(int uid, int code, @Nullable String detail,
+            int reporterUid) {
+        if (!isAppUid(uid) || code <= 0 || code > GuardEvent.SHIELD_CALL_LOG_WRITE) return;
+        if (UserHandle.getAppId(reporterUid) >= Process.FIRST_APPLICATION_UID) {
+            detail = (detail == null ? "" : detail + " ") + "(reported by uid " + reporterUid + ")";
+        }
         final long key = ((long) uid << 8) | (code & 0xff);
         final long now = SystemClock.elapsedRealtime();
         final GuardEvent ev;
@@ -1353,22 +1445,25 @@ public final class IchthysGuardService extends SystemService {
         boolean trusted = getContext().checkPermission(PERMISSION, -1, uid)
                 == PackageManager.PERMISSION_GRANTED;
         if (!trusted) {
+            // Only the providers that make shield decisions may report them; any other
+            // preinstalled app (microG, a vendor app) could otherwise forge or flood evidence.
             final long token = Binder.clearCallingIdentity();
             try {
                 final PackageManager pm = getContext().getPackageManager();
                 final String[] pkgs = pm.getPackagesForUid(uid);
                 if (pkgs != null) {
                     for (String p : pkgs) {
-                        try {
-                            final ApplicationInfo ai = pm.getApplicationInfoAsUser(p, 0,
-                                    UserHandle.getUserId(uid));
-                            if ((ai.flags & (ApplicationInfo.FLAG_SYSTEM
-                                    | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0) {
-                                trusted = true;
-                                break;
+                        if (SHIELD_REPORTER_PACKAGES.contains(p)) {
+                            try {
+                                final ApplicationInfo ai = pm.getApplicationInfoAsUser(p, 0,
+                                        UserHandle.getUserId(uid));
+                                if ((ai.flags & ApplicationInfo.FLAG_SYSTEM) != 0) {
+                                    trusted = true;
+                                    break;
+                                }
+                            } catch (PackageManager.NameNotFoundException ignored) {
+                                // Gone.
                             }
-                        } catch (PackageManager.NameNotFoundException ignored) {
-                            // Gone.
                         }
                     }
                 }
@@ -1434,13 +1529,32 @@ public final class IchthysGuardService extends SystemService {
     private List<GuardEvent> getEventsInternal(long sinceSeq, int max) {
         max = Math.max(0, Math.min(max, MAX_EVENTS_PER_CALL));
         final ArrayList<GuardEvent> out = new ArrayList<>();
+        // IchthysOS: a page is bounded in bytes too; 2000 AAAA-heavy DNS events parcel past
+        // the 1 MB binder reply buffer and the client never catches up.
+        long bytes = 0;
         synchronized (mLock) {
             final long oldest = Math.max(1, mSeq - RING_SIZE + 1);
             for (long s = Math.max(sinceSeq + 1, oldest); s <= mSeq && out.size() < max; s++) {
-                out.add(mRing[(int) ((s - 1) % RING_SIZE)]);
+                final GuardEvent ev = mRing[(int) ((s - 1) % RING_SIZE)];
+                bytes += estimateParcelBytes(ev);
+                if (bytes > MAX_PAGE_BYTES && !out.isEmpty()) break;
+                out.add(ev);
             }
         }
         return out;
+    }
+
+    /** Rough parcel size of an event: the fixed fields plus its strings. */
+    private static long estimateParcelBytes(@Nullable GuardEvent ev) {
+        if (ev == null) return 64;
+        long n = 96;
+        if (ev.host != null) n += 4 + 2L * ev.host.length();
+        if (ev.ip != null) n += 4 + 2L * ev.ip.length();
+        if (ev.detail != null) n += 4 + 2L * ev.detail.length();
+        if (ev.ips != null) {
+            for (String ip : ev.ips) n += 4 + (ip == null ? 0 : 2L * ip.length());
+        }
+        return n;
     }
 
     // ---------------------------------------------------------------------------------------
@@ -1503,6 +1617,12 @@ public final class IchthysGuardService extends SystemService {
             return;
         }
         boolean changed = false;
+        if (isCriticalUid(uid)) {
+            synchronized (mLock) {
+                mRemovedRules.remove(pkgName + "|" + userId);
+            }
+            return;
+        }
         synchronized (mLock) {
             final int[] rules = mRemovedRules.remove(pkgName + "|" + userId);
             if (rules == null) return;
@@ -1835,6 +1955,12 @@ public final class IchthysGuardService extends SystemService {
         final ArrayList<String> paths = new ArrayList<>();
         paths.add(ai.sourceDir);
         if (ai.splitSourceDirs != null) paths.addAll(Arrays.asList(ai.splitSourceDirs));
+        // IchthysOS: a provisional "nothing found" entry is written before the scan, so an APK
+        // that crashes system_server while being scanned is not scanned again at every boot.
+        synchronized (mLock) {
+            mScans.put(pkgName, new ScanEntry(version, new String[0]));
+        }
+        if (mScanHandler.getLooper().isCurrentThread()) saveScans();
         final String[] matches = scanner.scan(paths);
         synchronized (mLock) {
             mScans.put(pkgName, new ScanEntry(version, matches));
@@ -2241,7 +2367,27 @@ public final class IchthysGuardService extends SystemService {
             final int userId = UserHandle.getCallingUserId();
             final long token = Binder.clearCallingIdentity();
             try {
-                return scanPackage(packageName, userId, true);
+                // IchthysOS: the dex scan runs on the scan thread, never on a binder thread
+                // (an uncached large app held one for seconds; a crafted one for ever). The
+                // caller waits a moment for the usual small app and gets null otherwise: the
+                // result is cached once the scan ends and the next call returns it.
+                final java.util.concurrent.FutureTask<String[]> task =
+                        new java.util.concurrent.FutureTask<>(
+                                () -> scanPackage(packageName, userId, true));
+                if (mScanHandler.getLooper().isCurrentThread()) {
+                    task.run();
+                } else {
+                    mScanHandler.post(task);
+                }
+                try {
+                    return task.get(GET_SCAN_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+                } catch (java.util.concurrent.TimeoutException e) {
+                    Slog.i(TAG, "getScan(" + packageName + "): still scanning");
+                    return null;
+                } catch (InterruptedException | java.util.concurrent.ExecutionException e) {
+                    Slog.w(TAG, "getScan(" + packageName + ") failed", e);
+                    return null;
+                }
             } finally {
                 Binder.restoreCallingIdentity(token);
             }
@@ -2334,12 +2480,14 @@ public final class IchthysGuardService extends SystemService {
 
         @Override
         public void noteShield(int uid, int code, String detail) {
-            if (!isTrustedReporter(Binder.getCallingUid())) {
-                throw new SecurityException("noteShield: not a system app");
+            final int reporter = Binder.getCallingUid();
+            if (!isTrustedReporter(reporter)) {
+                // oneway: the exception only logs in this process, which is all it should do.
+                throw new SecurityException("noteShield: not a shield reporter");
             }
             noteShieldInternal(uid, code,
                     detail == null ? null : detail.length() > 80 ? detail.substring(0, 80)
-                            : detail);
+                            : detail, reporter);
         }
 
         @Override

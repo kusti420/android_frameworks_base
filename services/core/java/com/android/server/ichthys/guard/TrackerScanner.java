@@ -51,6 +51,12 @@ final class TrackerScanner {
     // IchthysOS: real classes*.dex stay well below this (64K-method limit); this runs inside
     // system_server, where the old 96 MB (buffered twice) let a crafted APK exhaust the heap.
     private static final long MAX_DEX_BYTES = 32L * 1024 * 1024;
+    /** A dex has at most 65536 type ids, so more class_defs than that is a crafted file. */
+    private static final int MAX_CLASS_DEFS = 65_536;
+    /** Class descriptors are short; anything longer is a crafted string_data_item. */
+    private static final int MAX_DESCRIPTOR_BYTES = 4096;
+    /** Whole-APK budget: past this the scan stops and reports what it has (logged). */
+    private static final long SCAN_BUDGET_NANOS = 20_000_000_000L;
 
     /** Small built-in fallback DB, used when {@link #TRACKERS_FILE} is missing or broken. */
     private static final String[][] DEFAULT_SIGNATURES = {
@@ -208,6 +214,10 @@ final class TrackerScanner {
     @NonNull
     String[] scan(@NonNull List<String> apkPaths) {
         final Set<String> packages = new HashSet<>();
+        // IchthysOS: untrusted input inside system_server: a crafted dex must cost bounded
+        // time and memory, so the whole scan has a deadline and every table a cap.
+        final long deadline = System.nanoTime() + SCAN_BUDGET_NANOS;
+        scan:
         for (String path : apkPaths) {
             try (ZipFile zip = new ZipFile(path)) {
                 final Enumeration<? extends ZipEntry> entries = zip.entries();
@@ -221,8 +231,12 @@ final class TrackerScanner {
                         Slog.w(TAG, "Skipping oversized " + n + " in " + path);
                         continue;
                     }
+                    if (System.nanoTime() > deadline) {
+                        Slog.w(TAG, "Scan budget exhausted before " + n + " in " + path);
+                        break scan;
+                    }
                     try (InputStream in = zip.getInputStream(e)) {
-                        collectPackages(readAll(in, e.getSize()), packages);
+                        collectPackages(readAll(in, e.getSize()), packages, deadline);
                     } catch (IOException | RuntimeException ex) {
                         Slog.w(TAG, "Bad dex " + n + " in " + path + ": " + ex);
                     } catch (OutOfMemoryError oom) {
@@ -269,6 +283,15 @@ final class TrackerScanner {
      * that prefix "a.b." matches it and "a.bc." does not).
      */
     static void collectPackages(byte[] dex, Set<String> out) {
+        collectPackages(dex, out, Long.MAX_VALUE);
+    }
+
+    /**
+     * As above, giving up with an IllegalStateException once {@code deadlineNanos}
+     * (System.nanoTime) has passed. Every type id is resolved at most once, and a class_defs
+     * table larger than a dex can legitimately hold is refused.
+     */
+    static void collectPackages(byte[] dex, Set<String> out, long deadlineNanos) {
         if (dex.length < 0x70 || dex[0] != 'd' || dex[1] != 'e' || dex[2] != 'x') {
             throw new IllegalArgumentException("not a dex file");
         }
@@ -281,18 +304,35 @@ final class TrackerScanner {
         check(dex, stringIdsOff, stringIdsSize, 4);
         check(dex, typeIdsOff, typeIdsSize, 4);
         check(dex, classDefsOff, classDefsSize, 32);
+        if (classDefsSize > MAX_CLASS_DEFS || typeIdsSize > MAX_CLASS_DEFS) {
+            throw new IllegalArgumentException("dex tables out of range");
+        }
+        final java.util.HashMap<Integer, String> byType = new java.util.HashMap<>();
         for (int i = 0; i < classDefsSize; i++) {
+            if ((i & 1023) == 0 && System.nanoTime() > deadlineNanos) {
+                throw new IllegalStateException("scan time budget exceeded");
+            }
             final int typeIdx = u32(dex, classDefsOff + i * 32);
             if (typeIdx < 0 || typeIdx >= typeIdsSize) continue;
+            if (byType.containsKey(typeIdx)) {
+                final String pkg = byType.get(typeIdx);
+                if (pkg != null) out.add(pkg);
+                continue;
+            }
+            String pkg = null;
             final int strIdx = u32(dex, typeIdsOff + typeIdx * 4);
-            if (strIdx < 0 || strIdx >= stringIdsSize) continue;
-            final String desc = readString(dex, u32(dex, stringIdsOff + strIdx * 4));
-            // "Lcom/foo/Bar;" -> "com.foo."
-            if (desc == null || desc.length() < 3 || desc.charAt(0) != 'L') continue;
-            final int slash = desc.lastIndexOf('/');
-            if (slash <= 1) continue;
-            final String pkg = desc.substring(1, slash + 1).replace('/', '.');
-            out.add(pkg);
+            if (strIdx >= 0 && strIdx < stringIdsSize) {
+                final String desc = readString(dex, u32(dex, stringIdsOff + strIdx * 4));
+                // "Lcom/foo/Bar;" -> "com.foo."
+                if (desc != null && desc.length() >= 3 && desc.charAt(0) == 'L') {
+                    final int slash = desc.lastIndexOf('/');
+                    if (slash > 1) {
+                        pkg = desc.substring(1, slash + 1).replace('/', '.');
+                    }
+                }
+            }
+            byType.put(typeIdx, pkg);
+            if (pkg != null) out.add(pkg);
         }
     }
 
@@ -318,7 +358,10 @@ final class TrackerScanner {
             if ((b[p++] & 0x80) == 0) break;
         }
         final int start = p;
-        while (p < b.length && b[p] != 0) p++;
+        final int limit = (int) Math.min((long) b.length, (long) start + MAX_DESCRIPTOR_BYTES);
+        while (p < limit && b[p] != 0) p++;
+        // A descriptor without a NUL within the cap is a crafted string: not a class name.
+        if (p >= limit) return null;
         // Class names are ASCII in practice; MUTF-8 oddities only affect exotic names.
         return new String(b, start, p - start, StandardCharsets.UTF_8);
     }

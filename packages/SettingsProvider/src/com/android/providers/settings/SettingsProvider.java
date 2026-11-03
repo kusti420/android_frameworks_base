@@ -2480,6 +2480,10 @@ public class SettingsProvider extends ContentProvider {
                         || name.endsWith("_seeded")
                         || name.endsWith("_shield")
                         || name.equals("ichthys_a11y_scopes")
+                        // Per-app folders and hidden notification channels name the apps the
+                        // owner set up: not for other apps either.
+                        || name.equals("ichthys_storage_scopes")
+                        || name.equals("ichthys_quiet_hidden")
                         || name.equals("ichthys_contacts_lockdown")
                         || name.equals("ichthys_clipboard_lockdown")
                         || name.equals("ichthys_sensor_fingerprint_protection"));

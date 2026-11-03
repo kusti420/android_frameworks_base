@@ -154,7 +154,7 @@ interface IIchthysGuard {
      * verification run). {@code code} is a GuardEvent.JOURNAL_* value, {@code uid} the app it
      * concerns or 0.
      */
-    void addJournal(int uid, int code, String detail);
+    oneway void addJournal(int uid, int code, String detail);
 
     /**
      * Records that a data shield decided for {@code uid} (GuardEvent.TYPE_SHIELD, {@code code} a
@@ -163,7 +163,7 @@ interface IIchthysGuard {
      * in-process. Rate-limited per uid and code. Callers must be preinstalled system apps or hold
      * MANAGE_ICHTHYS_GUARD.
      */
-    void noteShield(int uid, int code, String detail);
+    oneway void noteShield(int uid, int code, String detail);
 
     /**
      * Blocked network attempts since boot, as flat triples {uid, count, lastBlockedMs, ...}.

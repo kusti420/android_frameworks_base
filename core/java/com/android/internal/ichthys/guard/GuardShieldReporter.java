@@ -56,19 +56,21 @@ public final class GuardShieldReporter {
             if (last != null && now - last < REPEAT_MS) {
                 return;
             }
-            sLast.put(key, now);
-            if (sLast.size() > 512) {
-                sLast.clear();
-                sLast.put(key, now);
-            }
             if (sService == null) {
                 final IBinder b = ServiceManager.getService(SERVICE_NAME);
                 if (b == null) {
+                    // Not up yet (boot): nothing recorded, so the first report after it comes
+                    // up is not swallowed by the rate limit.
                     return;
                 }
                 sService = IIchthysGuard.Stub.asInterface(b);
             }
             service = sService;
+            sLast.put(key, now);
+            if (sLast.size() > 512) {
+                sLast.clear();
+                sLast.put(key, now);
+            }
         }
         final long token = Binder.clearCallingIdentity();
         try {
@@ -76,6 +78,7 @@ public final class GuardShieldReporter {
         } catch (RemoteException | RuntimeException e) {
             synchronized (sLock) {
                 sService = null;
+                sLast.remove(key);
             }
         } finally {
             Binder.restoreCallingIdentity(token);

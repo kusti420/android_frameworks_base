@@ -5428,7 +5428,10 @@ public class AppOpsService extends IAppOpsService.Stub {
     private boolean isOpRestrictedByIchthysNoLocation(int code, String packageName, int uid) {
         if (code != AppOpsManager.OP_COARSE_LOCATION && code != AppOpsManager.OP_FINE_LOCATION
                 && code != AppOpsManager.OP_MONITOR_LOCATION
-                && code != AppOpsManager.OP_MONITOR_HIGH_POWER_LOCATION) {
+                && code != AppOpsManager.OP_MONITOR_HIGH_POWER_LOCATION
+                // "Never get a location" covers the GPS tags in photos too (MediaProvider
+                // strips them when this op is not allowed), as the fake place already does.
+                && code != AppOpsManager.OP_ACCESS_MEDIA_LOCATION) {
             return false;
         }
         if (packageName == null || UserHandle.getAppId(uid) < Process.FIRST_APPLICATION_UID) {
