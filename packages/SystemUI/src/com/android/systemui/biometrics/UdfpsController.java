@@ -1859,8 +1859,8 @@ public class UdfpsController implements DozeReceiver, Dumpable {
             return false;
         }
         for (String field : fields) {
-            // Plain decimals only (a subset of what the HAL's strtod takes), so SystemUI never
-            // switches to the separator while the HAL still rejects the model.
+            // Plain decimals only (also ".5" / "5."), the same grammar the HAL's ParseUdfpsModel
+            // accepts (UdfpsStrtodPlain), so both always agree on whether the model is valid.
             if (!field.matches("[+-]?(\\d+\\.?\\d*|\\.\\d+)([eE][+-]?\\d+)?")
                     || !(Math.abs(Double.parseDouble(field)) <= 100.0)) {
                 return false;
