@@ -68,6 +68,7 @@ import android.util.proto.WireTypeMismatchException;
 import android.view.View;
 
 import com.android.internal.util.XmlUtils;
+import com.android.internal.util.ichthys.IchthysSpoofProfile;
 
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
@@ -2171,6 +2172,11 @@ public final class Configuration implements Parcelable, Comparable<Configuration
         seq = source.readInt();
         fontWeightAdjustment = source.readInt();
         mGrammaticalGender = source.readInt();
+        // IchthysOS: every Configuration entering a spoofed app over Binder gets the spoofed
+        // mcc/mnc (and app language) stamped on; a single volatile read for everyone else.
+        if (IchthysSpoofProfile.isActive()) {
+            IchthysSpoofProfile.rewrite(this);
+        }
     }
 
     public static final @android.annotation.NonNull Parcelable.Creator<Configuration> CREATOR

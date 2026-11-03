@@ -1460,6 +1460,17 @@ public class LocationManagerService extends ILocationManager.Stub implements
         return mLocalService.isProviderEnabledForUser(provider, userId);
     }
 
+    /**
+     * IchthysOS "Spoofed values": the calling uid's spoof profile when it is spoofed, "{}" while
+     * the fake place is on without a profile, else null. Asked by ActivityThread at bind time, so
+     * the app process rewrites the country, carrier, time zone and locale it reads itself.
+     */
+    @Override
+    @Nullable
+    public String getIchthysSpoofProfile() {
+        return IchthysLocationSpoof.getProfileForCaller();
+    }
+
     @android.annotation.EnforcePermission(android.Manifest.permission.CONTROL_AUTOMOTIVE_GNSS)
     @Override
     @RequiresPermission(android.Manifest.permission.CONTROL_AUTOMOTIVE_GNSS)

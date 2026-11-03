@@ -2467,12 +2467,15 @@ public class SettingsProvider extends ContentProvider {
      * trust, and a way for an app to learn its answers are faked (a "no fix" app falling back to
      * IP geolocation). Only system callers (the shields themselves, Settings, SystemUI) see them;
      * others see them as absent. Nothing in an app's own process reads them. The shared location
-     * (ichthys_location_*: Guard's fixed place and the system's last fix, for weather and sun
-     * times) is hidden the same way: it is where the owner is.
+     * (ichthys_location_*: Guard's fixed place, the spoof profile and the system's last fix, for
+     * weather and sun times) is hidden the same way: it is where the owner is, and so are
+     * today's sunset and sunrise (ichthys_twilight_times, Global: a pair of local times gives
+     * the latitude away).
      */
     private static boolean isIchthysAllowlist(String name) {
         return name != null && name.startsWith("ichthys_")
                 && (name.startsWith("ichthys_location_")
+                        || name.equals("ichthys_twilight_times")
                         || name.endsWith("_pkgs")
                         || name.endsWith("_seeded")
                         || name.endsWith("_shield")

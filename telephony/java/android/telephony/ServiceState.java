@@ -35,6 +35,7 @@ import android.telephony.NetworkRegistrationInfo.Domain;
 import android.telephony.NetworkRegistrationInfo.NRState;
 import android.text.TextUtils;
 
+import com.android.internal.util.ichthys.IchthysSpoofProfile;
 import com.android.telephony.Rlog;
 
 import java.lang.annotation.Retention;
@@ -454,6 +455,11 @@ public class ServiceState implements Parcelable {
         mOperatorAlphaShortRaw = in.readString();
         mIsDataRoamingFromRegistration = in.readBoolean();
         mIsIwlanPreferred = in.readBoolean();
+        // IchthysOS: a spoofed app sees the spoofed operator/PLMN and no roaming; every
+        // CREATOR / readFromParcel path goes through here. No-op outside spoofed apps.
+        if (IchthysSpoofProfile.isActive()) {
+            IchthysSpoofProfile.rewrite(this);
+        }
     }
 
     public void writeToParcel(Parcel out, int flags) {

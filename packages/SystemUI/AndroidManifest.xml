@@ -31,7 +31,8 @@
          (Samsung download/Odin mode). Granted via the systemui privapp-permissions allowlist. -->
     <uses-permission android:name="android.permission.REBOOT" />
     <!-- IchthysOS: read the OmniJaws weather provider for the status-bar + lockscreen weather
-         (OmniJawsClient). READ_WEATHER is a normal permission, auto-granted once requested. -->
+         (OmniJawsClient). READ_WEATHER is signature|privileged since tracker#60 (the provider
+         names the real city); SystemUI is platform-signed, so it keeps the grant. -->
     <uses-permission android:name="org.omnirom.omnijaws.READ_WEATHER" />
     <!-- IchthysOS: the native Guard Lockdown / Pause QS tiles call IchthysGuardService
          ("ichthys_guard") and exchange the lockdown broadcasts with Settings' Guard. Signature

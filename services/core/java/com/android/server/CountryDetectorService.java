@@ -16,6 +16,7 @@
 
 package com.android.server;
 
+import android.annotation.Nullable;
 import android.content.Context;
 import android.location.Country;
 import android.location.CountryListener;
@@ -33,6 +34,7 @@ import com.android.internal.R;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.os.BackgroundThread;
 import com.android.internal.util.DumpUtils;
+import com.android.server.location.IchthysLocationSpoof;
 import com.android.server.location.countrydetector.ComprehensiveCountryDetector;
 import com.android.server.location.countrydetector.CountryDetectorBase;
 
@@ -116,9 +118,20 @@ public class CountryDetectorService extends ICountryDetector.Stub {
     public Country detectCountry() {
         if (!mSystemReady) {
             return null; // server not yet active
-        } else {
-            return mCountryDetector.detectCountry();
         }
+        // IchthysOS "Spoofed values": a spoofed app is told the profile's country, and nothing
+        // while the fake place is on without a profile; the real one would place the phone.
+        final IchthysLocationSpoof.Profile spoof = IchthysLocationSpoof.getSpoofForCaller();
+        if (spoof != null) {
+            return spoofedCountry(spoof);
+        }
+        return mCountryDetector.detectCountry();
+    }
+
+    @Nullable
+    private static Country spoofedCountry(IchthysLocationSpoof.Profile spoof) {
+        return spoof.country != null
+                ? new Country(spoof.country, Country.COUNTRY_SOURCE_NETWORK) : null;
     }
 
     /**
@@ -128,6 +141,16 @@ public class CountryDetectorService extends ICountryDetector.Stub {
     public void addCountryListener(ICountryListener listener) throws RemoteException {
         if (!mSystemReady) {
             throw new RemoteException();
+        }
+        // IchthysOS: a spoofed app hears the profile's country once and is never registered,
+        // so no real detection ever reaches it (removeCountryListener is then a no-op).
+        final IchthysLocationSpoof.Profile spoof = IchthysLocationSpoof.getSpoofForCaller();
+        if (spoof != null) {
+            final Country country = spoofedCountry(spoof);
+            if (country != null) {
+                listener.onCountryDetected(country);
+            }
+            return;
         }
         addListener(listener);
     }

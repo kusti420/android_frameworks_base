@@ -122,6 +122,7 @@ import android.graphics.HardwareRenderer;
 import android.graphics.Typeface;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.DisplayManagerGlobal;
+import android.location.ILocationManager;
 import android.media.MediaFrameworkInitializer;
 import android.media.MediaFrameworkPlatformInitializer;
 import android.media.MediaServiceManager;
@@ -256,6 +257,7 @@ import com.android.internal.os.DebugStore;
 import com.android.internal.os.RuntimeInit;
 import com.android.internal.os.SafeZipPathValidatorCallback;
 import com.android.internal.os.SomeArgs;
+import com.android.internal.util.ichthys.IchthysSpoofProfile;
 import com.android.internal.util.ichthys.PropImitationHooks;
 import com.android.internal.os.logging.MetricsLoggerWrapper;
 import com.android.internal.policy.DecorView;
@@ -7970,6 +7972,44 @@ public final class ActivityThread extends ClientTransactionHandler
         return insInfo.nativeLibraryDir;
     }
 
+    /**
+     * IchthysOS: asks system_server whether this process is location-spoofed and, if it is,
+     * installs the Spoofed-values profile (country, carrier, time zone, app language) and
+     * rewrites the bind-time configuration, which was unparceled before the profile existed.
+     * System apps other than the broker are never spoofed, so they skip the binder call.
+     * Never throws: a failure here must not stop an app from starting.
+     */
+    private static void installIchthysSpoofProfile(AppBindData data) {
+        try {
+            final int uid = Process.myUid();
+            if (!Process.isApplicationUid(uid) || Process.isIsolated()) {
+                return;
+            }
+            final ApplicationInfo ai = data.appInfo;
+            if (ai == null) {
+                return;
+            }
+            if ((ai.isSystemApp() || ai.isUpdatedSystemApp())
+                    && !IchthysSpoofProfile.isBroker(ai.packageName)) {
+                return;
+            }
+            final IBinder b = ServiceManager.getService(Context.LOCATION_SERVICE);
+            if (b == null) {
+                return;
+            }
+            final String json = ILocationManager.Stub.asInterface(b).getIchthysSpoofProfile();
+            if (json == null) {
+                return;
+            }
+            IchthysSpoofProfile.install(json);
+            if (IchthysSpoofProfile.isActive() && data.config != null) {
+                IchthysSpoofProfile.rewrite(data.config);
+            }
+        } catch (Throwable t) {
+            Slog.w(TAG, "IchthysOS: could not install the spoof profile", t);
+        }
+    }
+
     @UnsupportedAppUsage
     @RavenwoodThrow(comment = "See ActivityThread_ravenwood for initialization on Ravenwood")
     private void handleBindApplication(AppBindData data) {
@@ -8004,6 +8044,9 @@ public final class ActivityThread extends ClientTransactionHandler
         initZipPathValidatorCallback();
 
         mBoundApplication = data;
+        // IchthysOS: Spoofed values. Must run before anything in this process reads
+        // data.config, the time zone or the gsm.* properties.
+        installIchthysSpoofProfile(data);
         mConfigurationController.setConfiguration(data.config);
         mConfigurationController.setCompatConfiguration(data.config);
         mConfiguration = mConfigurationController.getConfiguration();

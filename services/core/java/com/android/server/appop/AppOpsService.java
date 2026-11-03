@@ -3089,7 +3089,8 @@ public class AppOpsService extends IAppOpsService.Stub {
         }
 
         if (isOpRestrictedDueToSuspend(code, packageName, uid)
-                || isOpRestrictedByIchthysNoLocation(code, packageName, uid)) {
+                || isOpRestrictedByIchthysNoLocation(code, packageName, uid)
+                || isOpRestrictedByIchthysSpoof(code, packageName, uid)) {
             return AppOpsManager.MODE_IGNORED;
         }
 
@@ -3154,7 +3155,8 @@ public class AppOpsService extends IAppOpsService.Stub {
         }
 
         if (isOpRestrictedDueToSuspend(code, packageName, uid)
-                || isOpRestrictedByIchthysNoLocation(code, packageName, uid)) {
+                || isOpRestrictedByIchthysNoLocation(code, packageName, uid)
+                || isOpRestrictedByIchthysSpoof(code, packageName, uid)) {
             return MODE_IGNORED;
         }
 
@@ -5439,15 +5441,19 @@ public class AppOpsService extends IAppOpsService.Stub {
 
     /**
      * IchthysOS: while the fake location is on (IchthysLocationSpoof), a spoofed app's location
-     * app-ops are noted and started as ignored, so Wi-Fi scans and connection info, cell info and
-     * Bluetooth scans, which each place the phone, come back empty. Not checks: their results
-     * are cached process-wide, and the location service, which hands such apps the fake place
-     * itself, checks them; its own notes and starts are let through by isSpoofedCached.
+     * app-ops are checked, noted and started as ignored, so Wi-Fi scans and connection info,
+     * cell info and Bluetooth scans, which each place the phone, come back empty, and so does
+     * ACCESS_MEDIA_LOCATION, so MediaProvider strips the GPS tags from the photos it hands out.
+     * Checks too (their results are cached process-wide, and IchthysLocationSpoof invalidates
+     * that cache at every change): the services asking (Wi-Fi, telephony, Bluetooth) check
+     * before they note. The location service, which hands such apps the fake place itself, has
+     * its own checks, notes and starts let through by isSpoofedCached.
      */
     private boolean isOpRestrictedByIchthysSpoof(int code, String packageName, int uid) {
         if (code != AppOpsManager.OP_COARSE_LOCATION && code != AppOpsManager.OP_FINE_LOCATION
                 && code != AppOpsManager.OP_MONITOR_LOCATION
-                && code != AppOpsManager.OP_MONITOR_HIGH_POWER_LOCATION) {
+                && code != AppOpsManager.OP_MONITOR_HIGH_POWER_LOCATION
+                && code != AppOpsManager.OP_ACCESS_MEDIA_LOCATION) {
             return false;
         }
         if (packageName == null) {

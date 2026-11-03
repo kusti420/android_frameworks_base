@@ -188,8 +188,11 @@ public final class PropImitationHooks {
      */
     public static String getPropertyOverride(String key) {
         Map<String, String> overrides = sPropertyOverrides;
-        if (overrides == null) return null;
-        return overrides.get(key);
+        // IchthysOS: the PIF map wins, then the Spoofed-values profile (both can be live in
+        // GmsCore). Each is a single volatile read for every other process.
+        if (overrides == null) return IchthysSpoofProfile.getPropertyOverride(key);
+        final String value = overrides.get(key);
+        return value != null ? value : IchthysSpoofProfile.getPropertyOverride(key);
     }
 
     /**

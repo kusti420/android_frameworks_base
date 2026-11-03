@@ -34,6 +34,7 @@ import android.content.IIntentSender;
 import android.content.Intent;
 import android.content.IntentSender;
 import android.content.pm.ActivityInfo;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PermissionInfo;
 import android.content.pm.ResolveInfo;
@@ -42,9 +43,12 @@ import android.os.RemoteException;
 import android.os.UserHandle;
 import android.permission.IPermissionManager;
 import android.permission.PermissionManager;
+import android.telephony.CarrierConfigManager;
+import android.telephony.TelephonyManager;
 import android.util.Slog;
 
 import com.android.internal.util.ArrayUtils;
+import com.android.server.location.IchthysLocationSpoof;
 
 import java.util.Objects;
 
@@ -104,6 +108,12 @@ public class BroadcastSkipPolicy {
                 info.activityInfo.name);
         final int receiverUid = info.activityInfo.getUid();
 
+        // IchthysOS: see isSkippedForIchthysSpoof.
+        if (isSkippedForIchthysSpoof(r, receiverUid, component.getPackageName(),
+                info.activityInfo.applicationInfo)) {
+            return "Ichthys spoof: broadcasting " + broadcastDescription(r, component)
+                    + " withheld from spoofed uid " + receiverUid;
+        }
         if (brOptions != null &&
                 (info.activityInfo.applicationInfo.targetSdkVersion
                         < brOptions.getMinManifestReceiverApiLevel() ||
@@ -358,6 +368,12 @@ public class BroadcastSkipPolicy {
      */
     private @Nullable String shouldSkipMessage(@NonNull BroadcastRecord r,
             @NonNull BroadcastFilter filter, boolean preflight) {
+        // IchthysOS: see isSkippedForIchthysSpoof.
+        if (isSkippedForIchthysSpoof(r, filter.owningUid, filter.packageName,
+                filter.receiverList.app != null ? filter.receiverList.app.info : null)) {
+            return "Ichthys spoof: broadcasting " + r.intent.toString()
+                    + " withheld from spoofed uid " + filter.owningUid + " through " + filter;
+        }
         if (r.options != null && !r.options.testRequireCompatChange(filter.owningUid)) {
             return "Compat change filtered: broadcasting " + r.intent.toString()
                     + " to uid " + filter.owningUid + " due to compat change "
@@ -599,6 +615,35 @@ public class BroadcastSkipPolicy {
         }
 
         return null;
+    }
+
+    /**
+     * IchthysOS "Spoofed values": the broadcasts whose extras carry the real country, carrier or
+     * time zone are not delivered to a spoofed app (IchthysLocationSpoof: the fake place is on,
+     * it is a user app or the location broker, and it is not on the real-location list). Such
+     * an app was handed the profile's values when it started; these would contradict them.
+     * System apps are never spoofed and still get them. Reads caches only; the uid's system
+     * flag comes from the receiver's own ApplicationInfo when it isn't cached yet.
+     */
+    private static boolean isSkippedForIchthysSpoof(@NonNull BroadcastRecord r, int receiverUid,
+            @Nullable String packageName, @Nullable ApplicationInfo app) {
+        final String action = r.intent.getAction();
+        if (action == null || packageName == null) {
+            return false;
+        }
+        switch (action) {
+            case TelephonyManager.ACTION_NETWORK_COUNTRY_CHANGED:
+            case TelephonyManager.ACTION_SUBSCRIPTION_CARRIER_IDENTITY_CHANGED:
+            case TelephonyManager.ACTION_SUBSCRIPTION_SPECIFIC_CARRIER_IDENTITY_CHANGED:
+            case CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED:
+            case Intent.ACTION_TIMEZONE_CHANGED:
+                break;
+            default:
+                return false;
+        }
+        return IchthysLocationSpoof.isSpoofedCached(packageName, receiverUid,
+                () -> app != null && (app.flags & (ApplicationInfo.FLAG_SYSTEM
+                        | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0);
     }
 
     private static String broadcastDescription(BroadcastRecord r, ComponentName component) {

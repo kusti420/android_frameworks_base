@@ -48,6 +48,7 @@ import android.util.Log;
 
 import com.android.internal.telephony.flags.Flags;
 import com.android.internal.telephony.util.TelephonyUtils;
+import com.android.internal.util.ichthys.IchthysSpoofProfile;
 import com.android.telephony.Rlog;
 
 import java.util.ArrayList;
@@ -923,6 +924,13 @@ public class SubscriptionInfo implements Parcelable {
             new Parcelable.Creator<SubscriptionInfo>() {
         @Override
         public SubscriptionInfo createFromParcel(Parcel source) {
+            final SubscriptionInfo info = readFromParcel(source);
+            // IchthysOS: a spoofed app gets a copy carrying the spoofed country / mcc-mnc /
+            // carrier name. No-op outside spoofed apps.
+            return IchthysSpoofProfile.isActive() ? IchthysSpoofProfile.rewrite(info) : info;
+        }
+
+        private SubscriptionInfo readFromParcel(Parcel source) {
             return new Builder()
                     .setId(source.readInt())
                     .setIccId(source.readString())

@@ -150,4 +150,9 @@ interface ILocationManager
     String[] getBackgroundThrottlingWhitelist();
     PackageTagsList getIgnoreSettingsAllowlist();
     PackageTagsList getAdasAllowlist();
+
+    // IchthysOS "Spoofed values": the calling uid's spoof profile JSON when it is spoofed
+    // ("{}" while the fake place is on without a profile), else null. No permission: the
+    // answer is about the caller only, and only a spoofed app gets anything.
+    @nullable String getIchthysSpoofProfile();
 }
