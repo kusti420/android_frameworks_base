@@ -1708,12 +1708,13 @@ public class UdfpsController implements DozeReceiver, Dumpable {
             // (Settings.Global ichthys_udfps_cal_alpha) when set, else the One UI model.
             final int pinned = android.provider.Settings.Global.getInt(
                     mContext.getContentResolver(), "ichthys_udfps_dim_alpha", 0);
-            if (isUdfpsModelActive()) {
-                // IchthysOS: the display HAL's parametric mask curve (persist.ichthys.udfps_model)
-                // does all the darkening in 10 bits; the dim is only the small separator that
-                // keeps the content below the illumination disc's code.
+            if (isUdfpsHalCurveActive()) {
+                // IchthysOS: the display HAL's mask curve (parametric persist.ichthys.udfps_model,
+                // else the default physics curve) does all the darkening in 10 bits; the dim is
+                // only the small separator that keeps the content below the illumination disc's
+                // code. Sync mode only: without it the HAL puts no curve on the mask frames.
                 alpha = udfpsSeparatorAlpha();
-                Log.i(TAG, "udfps_sync dim: separator alpha=" + alpha + " (model curve)");
+                Log.i(TAG, "udfps_sync dim: separator alpha=" + alpha + " (HAL mask curve)");
             } else {
                 alpha = Math.max(1, pinned > 0 ? pinned
                         : configured > 0 ? configured : computeAutoDimAlpha());
@@ -1810,21 +1811,44 @@ public class UdfpsController implements DozeReceiver, Dumpable {
 
     /** IchthysOS: the display HAL's parametric mask curve model (hw_device_drm.cpp). */
     private static final String PROP_UDFPS_MODEL = "persist.ichthys.udfps_model";
-    /** IchthysOS: the separator's keep factor, read by the display HAL too (default 0.94). */
+    /** IchthysOS: the display HAL's physics mask curve, default on (hw_device_drm.cpp). */
+    private static final String PROP_UDFPS_PHYSICS = "persist.ichthys.udfps_physics";
+    /**
+     * IchthysOS: the separator's keep factor, read by the display HAL too. Default 254/255 = alpha
+     * 1, the smallest dim that still keeps content (<= 254) apart from the disc (255): no visible
+     * dim, the HAL's curve does all of it.
+     */
     private static final String PROP_UDFPS_SEP_KEEP = "persist.ichthys.udfps_sep_keep";
     /** IchthysOS: the dim alpha the current mask window carries, for the display HAL. */
     private static final String PROP_UDFPS_APPLIED_ALPHA = "ichthys.udfps_applied_alpha";
-    private static final double DEFAULT_SEP_KEEP = 0.94;
+    private static final double DEFAULT_SEP_KEEP = 254.0 / 255.0;
     private static final String UDFPS_LUT_B64 =
             "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
     /**
-     * IchthysOS: whether the display HAL uses its parametric mask curve, exactly its rule:
-     * {@code persist.ichthys.udfps_model} holds 12 finite numbers (|v| <= 100, separated by spaces,
-     * commas or tabs) and no knot calibration point (persist.ichthys.udfps_lut_{r,g,b},
-     * udfps_lut1..3_*) has all three props valid (66 base64url characters each); knots win.
+     * IchthysOS: whether the display HAL puts its separator-based mask curve on the mask frames,
+     * exactly its rule (hw_device_drm.cpp SetupFingerprintLut): no knot calibration point
+     * (persist.ichthys.udfps_lut_{r,g,b}, udfps_lut1..3_*) has all three props valid (66 base64url
+     * characters each), and either the parametric model is valid or the physics curve is on
+     * ({@code persist.ichthys.udfps_physics}, default true; off only for 0 / n / no / off / false,
+     * the same ParseBool rule as the HAL). Callers check sync mode.
      */
-    private static boolean isUdfpsModelActive() {
+    private static boolean isUdfpsHalCurveActive() {
+        for (int point = 0; point < 4; point++) {
+            final String prefix = "persist.ichthys.udfps_lut" + (point == 0 ? "" : point) + "_";
+            if (isUdfpsKnotProp(prefix + "r") && isUdfpsKnotProp(prefix + "g")
+                    && isUdfpsKnotProp(prefix + "b")) {
+                return false;
+            }
+        }
+        return isUdfpsModelValid() || SystemProperties.getBoolean(PROP_UDFPS_PHYSICS, true);
+    }
+
+    /**
+     * IchthysOS: {@code persist.ichthys.udfps_model} holds 12 finite numbers (|v| <= 100, separated
+     * by spaces, commas or tabs), as the HAL's ParseUdfpsModel accepts them.
+     */
+    private static boolean isUdfpsModelValid() {
         final String model = SystemProperties.get(PROP_UDFPS_MODEL, "")
                 .replaceAll("^[ ,\\t]+|[ ,\\t]+$", "");
         if (model.isEmpty()) {
@@ -1839,13 +1863,6 @@ public class UdfpsController implements DozeReceiver, Dumpable {
             // switches to the separator while the HAL still rejects the model.
             if (!field.matches("[+-]?(\\d+\\.?\\d*|\\.\\d+)([eE][+-]?\\d+)?")
                     || !(Math.abs(Double.parseDouble(field)) <= 100.0)) {
-                return false;
-            }
-        }
-        for (int point = 0; point < 4; point++) {
-            final String prefix = "persist.ichthys.udfps_lut" + (point == 0 ? "" : point) + "_";
-            if (isUdfpsKnotProp(prefix + "r") && isUdfpsKnotProp(prefix + "g")
-                    && isUdfpsKnotProp(prefix + "b")) {
                 return false;
             }
         }
@@ -1866,9 +1883,9 @@ public class UdfpsController implements DozeReceiver, Dumpable {
     }
 
     /**
-     * IchthysOS: the separator dim for the parametric mask curve. Settings.Global
+     * IchthysOS: the separator dim for the HAL mask curve (model or physics). Settings.Global
      * {@code ichthys_udfps_sep_alpha} (1..255) pins it; otherwise from
-     * {@code persist.ichthys.udfps_sep_keep} (0.5..1, default 0.94) as
+     * {@code persist.ichthys.udfps_sep_keep} (0.5..1, default 254/255 = alpha 1) as
      * max(1, round((1 - keep) * 255)), the same formula the display HAL falls back to.
      */
     private int udfpsSeparatorAlpha() {
@@ -1889,7 +1906,7 @@ public class UdfpsController implements DozeReceiver, Dumpable {
         return (int) Math.max(1, Math.round((1.0 - keep) * 255.0));
     }
 
-    /** IchthysOS: publishes the mask window's dim alpha for the display HAL's model curve. */
+    /** IchthysOS: publishes the mask window's dim alpha for the display HAL's mask curve. */
     private static void publishAppliedDimAlpha(int alpha) {
         try {
             SystemProperties.set(PROP_UDFPS_APPLIED_ALPHA, Integer.toString(alpha));
