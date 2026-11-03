@@ -59,7 +59,7 @@ public class SystemAppOpsHelper extends AppOpsHelper {
 
     // IchthysOS: note and start run as the location service's own calls, which the fake location
     // doesn't turn into "ignored" (IchthysLocationSpoof.isSpoofedCached): the service hands such
-    // apps the fake place itself. Checks stay plain (their results are cached process-wide).
+    // apps the fake place itself. Checks too, since the spoof covers the checkOp paths.
     @Override
     public boolean startOpNoThrow(int appOp, CallerIdentity callerIdentity) {
         Preconditions.checkState(mAppOps != null);
@@ -100,10 +100,13 @@ public class SystemAppOpsHelper extends AppOpsHelper {
 
         final long identity = Binder.clearCallingIdentity();
         try {
-            return mAppOps.checkOpNoThrow(
+            // IchthysOS: the location service's own check, like its notes and starts, or the
+            // spoof (ignored on the checkOp paths too) would leave a spoofed app unpermitted and
+            // it would get no fix at all, not even the fake one.
+            return IchthysLocationSpoof.asLocationService(() -> mAppOps.checkOpNoThrow(
                     appOp,
                     callerIdentity.getUid(),
-                    callerIdentity.getPackageName()) == AppOpsManager.MODE_ALLOWED;
+                    callerIdentity.getPackageName()) == AppOpsManager.MODE_ALLOWED);
         } finally {
             Binder.restoreCallingIdentity(identity);
         }

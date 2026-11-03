@@ -26,11 +26,13 @@ import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManagerInternal;
+import android.content.pm.ResolveInfo;
 import android.database.ContentObserver;
 import android.location.Location;
 import android.location.LocationResult;
 import android.location.util.identity.CallerIdentity;
 import android.net.ConnectivityManager;
+import android.net.VpnService;
 import android.net.Uri;
 import android.os.Binder;
 import android.os.Handler;
@@ -732,7 +734,7 @@ public final class IchthysLocationSpoof {
             return new int[0];
         }
         final List<ApplicationInfo> apps;
-        final long token = Binder.clearCallingIdentity();
+        long token = Binder.clearCallingIdentity();
         try {
             apps = pmi.getInstalledApplications(0, userId, Process.SYSTEM_UID);
         } finally {
@@ -741,11 +743,36 @@ public final class IchthysLocationSpoof {
         if (apps == null) {
             return new int[0];
         }
+        // A VPN app (Mullvad, WireGuard: a service bound with BIND_VPN_SERVICE) must stay off the
+        // list: requiring a VPN of the app that provides it, or restarting it, would cut the
+        // tunnel every spoofed app depends on. It still gets the fake place like any other app.
+        final SparseBooleanArray vpnApps = new SparseBooleanArray();
+        token = Binder.clearCallingIdentity();
+        try {
+            final List<ResolveInfo> services = context.getPackageManager()
+                    .queryIntentServicesAsUser(new Intent(VpnService.SERVICE_INTERFACE),
+                            PackageManager.MATCH_DIRECT_BOOT_AWARE
+                                    | PackageManager.MATCH_DIRECT_BOOT_UNAWARE, userId);
+            if (services != null) {
+                for (ResolveInfo ri : services) {
+                    if (ri.serviceInfo != null && ri.serviceInfo.applicationInfo != null
+                            && android.Manifest.permission.BIND_VPN_SERVICE.equals(
+                                    ri.serviceInfo.permission)) {
+                        vpnApps.put(ri.serviceInfo.applicationInfo.uid, true);
+                    }
+                }
+            }
+        } catch (RuntimeException e) {
+            Slog.w(TAG, "Cannot list VPN apps for user " + userId, e);
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
         final SparseBooleanArray spoofed = new SparseBooleanArray();
         final SparseBooleanArray real = new SparseBooleanArray();
         for (ApplicationInfo ai : apps) {
             if (ai == null || ai.packageName == null
-                    || UserHandle.getAppId(ai.uid) < Process.FIRST_APPLICATION_UID) {
+                    || UserHandle.getAppId(ai.uid) < Process.FIRST_APPLICATION_UID
+                    || vpnApps.get(ai.uid)) {
                 continue;
             }
             if (config.real.contains(ai.packageName)) {
