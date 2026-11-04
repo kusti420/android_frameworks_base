@@ -1821,7 +1821,9 @@ public class UdfpsController implements DozeReceiver, Dumpable {
     private static final String PROP_UDFPS_SEP_KEEP = "persist.ichthys.udfps_sep_keep";
     /** IchthysOS: the dim alpha the current mask window carries, for the display HAL. */
     private static final String PROP_UDFPS_APPLIED_ALPHA = "ichthys.udfps_applied_alpha";
-    private static final double DEFAULT_SEP_KEEP = 254.0 / 255.0;
+    // IchthysOS: 3 steps, not 1: with 1 the dimmed white (254) rounded onto the disc ramp in the
+    // 10-bit GC and white UI flared to full mask HBM (measured 2026-11-03).
+    private static final double DEFAULT_SEP_KEEP = 252.0 / 255.0;
     private static final String UDFPS_LUT_B64 =
             "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
