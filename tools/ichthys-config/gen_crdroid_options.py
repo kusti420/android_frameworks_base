@@ -160,6 +160,9 @@ PATHS = {
     # lockscreen.chargingAnimation on the lock screen page, never in a release).
     'ichthys_charging_animation': 'system.chargingAnimation.style',
     'ichthys_charging_animation_wake': 'system.chargingAnimation.wakeScreen',
+    # IchthysOS: "Wake with cover magnet" (PhoneWindowManager lid switch), on System > Battery
+    # and display.
+    'ichthys_lid_wake_enabled': 'system.coverMagnetWake',
 }
 # Old path -> new path. The old path stays valid as an alias, so configs written before the
 # rename still apply. (statusBar.clockEnabled was the clock *position*: the "option that is also

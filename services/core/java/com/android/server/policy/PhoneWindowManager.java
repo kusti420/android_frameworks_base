@@ -664,6 +664,14 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     private boolean mVolumeMusicSeeking;           // deferring this hold for a possible track seek
     private boolean mVolumeSeekFired;              // the track seek fired for this hold
 
+    // IchthysOS: "Wake with cover magnet". The hall sensor (kernel hall_ic, input device "hall")
+    // reports a magnet as SW_LID closed and its removal as open, and an opening lid wakes the
+    // screen (notifyLidSwitchChanged -> wakeUpFromLid), so earbud cases and other magnets turn
+    // the phone on. 0: the lid switch is ignored and the lid always counts as open, never
+    // closed, so it can neither wake nor lock / sleep the phone. Unset = 1 (stock behaviour).
+    private static final String ICHTHYS_LID_WAKE_ENABLED = "ichthys_lid_wake_enabled";
+    private volatile boolean mLidWakeEnabled = true;
+
     // IchthysOS: "Reorient" — LineageSettings.System.SWAP_VOLUME_KEYS_ON_ROTATION. When the
     // display is rotated, swap volume up/down so the physically-upper end of the rocker keeps
     // meaning "louder".  0 = off, 1 = phone/hybrid (rocker on a long edge: swap at 90/180),
@@ -957,6 +965,9 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                     "torch_long_press_power_gesture"), false, this, UserHandle.USER_ALL);
             resolver.registerContentObserver(Settings.System.getUriFor(
                     "torch_long_press_power_timeout"), false, this, UserHandle.USER_ALL);
+            // IchthysOS: "Wake with cover magnet" (lid switch on/off).
+            resolver.registerContentObserver(Settings.System.getUriFor(
+                    ICHTHYS_LID_WAKE_ENABLED), false, this, UserHandle.USER_ALL);
             resolver.registerContentObserver(Settings.Secure.getUriFor(
                     Settings.Secure.DEFAULT_INPUT_METHOD), false, this,
                     UserHandle.USER_ALL);
@@ -3163,6 +3174,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         boolean updateRotation = false;
         boolean updateKidsModeSettings = false;
         final boolean kidsModeEnabled;
+        boolean lidWakeChanged = false;
         synchronized (mLock) {
             mEndcallBehavior = Settings.System.getIntForUser(resolver,
                     Settings.System.END_BUTTON_BEHAVIOR,
@@ -3197,6 +3209,13 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                     "torch_long_press_power_gesture", 0, UserHandle.USER_CURRENT) == 1;
             mTorchLongPressPowerTimeout = Settings.System.getIntForUser(resolver,
                     "torch_long_press_power_timeout", 0, UserHandle.USER_CURRENT);
+            // IchthysOS: "Wake with cover magnet" (default on = stock lid behaviour).
+            final boolean lidWakeEnabled = Settings.System.getIntForUser(resolver,
+                    ICHTHYS_LID_WAKE_ENABLED, 1, UserHandle.USER_CURRENT) != 0;
+            if (mLidWakeEnabled != lidWakeEnabled) {
+                mLidWakeEnabled = lidWakeEnabled;
+                lidWakeChanged = true;
+            }
             // Custom Options: allow the power menu on a secure lock screen (default on).
             mGlobalActionsOnLockEnable = Settings.System.getIntForUser(resolver,
                     Settings.System.LOCKSCREEN_ENABLE_POWER_MENU, 1,
@@ -3308,6 +3327,11 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         }
         if (updateRotation) {
             updateRotation(true);
+        }
+        // IchthysOS: re-apply the lid state for the new "Wake with cover magnet" value. Posted:
+        // it calls into WindowManagerService (rotation), which must not happen under mLock.
+        if (lidWakeChanged) {
+            mHandler.post(this::applyIchthysLidWakeSetting);
         }
         // IchthysOS: LineageSettings-backed keys ("Reorient" volume rocker + three-finger swipe
         // action). Both default to 0 (feature off) when unset or unreadable. Deliberately read
@@ -3502,7 +3526,13 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     }
 
     void readLidState() {
-        mDefaultDisplayPolicy.setLidState(mWindowManagerFuncs.getLidState());
+        mDefaultDisplayPolicy.setLidState(ichthysLidState(mWindowManagerFuncs.getLidState()));
+    }
+
+    // IchthysOS: with "Wake with cover magnet" off, a closed lid (a magnet on the hall sensor)
+    // reads as open, so nothing that looks at the lid state sees it closed.
+    private int ichthysLidState(int lidState) {
+        return (!mLidWakeEnabled && lidState == LID_CLOSED) ? LID_OPEN : lidState;
     }
 
     private void readCameraLensCoverState() {
@@ -4580,6 +4610,11 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     /** {@inheritDoc} */
     @Override
     public void notifyLidSwitchChanged(long whenNanos, boolean lidOpen) {
+        // IchthysOS: "Wake with cover magnet" off -> ignore the switch: no wake on open, no
+        // userActivity / lock / sleep on close. The lid state stays open (see ichthysLidState).
+        if (!mLidWakeEnabled) {
+            return;
+        }
         // lid changed state
         final int newLidState = lidOpen ? LID_OPEN : LID_CLOSED;
         if (newLidState == mDefaultDisplayPolicy.getLidState()) {
@@ -6954,6 +6989,26 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         }
     }
 
+    // IchthysOS: "Wake with cover magnet" was switched. Off: a lid held closed by a magnet now
+    // counts as open. On: take the real switch state again, so the next opening wakes as usual.
+    // Neither direction wakes, locks or sleeps the phone by itself: switching it while a magnet
+    // happens to sit on the sensor must not turn the screen off under the user.
+    private void applyIchthysLidWakeSetting() {
+        if (!mSystemReady) {
+            // Boot reads the lid through readLidState(), which already applies the setting.
+            return;
+        }
+        final int lidState = ichthysLidState(mWindowManagerFuncs.getLidState());
+        if (lidState == mDefaultDisplayPolicy.getLidState()) {
+            return;
+        }
+        mDefaultDisplayPolicy.setLidState(lidState);
+        synchronized (mLock) {
+            updateWakeGestureListenerLp();
+        }
+        updateRotation(true);
+    }
+
     void updateUiMode() {
         if (mUiModeManager == null) {
             mUiModeManager = IUiModeManager.Stub.asInterface(
@@ -7242,7 +7297,8 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         pw.print(prefix); pw.print("mLidKeyboardAccessibility=");
                 pw.print(mLidKeyboardAccessibility);
                 pw.print(" mLidNavigationAccessibility="); pw.print(mLidNavigationAccessibility);
-                pw.print(" getLidBehavior="); pw.println(lidBehaviorToString(getLidBehavior()));
+                pw.print(" getLidBehavior="); pw.print(lidBehaviorToString(getLidBehavior()));
+                pw.print(" mLidWakeEnabled="); pw.println(mLidWakeEnabled);
         pw.print(prefix);
                 pw.print("mLongPressOnBackBehavior=");
                 pw.println(longPressOnBackBehaviorToString(mLongPressOnBackBehavior));
