@@ -57,6 +57,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.android.compose.animation.scene.ElementKey
 import com.android.compose.ui.graphics.painter.rememberDrawablePainter
 import com.android.systemui.res.R
 import com.android.systemui.statusbar.notification.ichthys.quiet.IchthysQuietNotificationsInteractor
@@ -73,6 +74,14 @@ import com.android.systemui.statusbar.notification.ichthys.quiet.QuietSilentStyl
  */
 
 /** Chip and fold row height. */
+/** Scene elements, so shade transitions can fade the quiet strip and rows with the stack. */
+object IchthysQuiet {
+    object Elements {
+        val ChipStrip = ElementKey("IchthysQuietChipStrip")
+        val FoldRows = ElementKey("IchthysQuietFoldRows")
+    }
+}
+
 private val QuietRowHeight = 32.dp
 private val QuietChipGap = 8.dp
 private val QuietChipIconSize = 16.dp

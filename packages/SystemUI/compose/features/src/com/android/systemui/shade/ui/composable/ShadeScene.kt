@@ -497,10 +497,16 @@ private fun ContentScope.SingleShade(
                     // IchthysOS: quiet notifications, as chips above the stack and fold rows
                     // under it.
                     aboveNotifications = { m ->
-                        IchthysQuietChipStrip(viewModel.ichthysQuietNotifications, m)
+                        IchthysQuietChipStrip(
+                            viewModel.ichthysQuietNotifications,
+                            m.element(IchthysQuiet.Elements.ChipStrip),
+                        )
                     },
                     belowNotifications = { m ->
-                        IchthysQuietFoldRows(viewModel.ichthysQuietNotifications, m)
+                        IchthysQuietFoldRows(
+                            viewModel.ichthysQuietNotifications,
+                            m.element(IchthysQuiet.Elements.FoldRows),
+                        )
                     },
                 )
             },
@@ -779,10 +785,16 @@ private fun ContentScope.SplitShade(
                     onEmptySpaceClick = onEmptySpaceClick,
                     // IchthysOS: quiet notifications (see the single shade above).
                     aboveNotifications = { m ->
-                        IchthysQuietChipStrip(viewModel.ichthysQuietNotifications, m)
+                        IchthysQuietChipStrip(
+                            viewModel.ichthysQuietNotifications,
+                            m.element(IchthysQuiet.Elements.ChipStrip),
+                        )
                     },
                     belowNotifications = { m ->
-                        IchthysQuietFoldRows(viewModel.ichthysQuietNotifications, m)
+                        IchthysQuietFoldRows(
+                            viewModel.ichthysQuietNotifications,
+                            m.element(IchthysQuiet.Elements.FoldRows),
+                        )
                     },
                     modifier =
                         Modifier.weight(weight = 1f)

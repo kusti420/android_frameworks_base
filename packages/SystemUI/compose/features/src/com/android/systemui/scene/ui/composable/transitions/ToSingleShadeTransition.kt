@@ -28,6 +28,7 @@ import com.android.compose.animation.scene.transformation.seekSharedElementToOff
 import com.android.systemui.notifications.ui.composable.Notifications
 import com.android.systemui.qs.shared.ui.QuickSettings
 import com.android.systemui.qs.ui.composable.ShoalMediaDock
+import com.android.systemui.shade.ui.composable.IchthysQuiet
 import com.android.systemui.shade.ui.composable.Shade
 import com.android.systemui.shade.ui.composable.ShadeHeader
 import kotlin.time.Duration.Companion.milliseconds
@@ -61,6 +62,13 @@ fun TransitionBuilder.toSingleShadeTransition(
     }
 
     fade(Shade.Elements.BackgroundScrim)
+
+    // IchthysOS: the quiet chips and fold rows are plain compose, outside the stack's own alpha;
+    // fade them with the stack so a collapse does not carry them up opaque and pop them off.
+    fractionRange(start = .42f, easing = Easings.Legacy) {
+        fade(IchthysQuiet.Elements.ChipStrip)
+        fade(IchthysQuiet.Elements.FoldRows)
+    }
 
     if (!isLargeScreenPortrait) {
         translate(Notifications.Elements.NotificationScrim, Edge.Top, false)

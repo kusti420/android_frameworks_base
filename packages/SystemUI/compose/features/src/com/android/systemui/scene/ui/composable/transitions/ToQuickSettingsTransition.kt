@@ -50,6 +50,8 @@ fun TransitionBuilder.toQuickSettingsSceneTransition(durationScale: Double = 1.0
         fade(Elements.BrightnessSlider)
         // IchthysOS: the quick settings notes page, when quick settings collapses from it.
         fade(IchthysQsNotes.Elements.Page)
+        // IchthysOS: the tiles too; translated alone they slid under the scrim edge fully opaque.
+        fade(Elements.QuickSettingsContent)
     }
 
     fade(Notifications.Elements.HeadsUpNotificationPlaceholder)
