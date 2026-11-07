@@ -2797,6 +2797,24 @@ public class LocationProviderManager extends
     @GuardedBy("mMultiplexerLock")
     @Override
     public void onReportLocation(LocationResult locationResult) {
+        // IchthysOS "Fake location": a provider implemented by an app that is spoofed itself (the
+        // location broker, microG / Play services, as the network or fused provider) only ever
+        // sees the fake place, so what it reports is the fake place handed back. Recorded as this
+        // provider's fix it would reach every unspoofed app, the real-location list and the
+        // weather included, as their real position. Dropped; the phone then has no fix from this
+        // provider, which is true.
+        if (mPassiveManager != null) {
+            final CallerIdentity providerIdentity = getProviderIdentity();
+            if (providerIdentity != null && providerIdentity.getPackageName() != null
+                    && IchthysLocationSpoof.isSpoofed(providerIdentity)) {
+                if (D) {
+                    Log.d(TAG, mName + " provider report dropped: " + providerIdentity
+                            + " sees the fake place");
+                }
+                return;
+            }
+        }
+
         LocationResult processed;
         if (mPassiveManager != null) {
             processed = processReportedLocation(locationResult);
