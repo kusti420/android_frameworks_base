@@ -24,6 +24,9 @@ import android.content.ContentResolver;
 import android.content.Context;
 import android.database.ContentObserver;
 import android.hardware.display.DisplayManager;
+import android.media.AudioAttributes;
+import android.media.AudioManager;
+import android.media.AudioPlaybackConfiguration;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
@@ -37,6 +40,8 @@ import android.widget.FrameLayout;
 
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.statusbar.StatusBarState;
+
+import java.util.List;
 
 public class PulseController implements VisualizerStreamHandler.Listener,
         PulseColorController.InvalidateCallback {
@@ -54,6 +59,7 @@ public class PulseController implements VisualizerStreamHandler.Listener,
     private final Handler mHandler;
     private final Vibrator mVibrator;
     private final DisplayManager mDisplayManager;
+    private final AudioManager mAudioManager;
 
     private PulseView mView;
     private PulseColorController mColorController;
@@ -73,6 +79,33 @@ public class PulseController implements VisualizerStreamHandler.Listener,
     private boolean mAttached;
     private boolean mKeyguardShowing;
     private boolean mDozing;
+    // IchthysOS: something is actually playing. Without it the Visualizer stayed linked (FFT and
+    // waveform at ~15 Hz) for the whole lock screen and AOD session with nothing to show.
+    private boolean mPlaying;
+    private final AudioManager.AudioPlaybackCallback mPlaybackCallback =
+            new AudioManager.AudioPlaybackCallback() {
+                @Override
+                public void onPlaybackConfigChanged(List<AudioPlaybackConfiguration> configs) {
+                    final boolean playing = isPlaying(configs);
+                    if (playing != mPlaying) {
+                        mPlaying = playing;
+                        updateShowing();
+                    }
+                }
+            };
+
+    private static boolean isPlaying(List<AudioPlaybackConfiguration> configs) {
+        if (configs == null) return false;
+        for (AudioPlaybackConfiguration c : configs) {
+            if (!c.isActive()) continue;
+            final int usage = c.getAudioAttributes().getUsage();
+            if (usage == AudioAttributes.USAGE_MEDIA || usage == AudioAttributes.USAGE_GAME
+                    || usage == AudioAttributes.USAGE_UNKNOWN) {
+                return true;
+            }
+        }
+        return false;
+    }
     // IchthysOS: the default display is fully off (no AOD), see shouldShow().
     private boolean mScreenOff;
     private boolean mShowing;
@@ -87,6 +120,7 @@ public class PulseController implements VisualizerStreamHandler.Listener,
         mHandler = new Handler(Looper.getMainLooper());
         mVibrator = context.getSystemService(Vibrator.class);
         mDisplayManager = context.getSystemService(DisplayManager.class);
+        mAudioManager = context.getSystemService(AudioManager.class);
     }
 
     /** Attaches the Pulse view behind everything in the given panel container. */
@@ -130,6 +164,10 @@ public class PulseController implements VisualizerStreamHandler.Listener,
             mDisplayManager.registerDisplayListener(mDisplayListener, mHandler);
         }
         mScreenOff = isDefaultDisplayOff();
+        if (mAudioManager != null) {
+            mAudioManager.registerAudioPlaybackCallback(mPlaybackCallback, mHandler);
+            mPlaying = isPlaying(mAudioManager.getActivePlaybackConfigurations());
+        }
 
         updateShowing();
     }
@@ -145,6 +183,9 @@ public class PulseController implements VisualizerStreamHandler.Listener,
             mDisplayManager.unregisterDisplayListener(mDisplayListener);
         }
         mResolver.unregisterContentObserver(mObserver);
+        if (mAudioManager != null) {
+            mAudioManager.unregisterAudioPlaybackCallback(mPlaybackCallback);
+        }
         if (mStreamHandler != null) {
             mStreamHandler.unlink();
         }
@@ -221,7 +262,7 @@ public class PulseController implements VisualizerStreamHandler.Listener,
     }
 
     private boolean shouldShow() {
-        if (!mMasterEnabled || !mKeyguardShowing) {
+        if (!mMasterEnabled || !mKeyguardShowing || !mPlaying) {
             return false;
         }
         // IchthysOS: never capture audio (or buzz to the bass) with the screen fully off. With
