@@ -170,6 +170,11 @@ public class LocationProviderManager extends
     // max age of a location before it is no longer considered "current"
     private static final long MAX_CURRENT_LOCATION_AGE_MS = 30 * 1000;
 
+    // IchthysOS "Fake location": made-up fixes for spoofed apps when the phone has none.
+    private static final long ICHTHYS_SYNTH_MIN_PERIOD_MS = 1000;
+    private static final long ICHTHYS_SYNTH_FIRST_DELAY_MS = 2000;
+    private static final long ICHTHYS_SYNTH_SLACK_MS = 100;
+
     // max timeout allowed for getting the current location
     private static final long MAX_GET_CURRENT_LOCATION_TIMEOUT_MS = 30 * 1000;
 
@@ -856,6 +861,54 @@ public class LocationProviderManager extends
             mProviderTransport = null;
         }
 
+        /**
+         * IchthysOS "Fake location": while a spoofed app's request is active and no fix reaches
+         * it (the phone has no position: indoors, GNSS off, the network provider offline), a
+         * made-up fix at the fake place is delivered at the request's own interval, so the app
+         * sees a phone that sits at the fake place rather than one without location. Real fixes,
+         * faked as usual, keep the request fed and the ticker idle. Not for the passive provider,
+         * which only ever carries other requests' fixes.
+         */
+        private final Runnable mIchthysSynthTick = this::ichthysSynthTick;
+
+        private long ichthysSynthPeriodMs() {
+            return Math.max(ICHTHYS_SYNTH_MIN_PERIOD_MS, getRequest().getIntervalMillis());
+        }
+
+        @GuardedBy("mMultiplexerLock")
+        private void ichthysSynthStart() {
+            if (PASSIVE_PROVIDER.equals(mName) || !isIchthysSpoofed()) {
+                return;
+            }
+            FgThread.getHandler().removeCallbacks(mIchthysSynthTick);
+            FgThread.getHandler().postDelayed(mIchthysSynthTick,
+                    Math.min(ichthysSynthPeriodMs(), ICHTHYS_SYNTH_FIRST_DELAY_MS));
+        }
+
+        private void ichthysSynthStop() {
+            FgThread.getHandler().removeCallbacks(mIchthysSynthTick);
+        }
+
+        private void ichthysSynthTick() {
+            synchronized (mMultiplexerLock) {
+                if (!isActive() || !isIchthysSpoofed()) {
+                    return;
+                }
+                final long periodMs = ichthysSynthPeriodMs();
+                final Location last = getLastDeliveredLocation();
+                if (last == null || last.getElapsedRealtimeAgeMillis()
+                        >= periodMs - ICHTHYS_SYNTH_SLACK_MS) {
+                    final Location synth = IchthysLocationSpoof.synthesize(mName, getIdentity());
+                    if (synth != null) {
+                        executeOperation(acceptLocationChange(LocationResult.wrap(synth)));
+                    }
+                }
+                if (isActive()) {
+                    FgThread.getHandler().postDelayed(mIchthysSynthTick, periodMs);
+                }
+            }
+        }
+
         // TODO: remove suppression when GuardedBy analysis can recognize lock from super class
         @SuppressWarnings("GuardedBy")
         @GuardedBy("mMultiplexerLock")
@@ -901,6 +954,7 @@ public class LocationProviderManager extends
                 mAlarmHelper.cancel(this);
             }
 
+            ichthysSynthStop();
             super.onUnregister();
         }
 
@@ -937,6 +991,18 @@ public class LocationProviderManager extends
                     }
                 }
             }
+
+            // IchthysOS "Fake location": see mIchthysSynthTick.
+            ichthysSynthStart();
+        }
+
+        // TODO: remove suppression when GuardedBy analysis can recognize lock from super class
+        @SuppressWarnings("GuardedBy")
+        @GuardedBy("mMultiplexerLock")
+        @Override
+        protected void onInactive() {
+            ichthysSynthStop();
+            super.onInactive();
         }
 
         @Override
@@ -1351,6 +1417,11 @@ public class LocationProviderManager extends
                     getPermissionLevel(),
                     getRequest().isBypass(),
                     MAX_CURRENT_LOCATION_AGE_MS);
+            // IchthysOS "Fake location": a spoofed app is answered at once at the fake place;
+            // waiting for a real fix the phone may never get would end in null.
+            if (lastLocation == null && isIchthysSpoofed()) {
+                lastLocation = IchthysLocationSpoof.synthesize(mName, getIdentity());
+            }
             if (lastLocation != null) {
                 executeOperation(acceptLocationChange(LocationResult.wrap(lastLocation)));
             }
@@ -1898,9 +1969,10 @@ public class LocationProviderManager extends
                 permissionLevel,
                 request.isBypass(),
                 Long.MAX_VALUE);
-        // IchthysOS "Fake location": the fake place's fix instead.
+        // IchthysOS "Fake location": the fake place's fix instead, also when the phone has none.
         if (!request.isBypass() && IchthysLocationSpoof.isSpoofed(identity)) {
-            last = IchthysLocationSpoof.fake(last, identity);
+            last = last != null ? IchthysLocationSpoof.fake(last, identity)
+                    : IchthysLocationSpoof.synthesize(mName, identity);
             if (last != null) {
                 IchthysGuardInternal.note(identity.getUid(), GuardEvent.SHIELD_LOCATION_FAKE,
                         mName);

@@ -38,6 +38,7 @@ import android.os.Binder;
 import android.os.Handler;
 import android.os.Process;
 import android.os.RemoteException;
+import android.os.SystemClock;
 import android.os.UserHandle;
 import android.provider.Settings;
 import android.text.TextUtils;
@@ -535,6 +536,26 @@ public final class IchthysLocationSpoof {
             fakes.add(location);
         }
         return LocationResult.wrap(fakes);
+    }
+
+    /** Accuracy of a made-up fix from a provider other than GPS, metres. */
+    private static final float SYNTH_ACCURACY_OTHER_M = 40;
+
+    /**
+     * A fix at the fake place for [identity] now, with no real fix behind it: what the location
+     * service hands a spoofed app when the phone has no position of its own (indoors, no GNSS,
+     * the network provider offline or spoofed itself). Without it the fake place turns into "no
+     * location" exactly where it matters, and a fake place that never moves while the app's
+     * other signals say "somewhere else" is no worse than one built from a real fix. Null when
+     * [identity] isn't spoofed after all (the fake place was switched off meanwhile).
+     */
+    @Nullable
+    public static Location synthesize(String provider, CallerIdentity identity) {
+        final Location base = new Location(provider);
+        base.setTime(System.currentTimeMillis());
+        base.setElapsedRealtimeNanos(SystemClock.elapsedRealtimeNanos());
+        base.setAccuracy("gps".equals(provider) ? MIN_ACCURACY_M : SYNTH_ACCURACY_OTHER_M);
+        return fake(base, identity);
     }
 
     /** The fake place's fix for [identity] in place of [real], or null if there is none. */
