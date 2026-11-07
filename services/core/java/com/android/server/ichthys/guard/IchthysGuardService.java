@@ -67,6 +67,7 @@ import com.android.internal.annotations.GuardedBy;
 import com.android.internal.ichthys.guard.GuardEvent;
 import com.android.internal.ichthys.guard.IGuardEventListener;
 import com.android.internal.ichthys.guard.IIchthysGuard;
+import com.android.internal.os.BackgroundThread;
 import com.android.internal.util.DumpUtils;
 import com.android.modules.utils.TypedXmlPullParser;
 import com.android.modules.utils.TypedXmlSerializer;
@@ -301,8 +302,15 @@ public final class IchthysGuardService extends SystemService {
     private final ArrayList<GuardEvent> mPending = new ArrayList<>();
     private boolean mDispatchScheduled;
 
+    // IchthysOS: a cached Settings gets frozen while its live listener stays registered; plain
+    // oneway sends then filled its async buffer and failed every 500 ms (FAILED BINDER
+    // TRANSACTION, ~48 KB each) until it thawed. Batches for a frozen listener are dropped
+    // instead; Settings pages the gap from getEvents when the next batch arrives.
     private final RemoteCallbackList<IGuardEventListener> mListeners =
-            new RemoteCallbackList<>();
+            new RemoteCallbackList.Builder<IGuardEventListener>(
+                            RemoteCallbackList.FROZEN_CALLEE_POLICY_DROP)
+                    .setExecutor(BackgroundThread.getExecutor())
+                    .build();
 
     @GuardedBy("mApplyLock")
     private int[] mAppliedDeny;
@@ -1507,23 +1515,19 @@ public final class IchthysGuardService extends SystemService {
         if (mPending.isEmpty()) return;
         final ArrayList<GuardEvent> batch = new ArrayList<>(mPending);
         mPending.clear();
-        final int n = mListeners.beginBroadcast();
-        try {
-            for (int i = 0; i < n; i++) {
-                final IGuardEventListener l = mListeners.getBroadcastItem(i);
-                for (int from = 0; from < batch.size(); from += LISTENER_CHUNK) {
-                    final List<GuardEvent> chunk = batch.subList(from,
-                            Math.min(batch.size(), from + LISTENER_CHUNK));
-                    try {
-                        l.onEvents(chunk);
-                    } catch (RemoteException e) {
-                        break; // Dead; RemoteCallbackList drops it.
-                    }
+        // broadcast(), not beginBroadcast(): the frozen-callee policy only applies here (and
+        // beginBroadcast() throws once a policy is set).
+        mListeners.broadcast(l -> {
+            for (int from = 0; from < batch.size(); from += LISTENER_CHUNK) {
+                final List<GuardEvent> chunk = batch.subList(from,
+                        Math.min(batch.size(), from + LISTENER_CHUNK));
+                try {
+                    l.onEvents(chunk);
+                } catch (RemoteException e) {
+                    break; // Dead (dropped on binderDied) or its buffer is full: skip the rest.
                 }
             }
-        } finally {
-            mListeners.finishBroadcast();
-        }
+        });
     }
 
     private List<GuardEvent> getEventsInternal(long sinceSeq, int max) {
