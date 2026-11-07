@@ -27,6 +27,7 @@ import com.android.systemui.qs.ui.composable.IchthysQsNotes
 import com.android.systemui.qs.ui.composable.QuickSettingsScene
 import com.android.systemui.shade.ui.composable.Shade
 import com.android.systemui.shade.ui.composable.ShadeHeader
+import com.android.systemui.shade.ui.composable.ShoalRingerElement
 import kotlin.time.Duration.Companion.milliseconds
 
 fun TransitionBuilder.toQuickSettingsSceneTransition(durationScale: Double = 1.0) {
@@ -52,6 +53,8 @@ fun TransitionBuilder.toQuickSettingsSceneTransition(durationScale: Double = 1.0
         fade(IchthysQsNotes.Elements.Page)
         // IchthysOS: the tiles too; translated alone they slid under the scrim edge fully opaque.
         fade(Elements.QuickSettingsContent)
+        // IchthysOS "Shoal": the ringer pill under the clock; it stayed opaque to the end.
+        fade(ShoalRingerElement)
     }
 
     fade(Notifications.Elements.HeadsUpNotificationPlaceholder)
