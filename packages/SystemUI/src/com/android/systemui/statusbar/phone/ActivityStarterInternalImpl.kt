@@ -592,6 +592,21 @@ constructor(
         // TODO b/308819693: startWakeAndUnlock animation when pulsing
 
         if (isKeyguardShowing()) {
+            val shade = shadeControllerLazy.get()
+            if (shade.isShadeFullyOpen()) {
+                // IchthysOS: never draw the (alternate) bouncer over an open shade / QS on the
+                // lock screen (it showed the fingerprint prompt on top of the expanded QS notes
+                // page and the footer's "apps active" button). Collapse first, then ask for
+                // device entry on the clean lock screen, like QS tiles do.
+                Log.i(TAG, "dismissKeyguardThenExecute: collapsing the shade first")
+                shade.addPostCollapseAction {
+                    statusBarKeyguardViewManagerLazy
+                        .get()
+                        .dismissWithAction(action, cancel, afterKeyguardGone, customMessage)
+                }
+                shade.animateCollapseShade()
+                return
+            }
             statusBarKeyguardViewManagerLazy
                 .get()
                 .dismissWithAction(action, cancel, afterKeyguardGone, customMessage)
