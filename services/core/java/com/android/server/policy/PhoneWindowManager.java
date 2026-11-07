@@ -117,6 +117,7 @@ import android.accessibilityservice.AccessibilityService;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.SuppressLint;
+import android.app.AlarmManager;
 import android.app.ActivityManager;
 import android.app.ActivityManager.RecentTaskInfo;
 import android.app.ActivityManagerInternal;
@@ -1279,7 +1280,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                     if (mTorchCameraId != null && mTorchCameraId.equals(cameraId)) {
                         mTorchEnabled = enabled;
                         if (!enabled) {
-                            mHandler.removeCallbacks(mTorchAutoOffRunnable);
+                            cancelTorchAutoOff();
                         }
                     }
                 }
@@ -1301,17 +1302,39 @@ public class PhoneWindowManager implements WindowManagerPolicy {
             return;
         }
         try {
-            mHandler.removeCallbacks(mTorchAutoOffRunnable);
+            cancelTorchAutoOff();
             final boolean newState = !mTorchEnabled;
             mCameraManager.setTorchMode(mTorchCameraId, newState);
             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS_POWER_BUTTON,
                     "Power - Torch");
             if (newState && mTorchLongPressPowerTimeout > 0) {
-                mHandler.postDelayed(mTorchAutoOffRunnable,
-                        mTorchLongPressPowerTimeout * 1000L);
+                scheduleTorchAutoOff(mTorchLongPressPowerTimeout * 1000L);
             }
         } catch (CameraAccessException | IllegalStateException e) {
             Slog.e(TAG, "Couldn't toggle torch for torch-on-power gesture", e);
+        }
+    }
+
+    // IchthysOS: the auto-off is a wakeup alarm, not a Handler delay. The gesture leaves the screen
+    // off, so the phone could suspend with the LED lit and an uptime-based delay only fired at the
+    // next wake.
+    private final AlarmManager.OnAlarmListener mTorchAutoOffAlarm = () -> mTorchAutoOffRunnable.run();
+
+    private void scheduleTorchAutoOff(long delayMs) {
+        final AlarmManager am = mContext.getSystemService(AlarmManager.class);
+        if (am == null) {
+            mHandler.postDelayed(mTorchAutoOffRunnable, delayMs);
+            return;
+        }
+        am.setExact(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + delayMs,
+                "PhoneWindowManager.torchAutoOff", mTorchAutoOffAlarm, mHandler);
+    }
+
+    private void cancelTorchAutoOff() {
+        mHandler.removeCallbacks(mTorchAutoOffRunnable);
+        final AlarmManager am = mContext.getSystemService(AlarmManager.class);
+        if (am != null) {
+            am.cancel(mTorchAutoOffAlarm);
         }
     }
 
