@@ -1559,7 +1559,10 @@ public class UdfpsController implements DozeReceiver, Dumpable {
             }
             final int maxBacklight = backlight[backlight.length - 1];
             final float brightness = mDimDisplayManager.getBrightness(Display.DEFAULT_DISPLAY);
-            final float current = nitsAt(brightness * maxBacklight, backlight, nits);
+            // IchthysOS: the table's entries run 1..max for brightness 0..1 (the framework's
+            // (v - 1) / (max - 1)); entry 0 is "off".
+            final float current = nitsAt(backlight[1] + brightness * (maxBacklight - backlight[1]),
+                    backlight, nits);
             // What the panel shows while the fingerprint mask is on: the HAL writes
             // mask_brightness = hbm_level (331 on this panel = 547 nits in the same table).
             // IchthysOS 2026-11-02: the mask level (331) lies above this table's end (255 = 420
