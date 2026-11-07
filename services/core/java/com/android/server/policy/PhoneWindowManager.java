@@ -1318,7 +1318,8 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     // IchthysOS: the auto-off is a wakeup alarm, not a Handler delay. The gesture leaves the screen
     // off, so the phone could suspend with the LED lit and an uptime-based delay only fired at the
     // next wake.
-    private final AlarmManager.OnAlarmListener mTorchAutoOffAlarm = () -> mTorchAutoOffRunnable.run();
+    private final AlarmManager.OnAlarmListener mTorchAutoOffAlarm =
+            () -> this.mTorchAutoOffRunnable.run();  // declared below: qualified access
 
     private void scheduleTorchAutoOff(long delayMs) {
         final AlarmManager am = mContext.getSystemService(AlarmManager.class);
