@@ -404,9 +404,21 @@ private fun LivingSkyMotion(
         var last = 0L
         var bolt = 0f
         var nextBolt = 2f + 6f * kotlin.random.Random.nextFloat()
+        // IchthysOS: a skipped frame sleeps until the step is due. Returning from withFrameNanos
+        // alone just asked for the next vsync, so the UI thread still woke at the panel's rate
+        // (up to 120 Hz) instead of every 15..41 ms.
+        var waitNs = 0L
         while (true) {
+            if (waitNs > 0L) {
+                kotlinx.coroutines.delay(waitNs / 1_000_000L)
+                waitNs = 0L
+            }
             androidx.compose.runtime.withFrameNanos { t ->
-                if (last != 0L && t - last < step) return@withFrameNanos
+                if (last != 0L && t - last < step) {
+                    // Wake one vsync early (~8 ms at 120 Hz) so the due frame is not missed.
+                    waitNs = (step - (t - last) - 8_000_000L).coerceAtLeast(0L)
+                    return@withFrameNanos
+                }
                 val dt = if (last == 0L) 0f else ((t - last) / 1e9f).coerceAtMost(0.1f)
                 last = t
                 LivingSkyFrame.time += dt
