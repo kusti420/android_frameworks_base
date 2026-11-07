@@ -86,6 +86,7 @@ import com.android.internal.util.FrameworkStatsLog;
 import com.android.internal.util.IndentingPrintWriter;
 import com.android.server.LocalServices;
 import com.android.server.SystemService;
+import com.android.server.ichthys.guard.IchthysGrantShield;
 import com.android.server.pm.permission.LegacyPermissionManagerInternal;
 
 import java.io.FileDescriptor;
@@ -485,6 +486,10 @@ public final class ContentService extends IContentService.Stub {
 
         final long token = clearCallingIdentity();
         try {
+            // IchthysOS: a change URI naming a hidden ichthys_* settings key (the shield lists,
+            // the fake place, the lockdown switches) is delivered only to the system and
+            // preinstalled apps; any other app would learn the key's name and when it changed.
+            collector.dropIchthysHiddenForApps();
             // Actually dispatch all the notifications we collected
             collector.dispatch();
 
@@ -532,6 +537,67 @@ public final class ContentService extends IContentService.Stub {
      * multiple {@link Uri} where all other arguments are identical.
      */
     @VisibleForTesting
+    /**
+     * IchthysOS: the settings keys SettingsProvider hides from apps (SettingsProvider.isIchthysAllowlist,
+     * kept in step by hand). Their change notifications are filtered the same way.
+     */
+    static boolean isIchthysHiddenSettingsUri(Uri uri) {
+        if (uri == null || !"settings".equals(uri.getAuthority())) return false;
+        final List<String> segments = uri.getPathSegments();
+        if (segments.size() < 2) return false;
+        final String table = segments.get(0);
+        if (!"secure".equals(table) && !"global".equals(table) && !"system".equals(table)) {
+            return false;
+        }
+        final String name = segments.get(1);
+        return name.startsWith("ichthys_")
+                && (name.startsWith("ichthys_location_")
+                        || name.equals("ichthys_twilight_times")
+                        || name.endsWith("_pkgs")
+                        || name.endsWith("_seeded")
+                        || name.endsWith("_shield")
+                        || name.equals("ichthys_a11y_scopes")
+                        || name.equals("ichthys_storage_scopes")
+                        || name.equals("ichthys_quiet_hidden")
+                        || name.equals("ichthys_contacts_lockdown")
+                        || name.equals("ichthys_clipboard_lockdown")
+                        || name.equals("ichthys_sensor_fingerprint_protection"));
+    }
+
+    private static final android.util.SparseBooleanArray sIchthysTrustedUids =
+            new android.util.SparseBooleanArray();
+
+    /** The system and preinstalled apps, cached per uid (the same rule as SettingsProvider). */
+    static boolean isIchthysTrustedObserver(int uid) {
+        if (UserHandle.getAppId(uid) < android.os.Process.FIRST_APPLICATION_UID) return true;
+        synchronized (sIchthysTrustedUids) {
+            final int i = sIchthysTrustedUids.indexOfKey(uid);
+            if (i >= 0) return sIchthysTrustedUids.valueAt(i);
+        }
+        boolean trusted = false;
+        try {
+            final android.content.pm.IPackageManager pm = android.app.AppGlobals.getPackageManager();
+            final String[] pkgs = pm.getPackagesForUid(uid);
+            if (pkgs != null) {
+                for (String p : pkgs) {
+                    final android.content.pm.ApplicationInfo ai =
+                            pm.getApplicationInfo(p, 0, UserHandle.getUserId(uid));
+                    if (ai != null && (ai.flags & android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0) {
+                        trusted = true;
+                        break;
+                    }
+                }
+            }
+        } catch (android.os.RemoteException | RuntimeException ignored) {
+            // Unknown: treated as an ordinary app.
+        }
+        synchronized (sIchthysTrustedUids) {
+            if (sIchthysTrustedUids.size() > 256) sIchthysTrustedUids.clear();
+            sIchthysTrustedUids.put(uid, trusted);
+        }
+        return trusted;
+    }
+
     public static class ObserverCollector {
         private final ArrayMap<Key, List<Uri>> collected = new ArrayMap<>();
 
@@ -566,6 +632,24 @@ public final class ContentService extends IContentService.Stub {
             @Override
             public int hashCode() {
                 return Objects.hash(observer, uid, selfChange, flags, userId);
+            }
+        }
+
+        /** IchthysOS: removes the hidden settings URIs collected for untrusted observers. */
+        public void dropIchthysHiddenForApps() {
+            for (int i = collected.size() - 1; i >= 0; i--) {
+                final Key key = collected.keyAt(i);
+                final List<Uri> uris = collected.valueAt(i);
+                boolean any = false;
+                for (Uri u : uris) {
+                    if (isIchthysHiddenSettingsUri(u)) {
+                        any = true;
+                        break;
+                    }
+                }
+                if (!any || isIchthysTrustedObserver(key.uid)) continue;
+                uris.removeIf(ContentService::isIchthysHiddenSettingsUri);
+                if (uris.isEmpty()) collected.removeAt(i);
             }
         }
 
@@ -1196,11 +1280,14 @@ public final class ContentService extends IContentService.Stub {
         mContext.enforceCallingOrSelfPermission(Manifest.permission.READ_SYNC_STATS,
                 "no permission to read the sync stats");
 
+        final int callingUid = Binder.getCallingUid();
+        // IchthysOS: a contacts-shielded app sees no accounts in AccountManager, so the running
+        // syncs must not name them either (GET_ACCOUNTS comes with the contacts group).
         final boolean canAccessAccounts =
             mContext.checkCallingOrSelfPermission(Manifest.permission.GET_ACCOUNTS)
-                == PackageManager.PERMISSION_GRANTED;
+                == PackageManager.PERMISSION_GRANTED
+                && !IchthysGrantShield.isContactsShielded(mContext, callingUid);
         final List<SyncInfo> results;
-        final int callingUid = Binder.getCallingUid();
         final long identityToken = clearCallingIdentity();
         try {
             results = getSyncManager().getSyncStorageEngine()

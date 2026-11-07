@@ -878,6 +878,10 @@ public class ClipboardService extends SystemService {
                     if (!ichthysMayReadLocked(intendingUid, current, focusedWindow)) {
                         Slog.i(TAG, "Clipboard lockdown: " + pkg + " read the clipboard without"
                                 + " a user paste action; returned empty");
+                        // Evidence for Guard (rate-limited there; never reaches this path).
+                        com.android.server.ichthys.guard.IchthysGuardInternal.note(intendingUid,
+                                com.android.internal.ichthys.guard.GuardEvent.SHIELD_CLIPBOARD,
+                                "read without a paste action");
                         return null;
                     }
                     ichthysNoteGrantUsedLocked(intendingUid);

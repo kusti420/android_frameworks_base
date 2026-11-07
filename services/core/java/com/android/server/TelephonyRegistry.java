@@ -1694,8 +1694,7 @@ public class TelephonyRegistry extends ITelephonyRegistry.Stub {
 
     private String getCallIncomingNumber(Record record, int phoneId) {
         // Only reveal the incoming number if the record has read call log permission.
-        return record.canReadCallLog() && !isCallLogShielded(record)
-                ? mCallIncomingNumber[phoneId] : "";
+        return ichthysNumberAllowed(record) ? mCallIncomingNumber[phoneId] : "";
     }
 
     private Record add(IBinder binder, int callingUid, int callingPid, boolean doesLimitApply) {
@@ -1799,8 +1798,7 @@ public class TelephonyRegistry extends ITelephonyRegistry.Stub {
                         // Ensure the listener has read call log permission; if they do not return
                         // an empty phone number.
                         // This is ONLY for legacy onCallStateChanged in PhoneStateListener.
-                        String phoneNumberOrEmpty =
-                                r.canReadCallLog() && !isCallLogShielded(r) ? phoneNumber : "";
+                        String phoneNumberOrEmpty = ichthysNumberAllowed(r) ? phoneNumber : "";
                         r.callback.onLegacyCallStateChanged(state, phoneNumberOrEmpty);
                     } catch (RemoteException ex) {
                         mRemoveList.add(r.binder);
@@ -4682,6 +4680,20 @@ public class TelephonyRegistry extends ITelephonyRegistry.Stub {
             out.addAll(roles.getRoleHoldersAsUser(RoleManager.ROLE_SMS, UserHandle.of(userId)));
         }
         return out;
+    }
+
+    /**
+     * IchthysOS: whether the record's app gets the call's number: the stock call-log permission,
+     * then the call-log shield. A shielded refusal is reported to Guard as evidence (rate-limited
+     * there, never on this path's critical section).
+     */
+    private boolean ichthysNumberAllowed(Record r) {
+        if (!r.canReadCallLog()) return false;
+        if (!isCallLogShielded(r)) return true;
+        com.android.server.ichthys.guard.IchthysGuardInternal.note(r.callerUid,
+                com.android.internal.ichthys.guard.GuardEvent.SHIELD_CALL_NUMBER,
+                "caller number hidden");
+        return false;
     }
 
     /** Whether the record's app may not have call numbers under the call-log shield. */

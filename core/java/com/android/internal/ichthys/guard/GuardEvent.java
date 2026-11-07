@@ -115,6 +115,14 @@ public final class GuardEvent implements Parcelable {
     public static final int SHIELD_CONTACTS_WRITE = 9;
     public static final int SHIELD_CALENDAR_WRITE = 10;
     public static final int SHIELD_CALL_LOG_WRITE = 11;
+    /** A clipboard read without a paste action answered with nothing (clipboard lockdown). */
+    public static final int SHIELD_CLIPBOARD = 12;
+    /** A usage-stats query answered with an empty history. */
+    public static final int SHIELD_USAGE = 13;
+    /** A call's number withheld from a live call-state listener (call-log shield). */
+    public static final int SHIELD_CALL_NUMBER = 14;
+    /** The highest SHIELD_* code; the service refuses anything above it. */
+    public static final int SHIELD_MAX = SHIELD_CALL_NUMBER;
 
     /** Monotonic sequence number (starts at 1, survives nothing: reset on boot). */
     public final long seq;

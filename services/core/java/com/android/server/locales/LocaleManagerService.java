@@ -538,6 +538,18 @@ public class LocaleManagerService extends SystemService {
      */
     @NonNull
     public LocaleList getSystemLocales() throws RemoteException {
+        // IchthysOS "Spoofed values": a spoofed app whose profile sets a language is told that
+        // language as the system's, as its Configuration already says (the real "et-EE" would
+        // otherwise name the country through this public, permission-less call).
+        final com.android.server.location.IchthysLocationSpoof.Profile spoof =
+                com.android.server.location.IchthysLocationSpoof.getSpoofForCaller();
+        if (spoof != null && spoof.locale != null) {
+            try {
+                return LocaleList.forLanguageTags(spoof.locale);
+            } catch (RuntimeException ignored) {
+                // A bad tag: fall through to the real list.
+            }
+        }
         final long token = Binder.clearCallingIdentity();
         try {
             return getSystemLocalesUnchecked();

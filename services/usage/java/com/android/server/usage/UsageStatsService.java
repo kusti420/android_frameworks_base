@@ -2293,7 +2293,15 @@ public class UsageStatsService extends SystemService implements
          * noted, exactly as for a real grant.
          */
         private boolean hasQueryAccess(String callingPackage) {
-            return hasQueryPermission(callingPackage) && !ichthysHidesUsageHistory(callingPackage);
+            if (!hasQueryPermission(callingPackage)) return false;
+            if (ichthysHidesUsageHistory(callingPackage)) {
+                // Evidence for Guard (rate-limited there; never reaches this path).
+                com.android.server.ichthys.guard.IchthysGuardInternal.note(Binder.getCallingUid(),
+                        com.android.internal.ichthys.guard.GuardEvent.SHIELD_USAGE,
+                        "usage history emptied");
+                return false;
+            }
+            return true;
         }
 
         private boolean ichthysHidesUsageHistory(String callingPackage) {

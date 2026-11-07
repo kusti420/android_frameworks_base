@@ -315,6 +315,10 @@ public final class IchthysGuardService extends SystemService {
     @GuardedBy("mApplyLock")
     private int[] mAppliedDeny;
     @GuardedBy("mApplyLock")
+    private long mLastForcedApplyElapsed;
+    /** How often the deny chain is rewritten even when unchanged (see applyFirewall). */
+    private static final long FORCE_APPLY_INTERVAL_MS = 10 * 60_000L;
+    @GuardedBy("mApplyLock")
     private boolean mFirewallLogged;
     /** Set at PHASE_SYSTEM_SERVICES_READY: from then on a missing ConnectivityManager is a bug. */
     private volatile boolean mBootPhaseReached;
@@ -429,6 +433,13 @@ public final class IchthysGuardService extends SystemService {
         }
         if (phase == PHASE_ACTIVITY_MANAGER_READY) {
             registerReceivers();
+            // IchthysOS: quarantine rides on the platform's aconfig flag; without it new apps
+            // would silently start unreviewed. Say so once where Guard's journal shows it.
+            if (!android.content.pm.Flags.quarantinedEnabled()) {
+                Slog.w(TAG, "quarantined_enabled is off: new apps are not held for review");
+                addJournal(0, GuardEvent.JOURNAL_SERVICE_START,
+                        "Quarantine unavailable on this build (flag off): new apps open unreviewed");
+            }
             registerLanWatcher();
             registerMonitor();
             registerBehaviourWatchers();
@@ -467,6 +478,10 @@ public final class IchthysGuardService extends SystemService {
     // Firewall
 
     private void applyFirewall() {
+      // mApplyLock first (then mLock, the order the failure path already uses): two concurrent
+      // applies could otherwise write their snapshots in the opposite order and leave the chain
+      // holding the older set.
+      synchronized (mApplyLock) {
         final int[] deny;
         final int[] metered;
         synchronized (mLock) {
@@ -526,7 +541,7 @@ public final class IchthysGuardService extends SystemService {
             metered = Arrays.copyOf(mAll, nAll);
             Arrays.sort(metered);
         }
-        synchronized (mApplyLock) {
+        {
             // IchthysOS: fetched again when missing. The one fetch at PHASE_SYSTEM_SERVICES_READY
             // could come back null, and then every apply returned here silently: no deny rule
             // and no enabled chain ever reached the network stack.
@@ -546,9 +561,15 @@ public final class IchthysGuardService extends SystemService {
                 // off (cmd connectivity set-package-networking-enabled true) would leave every
                 // deny rule in place but unenforced.
                 try {
-                    if (!Arrays.equals(deny, mAppliedDeny)) {
+                    // Nothing reads the chain back: every FORCE_APPLY_INTERVAL_MS the set is
+                    // written even when unchanged, so a netd or Connectivity restart that
+                    // emptied the BPF map does not leave "blocked" apps online for good.
+                    final long nowElapsed = SystemClock.elapsedRealtime();
+                    final boolean force = nowElapsed - mLastForcedApplyElapsed > FORCE_APPLY_INTERVAL_MS;
+                    if (force || !Arrays.equals(deny, mAppliedDeny)) {
                         mCm.replaceFirewallChain(FIREWALL_CHAIN_OEM_DENY_3, deny);
                         mAppliedDeny = deny;
+                        if (force) mLastForcedApplyElapsed = nowElapsed;
                     }
                     // Idempotent and cheap (one BPF configuration write); the getter is hidden
                     // from services, so the chain is simply switched on at every apply.
@@ -586,6 +607,7 @@ public final class IchthysGuardService extends SystemService {
                 Binder.restoreCallingIdentity(token);
             }
         }
+      }
     }
 
     /** On screen: top, bound to the top app, or persistent. */
@@ -799,15 +821,19 @@ public final class IchthysGuardService extends SystemService {
                     && !(state == LAN_DENY && lanGranted(uid))) {
                 continue;
             }
-            setLanPermission(uid, state);
+            final boolean applied = setLanPermission(uid, state);
             if (state == LAN_NONE) {
                 mLanApplied.delete(uid);
             } else {
                 mLanApplied.put(uid, state);
             }
-            addJournal(uid, GuardEvent.JOURNAL_LAN_APPLIED, state == LAN_DENY
-                    ? "Local network blocked" : state == LAN_ALLOW
-                    ? "Local network allowed" : "Local network back to stock");
+            // Evidence only for a real change: an app that never asked for the permission has
+            // nothing to block, and "Local network blocked" would be a false proof.
+            if (applied) {
+                addJournal(uid, GuardEvent.JOURNAL_LAN_APPLIED, state == LAN_DENY
+                        ? "Local network blocked" : state == LAN_ALLOW
+                        ? "Local network allowed" : "Local network back to stock");
+            }
             changed = true;
         }
         if (changed) savePolicy();
@@ -834,12 +860,14 @@ public final class IchthysGuardService extends SystemService {
      * allow = granted, none = the user-fixed flag lifted, grant left as it is. Packages that don't
      * request the permission (or builds without it) are left alone.
      */
-    private void setLanPermission(int uid, int state) {
+    /** Returns true when at least one package of the uid requests the permission and was updated. */
+    private boolean setLanPermission(int uid, int state) {
         final PackageManager pm = getContext().getPackageManager();
         final String[] pkgs = pm.getPackagesForUid(uid);
-        if (pkgs == null) return;
+        if (pkgs == null) return false;
         final UserHandle user = UserHandle.getUserHandleForUid(uid);
         final int fixed = PackageManager.FLAG_PERMISSION_USER_FIXED;
+        boolean applied = false;
         for (String pkg : pkgs) {
             try {
                 final PackageInfo pi = pm.getPackageInfoAsUser(pkg,
@@ -858,12 +886,14 @@ public final class IchthysGuardService extends SystemService {
                         pm.grantRuntimePermission(pkg, PERMISSION_LOCAL_NETWORK, user);
                     }
                 }
+                applied = true;
             } catch (PackageManager.NameNotFoundException e) {
                 // Gone.
             } catch (RuntimeException e) {
                 Slog.w(TAG, "Local network state " + state + " not applied to " + pkg, e);
             }
         }
+        return applied;
     }
 
     private void replaceBehavioursInternal(int[] uids, int[] flags, int callingUserId) {
@@ -1045,7 +1075,9 @@ public final class IchthysGuardService extends SystemService {
 
     private void pauseInternal(int minutes) {
         final long ms = minutes <= 0 ? 0 : Math.min(minutes, MAX_PAUSE_MINUTES) * 60_000L;
+        final boolean wasPaused;
         synchronized (mLock) {
+            wasPaused = mPausedUntil != 0;
             mPausedUntil = ms == 0 ? 0 : System.currentTimeMillis() + ms;
             mPauseEndElapsed = ms == 0 ? 0 : SystemClock.elapsedRealtime() + ms;
         }
@@ -1053,7 +1085,7 @@ public final class IchthysGuardService extends SystemService {
             Slog.w(TAG, "Enforcement paused for " + (ms / 60_000L) + " min");
             addJournal(0, GuardEvent.JOURNAL_PAUSE_START,
                     "Rules paused for " + (ms / 60_000L) + " min");
-        } else {
+        } else if (wasPaused) {
             addJournal(0, GuardEvent.JOURNAL_PAUSE_END, "Pause ended, rules enforced again");
         }
         // On the handler, so two pauses (or a pause and the end of the last one) can't race.
@@ -1139,9 +1171,11 @@ public final class IchthysGuardService extends SystemService {
                         final int access = parser.getAttributeInt(null, "access",
                                 IIchthysGuard.ACCESS_ALLOW);
                         final int flags = parser.getAttributeInt(null, "flags", 0) & 0xf;
+                        final int reason = parser.getAttributeInt(null, "reason",
+                                GuardEvent.REASON_POLICY);
                         if (key != null && isValidAccess(access)
                                 && (access != IIchthysGuard.ACCESS_ALLOW || flags != 0)) {
-                            mRemovedRules.put(key, new int[] {access, flags});
+                            mRemovedRules.put(key, new int[] {access, flags, reason});
                         }
                     } else if ("alerts".equals(tag)) {
                         mAlertMask = parser.getAttributeInt(null, "mask", IIchthysGuard.ALERT_ALL)
@@ -1209,6 +1243,9 @@ public final class IchthysGuardService extends SystemService {
                 xml.attribute(null, "key", e.getKey());
                 xml.attributeInt(null, "access", e.getValue()[0]);
                 xml.attributeInt(null, "flags", e.getValue()[1]);
+                if (e.getValue().length > 2 && e.getValue()[2] != GuardEvent.REASON_POLICY) {
+                    xml.attributeInt(null, "reason", e.getValue()[2]);
+                }
                 xml.endTag(null, "removed");
             }
             xml.startTag(null, "alerts");
@@ -1417,7 +1454,7 @@ public final class IchthysGuardService extends SystemService {
     /** As above; {@code reporterUid} is kept in the detail when it isn't the system. */
     private void noteShieldInternal(int uid, int code, @Nullable String detail,
             int reporterUid) {
-        if (!isAppUid(uid) || code <= 0 || code > GuardEvent.SHIELD_CALL_LOG_WRITE) return;
+        if (!isAppUid(uid) || code <= 0 || code > GuardEvent.SHIELD_MAX) return;
         if (UserHandle.getAppId(reporterUid) >= Process.FIRST_APPLICATION_UID) {
             detail = (detail == null ? "" : detail + " ") + "(reported by uid " + reporterUid + ")";
         }
@@ -1632,6 +1669,9 @@ public final class IchthysGuardService extends SystemService {
             if (rules == null) return;
             if (rules[0] != IIchthysGuard.ACCESS_ALLOW && mPolicy.indexOfKey(uid) < 0) {
                 mPolicy.put(uid, rules[0]);
+                final int reason = rules.length > 2 ? rules[2] : GuardEvent.REASON_POLICY;
+                if (reason != GuardEvent.REASON_POLICY) mPolicyReason.put(uid, reason);
+                else mPolicyReason.delete(uid);
                 changed = true;
             }
             if (rules[1] != 0 && mBehaviour.indexOfKey(uid) < 0) {
@@ -1670,8 +1710,11 @@ public final class IchthysGuardService extends SystemService {
                         final int access = mPolicy.get(uid, IIchthysGuard.ACCESS_ALLOW);
                         final int flags = mBehaviour.get(uid);
                         if (access != IIchthysGuard.ACCESS_ALLOW || flags != 0) {
+                            // With its reason: a sleeping app must come back asleep (lifted on
+                            // its first open), not as a user rule that never lifts.
                             mRemovedRules.put(pkgName + "|" + getSendingUserId(),
-                                    new int[] {access, flags});
+                                    new int[] {access, flags,
+                                            mPolicyReason.get(uid, GuardEvent.REASON_POLICY)});
                             kept = true;
                         }
                     }
@@ -2531,54 +2574,60 @@ public final class IchthysGuardService extends SystemService {
         @Override
         protected void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
             if (!DumpUtils.checkDumpPermission(getContext(), TAG, pw)) return;
+            // Built under the lock, written to the (possibly slow) pipe outside it: mLock is
+            // also taken on AMS's UI handler and on location delivery.
+            final java.io.StringWriter sw = new java.io.StringWriter();
+            final PrintWriter spw = new PrintWriter(sw);
             synchronized (mLock) {
-                pw.println("IchthysGuardService");
-                pw.println("  monitor registered: " + mMonitorRegistered);
-                pw.println("  health: 0x" + Integer.toHexString(healthBits())
+                spw.println("IchthysGuardService");
+                spw.println("  monitor registered: " + mMonitorRegistered);
+                spw.println("  health: 0x" + Integer.toHexString(healthBits())
                         + " (firewall ok=" + mFirewallOk + ", metered ok=" + mMeteredOk
                         + ", policy loaded=" + mPolicyLoadOk + ")");
-                pw.println("  blocked since boot: " + mBlockedCount.size() + " uids");
+                spw.println("  blocked since boot: " + mBlockedCount.size() + " uids");
                 for (int i = 0; i < mBlockedCount.size(); i++) {
-                    pw.println("    uid " + mBlockedCount.keyAt(i) + ": "
+                    spw.println("    uid " + mBlockedCount.keyAt(i) + ": "
                             + mBlockedCount.valueAt(i) + " attempts, last "
                             + mBlockedLast.get(mBlockedCount.keyAt(i), 0L));
                 }
-                pw.println("  paused until: " + mPausedUntil);
-                pw.println("  events: seq=" + mSeq + " buffered="
+                spw.println("  paused until: " + mPausedUntil);
+                spw.println("  events: seq=" + mSeq + " buffered="
                         + Math.min(mSeq, RING_SIZE));
-                pw.println("  listeners: " + mListeners.getRegisteredCallbackCount());
-                pw.println("  policies (" + mPolicy.size() + "):");
+                spw.println("  listeners: " + mListeners.getRegisteredCallbackCount());
+                spw.println("  policies (" + mPolicy.size() + "):");
                 for (int i = 0; i < mPolicy.size(); i++) {
                     final int a = mPolicy.valueAt(i);
-                    pw.println("    uid " + mPolicy.keyAt(i) + ": "
+                    spw.println("    uid " + mPolicy.keyAt(i) + ": "
                             + (a == IIchthysGuard.ACCESS_DENY ? "DENY" : "UNMETERED_ONLY")
                             + " reason=" + mPolicyReason.get(mPolicy.keyAt(i),
                                     GuardEvent.REASON_POLICY));
                 }
-                pw.println("  screen locked: " + mScreenLocked + ", alert mask: " + mAlertMask);
-                pw.println("  behaviours (" + mBehaviour.size() + "):");
+                spw.println("  screen locked: " + mScreenLocked + ", alert mask: " + mAlertMask);
+                spw.println("  behaviours (" + mBehaviour.size() + "):");
                 for (int i = 0; i < mBehaviour.size(); i++) {
                     final int uid = mBehaviour.keyAt(i);
-                    pw.println("    uid " + uid + ": flags=" + mBehaviour.valueAt(i)
+                    spw.println("    uid " + uid + ": flags=" + mBehaviour.valueAt(i)
                             + (isVisibleLocked(uid) ? " visible" : ""));
                 }
-                pw.println("  LAN blocked by default: " + mLanDefaultDeny.size() + " uids");
-                pw.println("  on deny chain now: " + mDenyNow.size() + " uids");
+                spw.println("  LAN blocked by default: " + mLanDefaultDeny.size() + " uids");
+                spw.println("  on deny chain now: " + mDenyNow.size() + " uids");
                 for (int i = 0; i < mDenyNow.size(); i++) {
-                    pw.println("    uid " + mDenyNow.keyAt(i) + ": reason "
+                    spw.println("    uid " + mDenyNow.keyAt(i) + ": reason "
                             + mDenyNow.valueAt(i));
                 }
                 final TrackerScanner s = mScanner;
-                pw.println("  tracker DB: " + (s == null ? "not loaded"
+                spw.println("  tracker DB: " + (s == null ? "not loaded"
                         : s.size() + " signatures from " + s.source));
-                pw.println("  scans (" + mScans.size() + "):");
+                spw.println("  scans (" + mScans.size() + "):");
                 for (int i = 0; i < mScans.size(); i++) {
                     final ScanEntry e = mScans.valueAt(i);
                     if (e.matches.length == 0) continue;
-                    pw.println("    " + mScans.keyAt(i) + " v" + e.versionCode + ": "
+                    spw.println("    " + mScans.keyAt(i) + " v" + e.versionCode + ": "
                             + String.join(", ", e.matches));
                 }
             }
+            spw.flush();
+            pw.print(sw);
         }
     }
 
