@@ -211,16 +211,19 @@ public class BatteryBarView extends View implements TunerService.Tunable {
     }
 
     private static int parseColor(String value, int def) {
-        if (value == null) {
+        // IchthysOS: an empty value made Color.parseColor throw StringIndexOutOfBoundsException
+        // (charAt(0)), which neither catch covered: SystemUI crashed while inflating the status
+        // bar, on every restart.
+        if (value == null || value.trim().isEmpty()) {
             return def;
         }
         try {
             // Color picker persists a decimal (possibly negative) ARGB int.
-            return Integer.parseInt(value);
+            return Integer.parseInt(value.trim());
         } catch (NumberFormatException e) {
             try {
-                return Color.parseColor(value);
-            } catch (IllegalArgumentException e2) {
+                return Color.parseColor(value.trim());
+            } catch (RuntimeException e2) {
                 return def;
             }
         }

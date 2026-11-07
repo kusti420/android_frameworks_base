@@ -416,7 +416,9 @@ public class NetworkTraffic extends TextView implements TunerService.Tunable, Da
                 updateViews();
                 break;
             case NETWORK_TRAFFIC_REFRESH_INTERVAL:
-                mRefreshInterval = TunerService.parseInteger(newValue, 2);
+                // IchthysOS: at least 1 s; 0 or less re-posted the redraw with no delay, spinning
+                // the main thread with two TrafficStats binder calls per pass.
+                mRefreshInterval = Math.max(1, TunerService.parseInteger(newValue, 2));
                 updateViews();
                 break;
             case NETWORK_TRAFFIC_HIDEARROW:
