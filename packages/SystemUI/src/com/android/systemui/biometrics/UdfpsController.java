@@ -611,6 +611,13 @@ public class UdfpsController implements DozeReceiver, Dumpable {
             // It's possible on some devices to get duplicate touches from both doze and the
             // normal touch listener. Don't reset the down in this case to avoid duplicate downs
             if (!mIsAodInterruptActive) {
+                // IchthysOS: a new gesture while the last press never got its UP. Clearing the
+                // flag alone made the next UP skip onPointerUp, so the HAL kept the finger down
+                // and the mask HBM could stay on; finish the old press properly first.
+                if (mOnFingerDown && mOverlay.getTouchOverlay() != null) {
+                    Log.w(TAG, "touch down while the last press is still down: ending it");
+                    onFingerUp(requestId, mOverlay.getTouchOverlay());
+                }
                 mOnFingerDown = false;
             }
         }
