@@ -59,6 +59,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -760,7 +761,7 @@ public final class KeyboxAttestation {
         final Matcher km = keyBlock.matcher(xml);
 
         while (km.find()) {
-            final String alg = km.group(1).toLowerCase();
+            final String alg = km.group(1).toLowerCase(Locale.ROOT);
             final String body = km.group(2);
 
             // Extract private key PEM.

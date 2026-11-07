@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Pattern;
 
@@ -280,7 +281,7 @@ public final class Option {
      * "#rrggbb" for an opaque colour ("#ffrrggbb" names the same colour).
      */
     private static String canonicalColor(String s) {
-        final String c = s.toLowerCase();
+        final String c = s.toLowerCase(Locale.ROOT);
         return c.length() == 9 && c.startsWith("#ff") ? "#" + c.substring(3) : c;
     }
 
@@ -411,7 +412,7 @@ public final class Option {
             case PACKAGE:
                 return "package name";
             default:
-                return type.name().toLowerCase();
+                return type.name().toLowerCase(Locale.ROOT);
         }
     }
 

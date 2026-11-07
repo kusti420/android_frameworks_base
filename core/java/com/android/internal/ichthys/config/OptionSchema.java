@@ -21,6 +21,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
@@ -289,7 +290,7 @@ public final class OptionSchema {
         int bestScore = Integer.MAX_VALUE;
         for (Map.Entry<String, String> e : candidates.entrySet()) {
             final String l = e.getKey().substring(e.getKey().lastIndexOf('.') + 1);
-            final int d = distance(leaf.toLowerCase(), l.toLowerCase());
+            final int d = distance(leaf.toLowerCase(Locale.ROOT), l.toLowerCase(Locale.ROOT));
             if (d < bestScore) {
                 bestScore = d;
                 best = e.getValue();

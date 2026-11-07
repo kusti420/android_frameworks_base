@@ -16,6 +16,8 @@
 
 package com.android.internal.ichthys.config;
 
+import java.util.Locale;
+
 /** Where an option's value lives on the device. Interpreted by IchthysConfigService. */
 public final class Binding {
 
@@ -89,6 +91,6 @@ public final class Binding {
 
     @Override
     public String toString() {
-        return store.name().toLowerCase() + ":" + key;
+        return store.name().toLowerCase(Locale.ROOT) + ":" + key;
     }
 }
