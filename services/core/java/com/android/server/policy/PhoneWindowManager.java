@@ -4922,6 +4922,8 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                         }
                         injectKeyPress(volUp ? KeyEvent.KEYCODE_DPAD_LEFT
                                 : KeyEvent.KEYCODE_DPAD_RIGHT);
+                    } else {
+                        releaseVolumeMusicControlFor(keyCode);
                     }
                     result &= ~ACTION_PASS_TO_USER;
                     break;
@@ -5581,6 +5583,26 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     private boolean mVolumeUpHeld;
     private boolean mVolumeDownHeld;
     private int mVolumeChordSecondKey;
+
+    // IchthysOS: the keyboard cursor took this key's release (the keyboard appeared while the
+    // key was down). Drop what its press armed in the music control: otherwise the pending
+    // track skip still fired on a tap, and the key stayed "held" so the next press of the other
+    // volume key was swallowed as a chord.
+    private void releaseVolumeMusicControlFor(int keyCode) {
+        if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
+            mVolumeUpHeld = false;
+        } else {
+            mVolumeDownHeld = false;
+        }
+        if (mVolumeMusicActiveKey == keyCode) {
+            cancelPendingVolumeMusicSeek();
+            mVolumeMusicActiveKey = 0;
+            mVolumeMusicSeeking = false;
+        }
+        if (mVolumeChordSecondKey == keyCode) {
+            mVolumeChordSecondKey = 0;
+        }
+    }
 
     // Returns true if the volume key event was consumed here and normal volume processing
     // should be skipped for that event.
