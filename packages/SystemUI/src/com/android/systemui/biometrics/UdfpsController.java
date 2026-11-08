@@ -906,6 +906,7 @@ public class UdfpsController implements DozeReceiver, Dumpable {
                 mWakefulnessLifecycle == null ? null : mOverlayAttachStateListener;
         if (overlay.show(mOverlayParams, listener)) {
             Log.d(TAG, "showUdfpsOverlay | adding window reason=" + requestReason);
+            mUdfpsOverlayInteractor.setOverlayShowing(true);
             mOnFingerDown = false;
             mAttemptedToDismissKeyguard = false;
             mOrientationListener.enable();
@@ -964,6 +965,7 @@ public class UdfpsController implements DozeReceiver, Dumpable {
         }
 
         mOverlay = null;
+        mUdfpsOverlayInteractor.setOverlayShowing(false);
         mOrientationListener.disable();
     }
 

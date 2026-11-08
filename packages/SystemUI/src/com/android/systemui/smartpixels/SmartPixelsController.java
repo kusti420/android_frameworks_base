@@ -31,10 +31,13 @@ import android.view.Gravity;
 import android.view.WindowManager;
 
 import com.android.systemui.CoreStartable;
+import com.android.systemui.biometrics.domain.interactor.UdfpsOverlayInteractor;
+import com.android.systemui.biometrics.shared.model.UdfpsOverlayParams;
 import com.android.systemui.broadcast.BroadcastDispatcher;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.dagger.qualifiers.Application;
 import com.android.systemui.dagger.qualifiers.Main;
+import com.android.systemui.util.kotlin.JavaAdapter;
 import com.android.systemui.util.settings.SecureSettings;
 
 import java.io.PrintWriter;
@@ -54,6 +57,16 @@ import javax.inject.Inject;
  *
  * <p>The overlay is torn down while the screen is off: there is nothing to protect, and it would
  * otherwise keep posting shift callbacks.
+ *
+ * <p>IchthysOS 2026-11-08 (owner: "keep the feature. make it not conflict with the fingerprint and
+ * unlocking"): the overlay is a secure system overlay, above the UDFPS windows, so it blacked out
+ * part of the fingerprint icon and of the optical sensor's illumination disc (less light on the
+ * finger, failed captures). While a fingerprint authentication or enrollment is waiting for the
+ * sensor ({@link UdfpsOverlayInteractor#getOverlayShowing()}) the pattern leaves a circle around
+ * the sensor free, so the icon and the disc are never covered; the hole is only a redraw, so a
+ * press changes nothing else on screen (taking the whole pattern away per press would brighten
+ * the screen by the filter percentage on every touch). While the PIN / pattern / password bouncer
+ * is up the overlay steps aside completely and comes back when it goes.
  */
 @SysUISingleton
 public class SmartPixelsController implements CoreStartable {
@@ -68,6 +81,9 @@ public class SmartPixelsController implements CoreStartable {
     private final Handler mHandler;
     private final Executor mMainExecutor;
     private final BroadcastDispatcher mBroadcastDispatcher;
+    private final JavaAdapter mJavaAdapter;
+    private final UdfpsOverlayInteractor mUdfpsOverlayInteractor;
+    private final SmartPixelsUnlockState mUnlockState;
 
     @Nullable private WindowManager mWindowManager;
     @Nullable private SmartPixelsView mView;
@@ -76,6 +92,11 @@ public class SmartPixelsController implements CoreStartable {
     private boolean mScreenOn = true;
     private int mPercent = SmartPixelsPattern.DEFAULT_PERCENT;
     private int mStep;
+    /** IchthysOS: the bouncer is up: no overlay until it goes. */
+    private boolean mBouncerShowing;
+    /** IchthysOS: a fingerprint request waits for the sensor: keep its area free. */
+    private boolean mUdfpsActive;
+    private UdfpsOverlayParams mUdfpsParams = new UdfpsOverlayParams();
 
     private final Runnable mShiftRunnable = new Runnable() {
         @Override
@@ -109,12 +130,18 @@ public class SmartPixelsController implements CoreStartable {
             SecureSettings secureSettings,
             @Main Handler handler,
             @Main Executor mainExecutor,
-            BroadcastDispatcher broadcastDispatcher) {
+            BroadcastDispatcher broadcastDispatcher,
+            JavaAdapter javaAdapter,
+            UdfpsOverlayInteractor udfpsOverlayInteractor,
+            SmartPixelsUnlockState unlockState) {
         mContext = context;
         mSecureSettings = secureSettings;
         mHandler = handler;
         mMainExecutor = mainExecutor;
         mBroadcastDispatcher = broadcastDispatcher;
+        mJavaAdapter = javaAdapter;
+        mUdfpsOverlayInteractor = udfpsOverlayInteractor;
+        mUnlockState = unlockState;
     }
 
     @Override
@@ -139,8 +166,42 @@ public class SmartPixelsController implements CoreStartable {
         mBroadcastDispatcher.registerReceiver(mScreenReceiver, filter, mMainExecutor, UserHandle.ALL,
                 Context.RECEIVER_NOT_EXPORTED, null);
 
+        // IchthysOS: main-thread collectors (application scope), like the settings observer.
+        mJavaAdapter.alwaysCollectFlow(mUnlockState.getBouncerShowing(), showing -> {
+            if (showing != mBouncerShowing) {
+                mBouncerShowing = showing;
+                updateOverlay();
+            }
+        });
+        mJavaAdapter.alwaysCollectFlow(mUdfpsOverlayInteractor.getOverlayShowing(), active -> {
+            mUdfpsActive = active;
+            updateHole();
+        });
+        mJavaAdapter.alwaysCollectFlow(mUdfpsOverlayInteractor.getUdfpsOverlayParams(),
+                params -> {
+                    mUdfpsParams = params;
+                    updateHole();
+                });
+
         readSettings();
         updateOverlay();
+    }
+
+    /** IchthysOS: the sensor area the pattern leaves free, or none. */
+    private void updateHole() {
+        if (mView != null) {
+            applyHole(mView);
+        }
+    }
+
+    private void applyHole(SmartPixelsView view) {
+        final UdfpsOverlayParams params = mUdfpsParams;
+        if (mUdfpsActive && params != null && !params.getSensorBounds().isEmpty()) {
+            view.setHole(params.getSensorBounds(), params.getNaturalDisplayWidth(),
+                    params.getNaturalDisplayHeight());
+        } else {
+            view.setHole(null, 0, 0);
+        }
     }
 
     private void readSettings() {
@@ -152,7 +213,7 @@ public class SmartPixelsController implements CoreStartable {
 
     /** Adds, updates or removes the overlay so it matches the current settings + screen state. */
     private void updateOverlay() {
-        final boolean wanted = mEnabled && mScreenOn;
+        final boolean wanted = mEnabled && mScreenOn && !mBouncerShowing;
         if (wanted) {
             if (mView == null) {
                 addOverlay();
@@ -172,6 +233,7 @@ public class SmartPixelsController implements CoreStartable {
         final SmartPixelsView view = new SmartPixelsView(mContext);
         view.setPercent(mPercent);
         view.setStep(mStep);
+        applyHole(view);
 
         final WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
@@ -226,5 +288,8 @@ public class SmartPixelsController implements CoreStartable {
                 + "/" + SmartPixelsPattern.CELLS);
         pw.println("  step=" + mStep);
         pw.println("  overlayAttached=" + (mView != null));
+        pw.println("  bouncerShowing=" + mBouncerShowing);
+        pw.println("  udfpsActive=" + mUdfpsActive
+                + " sensorBounds=" + mUdfpsParams.getSensorBounds());
     }
 }

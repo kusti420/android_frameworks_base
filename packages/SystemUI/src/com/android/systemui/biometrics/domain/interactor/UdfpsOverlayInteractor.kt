@@ -83,6 +83,19 @@ constructor(
         _requestId.value = requestId
     }
 
+    private val _overlayShowing = MutableStateFlow(false)
+
+    /**
+     * IchthysOS: whether UdfpsController has its overlay up, i.e. an authentication or enrollment
+     * is waiting for the sensor (lock screen, an app's prompt, setup). Read by Smart Pixels to keep
+     * the sensor area free while it can light up.
+     */
+    val overlayShowing: StateFlow<Boolean> = _overlayShowing.asStateFlow()
+
+    fun setOverlayShowing(showing: Boolean) {
+        _overlayShowing.value = showing
+    }
+
     /** Sets whether Udfps overlay should handle touches */
     fun setHandleTouches(shouldHandle: Boolean) {
         if (authController.isUdfpsSupported) {
