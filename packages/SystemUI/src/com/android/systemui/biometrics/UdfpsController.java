@@ -394,7 +394,15 @@ public class UdfpsController implements DozeReceiver, Dumpable {
                     }
                     mAcquiredReceived = true;
                     final View view = mOverlay.getTouchOverlay();
-                    unconfigureDisplay(view);
+                    // IchthysOS 2026-11-08 (owner: "turn off the fingerprint brightening as soon
+                    // as the sensor has read the finger"): the capture is over, so the disc and
+                    // the mask (in sync mode the UdfpsFodMask dim IS the panel's mask HBM) go now,
+                    // even if the finger stays. The HAL reports a usable image as GOOD
+                    // (Session::reportCaptureGood). After GOOD the mask goes on this frame: the
+                    // touch is finished, a retry is a new touch. After a bad capture it keeps its
+                    // short retry grace (hideIlluminationOverlay), since the retry re-touch comes
+                    // ~150 ms later. Either way the next finger-down lights both again.
+                    unconfigureDisplay(view, !acquiredGood /* keepMaskForRetry */);
                     tryAodSendFingerUp();
                 });
             }
@@ -960,10 +968,14 @@ public class UdfpsController implements DozeReceiver, Dumpable {
     }
 
     private void unconfigureDisplay(View view) {
+        unconfigureDisplay(view, true /* keepMaskForRetry */);
+    }
+
+    private void unconfigureDisplay(View view, boolean keepMaskForRetry) {
         if (!isOptical()) {
             return;
         }
-        hideIlluminationOverlay();
+        hideIlluminationOverlay(keepMaskForRetry);
         if (mUdfpsDisplayMode != null) {
             mUdfpsDisplayMode.disable(null);
         }
@@ -1787,6 +1799,14 @@ public class UdfpsController implements DozeReceiver, Dumpable {
     }
 
     private void hideIlluminationOverlay() {
+        hideIlluminationOverlay(true /* keepMaskForRetry */);
+    }
+
+    /**
+     * @param keepMaskForRetry in sync mode, keep the mask dim (and so the HBM) for
+     *         {@link #DIM_RETOUCH_GRACE_MS} in case a retry touch follows; false drops it now.
+     */
+    private void hideIlluminationOverlay(boolean keepMaskForRetry) {
         mUiReadyToken++; // IchthysOS: a gated onUiReady still pending must not fire now
         if (mIlluminationView != null) {
             Log.e(TAG, "hideIlluminationOverlay | removing illumination view");
@@ -1800,7 +1820,7 @@ public class UdfpsController implements DozeReceiver, Dumpable {
         // Only tear the dim down here when it is NOT session-held; otherwise it
         // is removed once at hideUdfpsOverlay so it never flashes per touch.
         if (!isDimSessionHeld()) {
-            if (isUdfpsSync() && mFodDimView != null) {
+            if (keepMaskForRetry && isUdfpsSync() && mFodDimView != null) {
                 // IchthysOS: in sync mode the dim IS the mask HBM switch. A failed capture ("bad
                 // quality") makes the sensor report the finger as lifted and the retry re-touches
                 // ~150 ms later; tearing the dim down in between switched dim + HBM off and on
