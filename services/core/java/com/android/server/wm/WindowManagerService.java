@@ -8821,6 +8821,20 @@ public class WindowManagerService extends IWindowManager.Stub
         }
 
         @Override
+        public boolean isUidFocusedInTopResumedActivity(int uid) {
+            synchronized (mGlobalLock) {
+                final DisplayContent displayContent = mRoot.getTopFocusedDisplayContent();
+                final WindowState focus =
+                        displayContent != null ? displayContent.mCurrentFocus : null;
+                if (focus == null || focus.getOwningUid() != uid) {
+                    return false;
+                }
+                final ActivityRecord activity = focus.mActivityRecord;
+                return activity != null && activity == mRoot.getTopResumedActivity();
+            }
+        }
+
+        @Override
         public byte[] backupDisplayWindowSettings(int userId) {
             final AtomicFile file =
                     DisplayWindowSettingsProvider.getOverrideSettingsFileForUser(userId);

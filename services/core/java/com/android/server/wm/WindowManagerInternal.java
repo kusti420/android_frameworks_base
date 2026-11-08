@@ -835,6 +835,16 @@ public abstract class WindowManagerInternal {
     }
 
     /**
+     * IchthysOS: {@code uid} owns the window with input focus on the top-focused display, and that
+     * window belongs to the top resumed activity (the activity's own window or a dialog or panel
+     * of it), not an overlay or other non-activity window. The clipboard lockdown asks this before
+     * a plain tap may stand for a paste of a clip copied in another app.
+     */
+    public boolean isUidFocusedInTopResumedActivity(int uid) {
+        return false;
+    }
+
+    /**
      * Checks whether the specified IME client has IME focus or not.
      *
      * @param windowToken The token of the IME client window
