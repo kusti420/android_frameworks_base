@@ -43,9 +43,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.MeasureScope
 import androidx.compose.ui.layout.boundsInWindow
@@ -67,6 +70,7 @@ import com.android.compose.lifecycle.DisposableEffectWithLifecycle
 import com.android.compose.modifiers.thenIf
 import com.android.systemui.common.ui.icons.Edit
 import com.android.systemui.compose.modifiers.sysuiResTag
+import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalAccent
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.ShoalQsColors
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalQsEnabled
 import com.android.systemui.qs.panels.ui.compose.toolbar.EditModeButtonDefaults.SpacingBetweenTooltipAndAnchor
@@ -166,6 +170,8 @@ fun EditModeButton(
             // pager row ([compact]), which has to stay low enough to clear the docked player.
             val shoal = rememberShoalQsEnabled()
             val shoalSize = if (compact) 32.dp else 44.dp
+            // IchthysOS: the edit button carries the accent so it isn't missed among the tiles.
+            val accent = rememberShoalAccent()
             CompositionLocalProvider(
                 // The 48 dp minimum touch size would undo the compact size.
                 value =
@@ -181,8 +187,37 @@ fun EditModeButton(
                             .thenIf(shoal) {
                                 Modifier.size(shoalSize)
                                     .clip(CircleShape)
-                                    .background(ShoalQsColors.Track, CircleShape)
-                                    .border(1.dp, ShoalQsColors.Hairline, CircleShape)
+                                    .background(
+                                        if (compact) ShoalQsColors.Track
+                                        else accent.copy(alpha = 0.14f),
+                                        CircleShape,
+                                    )
+                                    .then(
+                                        if (compact) {
+                                            Modifier.border(1.dp, ShoalQsColors.Hairline, CircleShape)
+                                        } else {
+                                            // A dashed accent ring: reads as "change this grid",
+                                            // not as one more (off) tile.
+                                            Modifier.drawBehind {
+                                                val w = 1.5.dp.toPx()
+                                                drawCircle(
+                                                    color = accent,
+                                                    radius = (size.minDimension - w) / 2f,
+                                                    style =
+                                                        Stroke(
+                                                            width = w,
+                                                            pathEffect =
+                                                                PathEffect.dashPathEffect(
+                                                                    floatArrayOf(
+                                                                        4.dp.toPx(),
+                                                                        3.dp.toPx(),
+                                                                    )
+                                                                ),
+                                                        ),
+                                                )
+                                            }
+                                        }
+                                    )
                             }
                             .borderOnFocus(
                                 color = MaterialTheme.colorScheme.secondary,
@@ -193,7 +228,7 @@ fun EditModeButton(
                         imageVector = Edit,
                         contentDescription =
                             stringResource(id = R.string.accessibility_quick_settings_edit),
-                        tint = if (shoal) ShoalQsColors.OnTileOff else LocalContentColor.current,
+                        tint = if (shoal) accent else LocalContentColor.current,
                         modifier =
                             if (shoal) Modifier.size(if (compact) 16.dp else 20.dp) else Modifier,
                     )
