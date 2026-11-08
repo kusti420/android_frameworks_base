@@ -48,6 +48,7 @@ import android.telephony.TelephonyManager;
 import android.util.Slog;
 
 import com.android.internal.util.ArrayUtils;
+import com.android.server.location.IchthysLocationNoFix;
 import com.android.server.location.IchthysLocationSpoof;
 
 import java.util.Objects;
@@ -113,6 +114,12 @@ public class BroadcastSkipPolicy {
                 info.activityInfo.applicationInfo)) {
             return "Ichthys spoof: broadcasting " + broadcastDescription(r, component)
                     + " withheld from spoofed uid " + receiverUid;
+        }
+        // IchthysOS: see isSkippedForIchthysRadioShield.
+        if (isSkippedForIchthysRadioShield(r, receiverUid, component.getPackageName(),
+                info.activityInfo.applicationInfo)) {
+            return "Ichthys radio shield: broadcasting " + broadcastDescription(r, component)
+                    + " withheld from shielded uid " + receiverUid;
         }
         if (brOptions != null &&
                 (info.activityInfo.applicationInfo.targetSdkVersion
@@ -373,6 +380,12 @@ public class BroadcastSkipPolicy {
                 filter.receiverList.app != null ? filter.receiverList.app.info : null)) {
             return "Ichthys spoof: broadcasting " + r.intent.toString()
                     + " withheld from spoofed uid " + filter.owningUid + " through " + filter;
+        }
+        // IchthysOS: see isSkippedForIchthysRadioShield.
+        if (isSkippedForIchthysRadioShield(r, filter.owningUid, filter.packageName,
+                filter.receiverList.app != null ? filter.receiverList.app.info : null)) {
+            return "Ichthys radio shield: broadcasting " + r.intent.toString()
+                    + " withheld from shielded uid " + filter.owningUid + " through " + filter;
         }
         if (r.options != null && !r.options.testRequireCompatChange(filter.owningUid)) {
             return "Compat change filtered: broadcasting " + r.intent.toString()
@@ -644,6 +657,35 @@ public class BroadcastSkipPolicy {
         return IchthysLocationSpoof.isSpoofedCached(packageName, receiverUid,
                 () -> app != null && (app.flags & (ApplicationInfo.FLAG_SYSTEM
                         | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0);
+    }
+
+    /**
+     * IchthysOS radio shields: a core sender (the Bluetooth stack, for ACTION_NAME_CHANGED,
+     * ACTION_UUID and the like about an unbonded device) can mark its broadcast as one that
+     * reveals nearby devices the way a scan result does. It names the uids it decided itself
+     * (scan-empty apps, BroadcastOptions#setIchthysExcludedUids), and asks for the apps that
+     * never get a location to be left out (BroadcastOptions#setIchthysLocationShielded): the
+     * "No location" list (IchthysLocationNoFix) and spoofed apps (IchthysLocationSpoof), which
+     * the stack's ACTION_FOUND misses through its location permission. Caches only, as for the
+     * spoof rule above; core uids are never left out.
+     */
+    private static boolean isSkippedForIchthysRadioShield(@NonNull BroadcastRecord r,
+            int receiverUid, @Nullable String packageName, @Nullable ApplicationInfo app) {
+        final BroadcastOptions options = r.options;
+        if (options == null || !UserHandle.isCore(r.callingUid)
+                || UserHandle.getAppId(receiverUid) < Process.FIRST_APPLICATION_UID) {
+            return false;
+        }
+        if (ArrayUtils.contains(options.getIchthysExcludedUids(), receiverUid)) {
+            return true;
+        }
+        if (!options.isIchthysLocationShielded() || packageName == null) {
+            return false;
+        }
+        return IchthysLocationNoFix.isNoFixCached(packageName, UserHandle.getUserId(receiverUid))
+                || IchthysLocationSpoof.isSpoofedCached(packageName, receiverUid,
+                        () -> app != null && (app.flags & (ApplicationInfo.FLAG_SYSTEM
+                                | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0);
     }
 
     private static String broadcastDescription(BroadcastRecord r, ComponentName component) {

@@ -72,6 +72,9 @@ public class BroadcastOptions extends ComponentOptions {
     private @DeferralPolicy int mDeferralPolicy;
     private @Nullable String[] mIncludedPackages;
     private @Nullable String mDebugReason;
+    // IchthysOS: radio shields; see setIchthysExcludedUids / setIchthysLocationShielded.
+    private @Nullable int[] mIchthysExcludedUids;
+    private boolean mIchthysLocationShielded;
 
     /** @hide */
     @IntDef(flag = true, prefix = { "FLAG_" }, value = {
@@ -246,6 +249,21 @@ public class BroadcastOptions extends ComponentOptions {
     private static final String KEY_DEBUG_REASON = "android:broadcast.debugReason";
 
     /**
+     * IchthysOS: corresponds to {@link #setIchthysExcludedUids(int[])}. The Bluetooth module puts
+     * it into its options bundle directly (it can't call hidden API), so the spelling is fixed:
+     * keep it equal to com.android.bluetooth.ichthys.RadioPolicy#KEY_BROADCAST_EXCLUDED_UIDS.
+     */
+    private static final String KEY_ICHTHYS_EXCLUDED_UIDS =
+            "android:broadcast.ichthysExcludedUids";
+
+    /**
+     * IchthysOS: corresponds to {@link #setIchthysLocationShielded(boolean)}; same rule as
+     * {@link #KEY_ICHTHYS_EXCLUDED_UIDS} (RadioPolicy#KEY_BROADCAST_LOCATION_SHIELDED).
+     */
+    private static final String KEY_ICHTHYS_LOCATION_SHIELDED =
+            "android:broadcast.ichthysLocationShielded";
+
+    /**
      * The list of delivery group policies which specify how multiple broadcasts belonging to
      * the same delivery group has to be handled.
      * @hide
@@ -372,6 +390,8 @@ public class BroadcastOptions extends ComponentOptions {
         mDeferralPolicy = opts.getInt(KEY_DEFERRAL_POLICY, DEFERRAL_POLICY_DEFAULT);
         mIncludedPackages = opts.getStringArray(KEY_INCLUDED_PACKAGES);
         mDebugReason = opts.getString(KEY_DEBUG_REASON);
+        mIchthysExcludedUids = opts.getIntArray(KEY_ICHTHYS_EXCLUDED_UIDS);
+        mIchthysLocationShielded = opts.getBoolean(KEY_ICHTHYS_LOCATION_SHIELDED, false);
     }
 
     /** @hide */
@@ -1174,6 +1194,52 @@ public class BroadcastOptions extends ComponentOptions {
     }
 
     /**
+     * IchthysOS radio shields: uids that must not receive this broadcast, although they would
+     * otherwise qualify. The Bluetooth stack sets it on broadcasts naming an unbonded remote
+     * device, for the apps whose scans the user made find nothing, which ACTION_FOUND already
+     * skips. Takes effect only when sent by a core uid ({@link UserHandle#isCore(int)}).
+     *
+     * @hide
+     */
+    @NonNull
+    public BroadcastOptions setIchthysExcludedUids(@Nullable int[] uids) {
+        mIchthysExcludedUids = uids;
+        return this;
+    }
+
+    /**
+     * IchthysOS: the uids set with {@link #setIchthysExcludedUids(int[])}, or null.
+     *
+     * @hide
+     */
+    @Nullable
+    public int[] getIchthysExcludedUids() {
+        return mIchthysExcludedUids;
+    }
+
+    /**
+     * IchthysOS radio shields: this broadcast places the phone the way a scan result does, so it
+     * must not reach apps that never get a location ("No location", Guard's fake place). Takes
+     * effect only when sent by a core uid ({@link UserHandle#isCore(int)}).
+     *
+     * @hide
+     */
+    @NonNull
+    public BroadcastOptions setIchthysLocationShielded(boolean shielded) {
+        mIchthysLocationShielded = shielded;
+        return this;
+    }
+
+    /**
+     * IchthysOS: see {@link #setIchthysLocationShielded(boolean)}.
+     *
+     * @hide
+     */
+    public boolean isIchthysLocationShielded() {
+        return mIchthysLocationShielded;
+    }
+
+    /**
      * Returns the created options as a Bundle, which can be passed to
      * {@link android.content.Context#sendBroadcast(android.content.Intent)
      * Context.sendBroadcast(Intent)} and related methods.
@@ -1244,6 +1310,12 @@ public class BroadcastOptions extends ComponentOptions {
         }
         if (mDebugReason != null) {
             b.putString(KEY_DEBUG_REASON, mDebugReason);
+        }
+        if (!ArrayUtils.isEmpty(mIchthysExcludedUids)) {
+            b.putIntArray(KEY_ICHTHYS_EXCLUDED_UIDS, mIchthysExcludedUids);
+        }
+        if (mIchthysLocationShielded) {
+            b.putBoolean(KEY_ICHTHYS_LOCATION_SHIELDED, true);
         }
         return b;
     }
