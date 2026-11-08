@@ -50,6 +50,9 @@ constructor(
     private val windowManager: WindowManager,
 ) : CoreStartable {
 
+    /** The window currently showing the alternate bouncer, if any (main thread only). */
+    private var currentRoot: View? = null
+
     override fun start() {
         if (!SceneContainerFlag.isEnabled) {
             return
@@ -60,10 +63,20 @@ constructor(
                 .distinctUntilChanged()
                 .filter { it }
                 .collect {
-                    windowManager.addView(
-                        createView(),
-                        AlternateBouncerWindowViewLayoutParams.layoutParams,
-                    )
+                    // IchthysOS: a fast hide/show (double power press on the lock screen) used
+                    // to add a second window while the first was still playing its hide
+                    // animation. Both composed AlternateBouncer with the same activatable view
+                    // model, and the second activate() crashed SystemUI ("Cannot activate an
+                    // already active ExclusiveActivatable"). Remove the old window at once so
+                    // only one alternate bouncer window ever exists.
+                    currentRoot?.let { old ->
+                        if (old.isAttachedToWindow) {
+                            windowManager.removeViewImmediate(old)
+                        }
+                    }
+                    val root = createView()
+                    currentRoot = root
+                    windowManager.addView(root, AlternateBouncerWindowViewLayoutParams.layoutParams)
                 }
         }
     }
@@ -78,6 +91,9 @@ constructor(
                         onHideAnimationFinished = {
                             if (root.isAttachedToWindow) {
                                 windowManager.removeView(root)
+                            }
+                            if (currentRoot === root) {
+                                currentRoot = null
                             }
                         },
                     )
