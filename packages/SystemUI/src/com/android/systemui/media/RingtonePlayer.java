@@ -129,6 +129,12 @@ public class RingtonePlayer implements CoreStartable {
                         + Binder.getCallingUid() + ")");
             }
             enforceUriUserId(uri, token);
+            if (!isLocalSoundUri(uri)) {
+                // IchthysOS: never fetch a URL for an app; see isLocalSoundUri.
+                Log.w(TAG, "Not playing non-local uri " + uri + " for uid "
+                        + Binder.getCallingUid());
+                return;
+            }
 
             Client client;
             synchronized (mClients) {
@@ -196,6 +202,11 @@ public class RingtonePlayer implements CoreStartable {
             }
             if (UserHandle.ALL.equals(user)) {
                 user = UserHandle.SYSTEM;
+            }
+            if (!isLocalSoundUri(uri)) {
+                // IchthysOS: a notification sound named by an app is never fetched from the net.
+                Log.w(TAG, "Not playing non-local async uri " + uri);
+                return;
             }
             mAsyncPlayer.play(getContextForUser(user), uri, looping, aa, volume);
         }
@@ -281,6 +292,21 @@ public class RingtonePlayer implements CoreStartable {
             }
         }
     };
+
+    /**
+     * IchthysOS: whether {@code uri} is a local sound (content:, file: or android.resource:).
+     * Anything else (http, https, rtsp) would be fetched by this process, with its own network
+     * access, on behalf of an app that Ichthys Guard may have cut off from the network.
+     */
+    private static boolean isLocalSoundUri(@Nullable Uri uri) {
+        if (uri == null) {
+            return false;
+        }
+        final String scheme = uri.getScheme();
+        return ContentResolver.SCHEME_CONTENT.equalsIgnoreCase(scheme)
+                || ContentResolver.SCHEME_FILE.equalsIgnoreCase(scheme)
+                || ContentResolver.SCHEME_ANDROID_RESOURCE.equalsIgnoreCase(scheme);
+    }
 
     private Context getContextForUser(UserHandle user) {
         try {

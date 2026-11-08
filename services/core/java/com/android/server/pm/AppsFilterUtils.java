@@ -28,6 +28,7 @@ import android.util.ArraySet;
 import android.util.Pair;
 import android.util.SparseSetArray;
 
+import com.android.internal.pm.parsing.pkg.AndroidPackageLegacyUtils;
 import com.android.internal.pm.pkg.component.ParsedComponent;
 import com.android.internal.pm.pkg.component.ParsedIntentInfo;
 import com.android.internal.pm.pkg.component.ParsedMainComponent;
@@ -59,7 +60,15 @@ final class AppsFilterUtils {
     public static boolean canQueryViaComponents(AndroidPackage querying,
             AndroidPackage potentialTarget, WatchedArraySet<String> protectedBroadcasts) {
         if (!querying.getQueriesIntents().isEmpty()) {
+            // IchthysOS: for apps the user installed, a wildcard action or a bare MAIN/LAUNCHER
+            // <queries> intent would match (nearly) every package and rebuild the launcher list
+            // without the user-controlled QUERY_ALL_PACKAGES grant (decision 2). Such intents
+            // grant nothing; an app that is allowed to see everything is unfiltered anyway.
+            final boolean ichthysUserApp = !AndroidPackageLegacyUtils.isSystem(querying);
             for (Intent intent : querying.getQueriesIntents()) {
+                if (ichthysUserApp && isIchthysBroadQueriesIntent(intent)) {
+                    continue;
+                }
                 if (matchesPackage(intent, potentialTarget, protectedBroadcasts)) {
                     return true;
                 }
@@ -70,6 +79,37 @@ final class AppsFilterUtils {
             return true;
         }
         return false;
+    }
+
+    /**
+     * IchthysOS: whether a {@code <queries>} intent is so broad that it amounts to asking for
+     * QUERY_ALL_PACKAGES: a wildcard (or missing) action, or MAIN with no data and only
+     * launcher-style categories (or none), which matches every app with a launcher entry.
+     * SEND/VIEW queries with wildcard types stay allowed: they are the documented way to find
+     * share and open-with targets.
+     */
+    private static boolean isIchthysBroadQueriesIntent(@NonNull Intent intent) {
+        final String action = intent.getAction();
+        if (action == null || IntentFilter.WILDCARD.equals(action)) {
+            return true;
+        }
+        if (!Intent.ACTION_MAIN.equals(action) || intent.getData() != null
+                || intent.getType() != null) {
+            return false;
+        }
+        final Set<String> categories = intent.getCategories();
+        if (categories == null) {
+            return true;
+        }
+        for (String category : categories) {
+            if (!Intent.CATEGORY_LAUNCHER.equals(category)
+                    && !Intent.CATEGORY_DEFAULT.equals(category)
+                    && !Intent.CATEGORY_INFO.equals(category)
+                    && !Intent.CATEGORY_LEANBACK_LAUNCHER.equals(category)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public static boolean canQueryViaPackage(AndroidPackage querying,

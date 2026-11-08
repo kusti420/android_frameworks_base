@@ -252,6 +252,12 @@ public class ClipboardService extends SystemService {
      */
     @GuardedBy("mLock")
     private final SparseBooleanArray mIchthysPasteGrantFromTap = new SparseBooleanArray();
+    /**
+     * uid -> its live grant came from a third-party accessibility service's ACTION_PASTE
+     * (notifyAccessibilityPaste): not enough for a sensitive clip.
+     */
+    @GuardedBy("mLock")
+    private final SparseBooleanArray mIchthysPasteGrantNoSensitive = new SparseBooleanArray();
     /** uid -> event time (uptime ns) of the newest input whose grant it already used. */
     @GuardedBy("mLock")
     private final SparseLongArray mIchthysPasteUsedEvent = new SparseLongArray();
@@ -409,6 +415,17 @@ public class ClipboardService extends SystemService {
         long mIchthysClearAt;
         /** IchthysOS: the alarm behind {@link #mIchthysClearAt}; made on first use. */
         AlarmManager.OnAlarmListener mIchthysClearAlarm;
+        /**
+         * IchthysOS: the window that had input focus on the top display when {@link #primaryClip}
+         * was set. A plain tap only unlocks a clip copied while the tapping app's window was in
+         * front (see ichthysMayReadLocked).
+         */
+        IBinder mIchthysFocusAtSet;
+        /**
+         * IchthysOS: uid -> event time (uptime ns) of the tap whose grant read
+         * {@link #primaryClip}: a tap grant reads one clip once (one paste), not on every tap.
+         */
+        final SparseLongArray mIchthysTapReads = new SparseLongArray();
 
         Clipboard(int userId, int deviceId) {
             this.userId = userId;
@@ -813,6 +830,10 @@ public class ClipboardService extends SystemService {
                     mIchthysPasteGrantEvent.put(intendingUid, eventNanos);
                     mIchthysPasteGrantFromTap.put(intendingUid,
                             verified instanceof VerifiedMotionEvent && !strongLive);
+                    if (!strongLive) {
+                        // A paste key or tap grant of its own, not an accessibility one.
+                        mIchthysPasteGrantNoSensitive.delete(intendingUid);
+                    }
                 }
             }
         }
@@ -884,6 +905,7 @@ public class ClipboardService extends SystemService {
                                 "read without a paste action");
                         return null;
                     }
+                    ichthysNoteTapReadLocked(intendingUid, current);
                     ichthysNoteGrantUsedLocked(intendingUid);
                 }
                 try {
@@ -1122,6 +1144,17 @@ public class ClipboardService extends SystemService {
 
         @Override
         public void notifyUserAuthorizedClipAccess(int uid) {
+            ichthysNotifyAuthorizedPaste(uid, false);
+        }
+
+        @Override
+        public void notifyAccessibilityPaste(int uid, boolean preinstalledService) {
+            // IchthysOS: any enabled accessibility service can perform ACTION_PASTE whenever it
+            // likes; only a preinstalled one may unlock a clip marked sensitive (a password).
+            ichthysNotifyAuthorizedPaste(uid, !preinstalledService);
+        }
+
+        private void ichthysNotifyAuthorizedPaste(int uid, boolean notForSensitive) {
             long elapsedRealtime = SystemClock.elapsedRealtime();
             synchronized (mLock) {
                 mUserAuthorizedClipAccesses.put(uid,
@@ -1132,6 +1165,11 @@ public class ClipboardService extends SystemService {
                 mIchthysPasteGrantUntil.put(uid, elapsedRealtime + ICHTHYS_PASTE_GRANT_MS);
                 mIchthysPasteGrantEvent.put(uid, 0);
                 mIchthysPasteGrantFromTap.delete(uid);
+                if (notForSensitive) {
+                    mIchthysPasteGrantNoSensitive.put(uid, true);
+                } else {
+                    mIchthysPasteGrantNoSensitive.delete(uid);
+                }
             }
             mWorkerHandler.postDelayed(PooledLambda.obtainRunnable(
                             ClipboardInternalImpl::pruneUserAuthorizedClipAccesses, this),
@@ -1297,6 +1335,10 @@ public class ClipboardService extends SystemService {
         clipboard.primaryClip = clip;
         clipboard.mNotifiedUids.clear();
         clipboard.mNotifiedTextClassifierUids.clear();
+        // IchthysOS: which window was in front at the copy (tap grants, ichthysMayReadLocked).
+        // WindowManager is already asked under mLock (focus checks in sendClipChangedBroadcast).
+        clipboard.mIchthysFocusAtSet = clip != null ? ichthysFocusedWindow() : null;
+        clipboard.mIchthysTapReads.clear();
         if (clip != null) {
             clipboard.primaryClipUid = uid;
             clipboard.mPrimaryClipPackage = sourcePackage;
@@ -1329,7 +1371,14 @@ public class ClipboardService extends SystemService {
                             li.mAttributionTag,
                             li.mUid,
                             UserHandle.getUserId(li.mUid),
-                            clipboard.deviceId)) {
+                            clipboard.deviceId)
+                            // IchthysOS clipboard lockdown: an app that can't read the clip
+                            // doesn't learn when the user copies either (a copy-timing oracle).
+                            // Its own copies still call back.
+                            && (UserHandle.isSameApp(getPccAwareUid(li.mUid),
+                                    getPccAwareUid(clipboard.primaryClipUid))
+                                    || !ichthysNeedsPasteProof(li.mPackageName, li.mUid,
+                                            UserHandle.getUserId(li.mUid)))) {
                         clipboard.primaryClipListeners.getBroadcastItem(i)
                                 .dispatchPrimaryClipChanged();
                     }
@@ -1767,7 +1816,8 @@ public class ClipboardService extends SystemService {
     /**
      * An app may read its own clip, or while a paste grant is live: from a verified input, a
      * system-attested paste (notifyUserAuthorizedClipAccess) or the keyboard's paste. A clip
-     * marked sensitive needs more than a tap: the toolbar's Paste, the keyboard or a paste key.
+     * marked sensitive needs more than a tap: the toolbar's Paste, the keyboard or a paste key
+     * (and a preinstalled accessibility service, if it was one's ACTION_PASTE).
      */
     @GuardedBy("mLock")
     private boolean ichthysMayReadLocked(int uid, @Nullable Clipboard clipboard,
@@ -1779,11 +1829,51 @@ public class ClipboardService extends SystemService {
         }
         final long now = SystemClock.elapsedRealtime();
         final int userId = UserHandle.getUserId(uid);
-        final boolean tapOnly = mIchthysPasteGrantFromTap.get(uid)
-                && clipboard != null && ichthysIsSensitive(clipboard.primaryClip);
-        return (now <= mIchthysPasteGrantUntil.get(uid, 0) && !tapOnly)
-                || (now <= mIchthysImePasteUntil.get(userId, 0) && focusedWindow != null
-                        && focusedWindow == mIchthysImePasteWindow.get(userId));
+        if (now <= mIchthysImePasteUntil.get(userId, 0) && focusedWindow != null
+                && focusedWindow == mIchthysImePasteWindow.get(userId)) {
+            return true;
+        }
+        if (now > mIchthysPasteGrantUntil.get(uid, 0)) {
+            return false;
+        }
+        final boolean sensitive = clipboard != null && ichthysIsSensitive(clipboard.primaryClip);
+        if (mIchthysPasteGrantFromTap.get(uid)) {
+            return !sensitive && ichthysTapMayReadLocked(uid, clipboard, focusedWindow);
+        }
+        return !(sensitive && mIchthysPasteGrantNoSensitive.get(uid));
+    }
+
+    /**
+     * IchthysOS (attack-surface sweep C1): every tap in an app is a verified input, so a plain
+     * tap grant would let an SDK read each new clip on the user's next tap anywhere in the app.
+     * The system-drawn selection toolbar (a strong grant) and the keyboard's paste don't need
+     * this; a tap only stands for an in-app Paste button. It unlocks a clip only if the clip was
+     * copied while this very window had input focus (not one brought along from another app),
+     * and only once per clip: the reads of one paste (the same tap), not one per later tap.
+     */
+    @GuardedBy("mLock")
+    private boolean ichthysTapMayReadLocked(int uid, @Nullable Clipboard clipboard,
+            @Nullable IBinder focusedWindow) {
+        if (clipboard == null || clipboard.primaryClip == null) {
+            return true;  // Nothing to read.
+        }
+        if (focusedWindow == null || focusedWindow != clipboard.mIchthysFocusAtSet) {
+            return false;
+        }
+        final int index = clipboard.mIchthysTapReads.indexOfKey(uid);
+        return index < 0
+                || clipboard.mIchthysTapReads.valueAt(index)
+                        == mIchthysPasteGrantEvent.get(uid, 0);
+    }
+
+    /** IchthysOS: a read by [uid] went through; a tap grant has now read this clip. */
+    @GuardedBy("mLock")
+    private void ichthysNoteTapReadLocked(int uid, @Nullable Clipboard clipboard) {
+        if (clipboard != null && clipboard.primaryClip != null
+                && mIchthysPasteGrantFromTap.get(uid)
+                && clipboard.mIchthysTapReads.indexOfKey(uid) < 0) {
+            clipboard.mIchthysTapReads.put(uid, mIchthysPasteGrantEvent.get(uid, 0));
+        }
     }
 
     /** IchthysOS: the copying app marked [clip] sensitive (a password manager's password). */
@@ -1795,7 +1885,11 @@ public class ClipboardService extends SystemService {
         return extras != null && extras.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE, false);
     }
 
-    /** IchthysOS: the window with input focus on the top display now. Not under mLock. */
+    /**
+     * IchthysOS: the window with input focus on the top display now. Readers call it before
+     * taking mLock; setPrimaryClipInternalNoClassifyLocked calls it under mLock, which is fine:
+     * WindowManager never calls into the clipboard, and focus is checked under mLock anyway.
+     */
     @Nullable
     private IBinder ichthysFocusedWindow() {
         final long ident = Binder.clearCallingIdentity();
@@ -1835,6 +1929,7 @@ public class ClipboardService extends SystemService {
             if (mIchthysPasteGrantUntil.valueAt(i) < now) {
                 mIchthysPasteGrantEvent.delete(mIchthysPasteGrantUntil.keyAt(i));
                 mIchthysPasteGrantFromTap.delete(mIchthysPasteGrantUntil.keyAt(i));
+                mIchthysPasteGrantNoSensitive.delete(mIchthysPasteGrantUntil.keyAt(i));
                 mIchthysPasteGrantUntil.removeAt(i);
             }
         }

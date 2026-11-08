@@ -58,8 +58,10 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ParceledListSlice;
+import android.content.pm.ResolveInfo;
 import android.graphics.ParcelableColorSpace;
 import android.graphics.Region;
 import android.hardware.HardwareBuffer;
@@ -78,6 +80,7 @@ import android.os.RemoteCallback;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.SystemClock;
+import android.os.UserHandle;
 import android.provider.Settings;
 import android.util.Pair;
 import android.util.Slog;
@@ -404,6 +407,14 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
             return false;
         }
         if (!mSecurityPolicy.checkAccessibilityAccess(this)) {
+            return false;
+        }
+        // IchthysOS accessibility scoping (attack-surface sweep A1): no raw keys while a window
+        // outside this service's scope (or the lock screen hidden from it) is on screen: they
+        // would spell out what is typed there. Called with mLock held (KeyEventDispatcher);
+        // not taking the key lets it go on to the app.
+        if (mSecurityPolicy.isIchthysHiddenContentShownLocked(
+                mSystemSupport.getCurrentUserIdLocked(), this, keyEvent.getDisplayId(), false)) {
             return false;
         }
         try {
@@ -1129,6 +1140,15 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
             if (!hasRightsToCurrentUserLocked()) {
                 return false;
             }
+            // IchthysOS accessibility scoping (attack-surface sweep A2): the system screenshot
+            // would capture windows outside this service's scope. Back, Home and the other
+            // actions read no content and stay available.
+            if (action == AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT
+                    && mSecurityPolicy.isIchthysHiddenContentShownLocked(
+                            mSystemSupport.getCurrentUserIdLocked(), this,
+                            Display.DEFAULT_DISPLAY, true)) {
+                return false;
+            }
         }
         enforceCurrentUserIfVisibleBackgroundEnabled();
         final long identity = Binder.clearCallingIdentity();
@@ -1560,7 +1580,9 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
             }
 
             // IchthysOS accessibility scoping: no full-display capture while a window outside
-            // this service's scope is on that display.
+            // this service's scope is on that display. The window list may still be coming
+            // (wait for it as getWindows() does); without one the check fails closed.
+            ensureWindowsAvailableTimedLocked(displayId);
             if (isIchthysHiddenWindowOnDisplayLocked(displayId)) {
                 sendScreenshotFailure(AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERNAL_ERROR,
                         callback);
@@ -1591,7 +1613,23 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
             ScreenCaptureInternal.ScreenCaptureListener screenCaptureListener =
                     new ScreenCaptureInternal.ScreenCaptureListener(
                             (screenshotBuffer, result) -> {
-                                if (screenshotBuffer != null && result == 0) {
+                                // IchthysOS (attack-surface sweep A5): check again once the
+                                // frame exists; an app that was launching at the request
+                                // (not yet in the window list) may be in it now.
+                                final boolean ichthysHidden;
+                                synchronized (mLock) {
+                                    ichthysHidden = isIchthysHiddenWindowOnDisplayLocked(
+                                            displayId);
+                                }
+                                if (ichthysHidden) {
+                                    if (screenshotBuffer != null
+                                            && screenshotBuffer.getHardwareBuffer() != null) {
+                                        screenshotBuffer.getHardwareBuffer().close();
+                                    }
+                                    sendScreenshotFailure(AccessibilityService
+                                                    .ERROR_TAKE_SCREENSHOT_INTERNAL_ERROR,
+                                            callback);
+                                } else if (screenshotBuffer != null && result == 0) {
                                     sendScreenshotSuccess(screenshotBuffer, callback);
                                 } else {
                                     sendScreenshotFailure(
@@ -2369,10 +2407,26 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
                 // paste here (TalkBack, Voice Access, Switch Access). The gesture went to the
                 // service, not the app, so tell ClipboardService that the window's app may read
                 // the clip for this paste.
+                // IchthysOS (attack-surface sweep C2): but not when the service belongs to the
+                // window's own app (same package or signer): an app that ships a service could
+                // then "paste" into itself whenever it likes. A service that isn't preinstalled
+                // doesn't unlock a clip marked sensitive.
                 final ClipboardManagerInternal clipboard =
                         LocalServices.getService(ClipboardManagerInternal.class);
-                if (clipboard != null) {
-                    clipboard.notifyUserAuthorizedClipAccess(connection.getUid());
+                final ResolveInfo ichthysResolve = mAccessibilityServiceInfo.getResolveInfo();
+                final ApplicationInfo ichthysServiceApp = ichthysResolve != null
+                        && ichthysResolve.serviceInfo != null
+                        ? ichthysResolve.serviceInfo.applicationInfo : null;
+                final int targetUid = connection.getUid();
+                final boolean ownApp = ichthysServiceApp != null
+                        && (UserHandle.isSameApp(ichthysServiceApp.uid, targetUid)
+                                || mContext.getPackageManager().checkSignatures(
+                                        ichthysServiceApp.uid, targetUid)
+                                        == PackageManager.SIGNATURE_MATCH);
+                if (clipboard != null && !ownApp) {
+                    // UiAutomation and virtual-device proxies have no app: trusted as before.
+                    clipboard.notifyAccessibilityPaste(targetUid,
+                            ichthysServiceApp == null || ichthysServiceApp.isSystemApp());
                 }
             }
             if (intConnTracingEnabled()) {
@@ -2425,20 +2479,14 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
                 interrogatingPid, interrogatingTid);
     }
 
+    /**
+     * IchthysOS: a full-display capture would show something hidden from this service. Strict:
+     * fresh input focus from WindowManager, and fails closed without a window list (an earlier
+     * audit's open item) or with an app window no connection names yet.
+     */
     private boolean isIchthysHiddenWindowOnDisplayLocked(int displayId) {
-        final List<AccessibilityWindowInfo> windows =
-                mA11yWindowManager.getWindowListLocked(displayId);
-        if (windows == null) {
-            return false;
-        }
-        final int userId = mSystemSupport.getCurrentUserIdLocked();
-        for (int i = 0; i < windows.size(); i++) {
-            if (mSecurityPolicy.isIchthysWindowHiddenLocked(userId, this,
-                    windows.get(i).getId())) {
-                return true;
-            }
-        }
-        return false;
+        return mSecurityPolicy.isIchthysHiddenContentShownLocked(
+                mSystemSupport.getCurrentUserIdLocked(), this, displayId, true);
     }
 
     private List<AccessibilityWindowInfo> getWindowsByDisplayLocked(int displayId) {
@@ -2453,7 +2501,8 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
         for (int i = 0; i < windowCount; i++) {
             AccessibilityWindowInfo window = internalWindowList.get(i);
             // IchthysOS accessibility scoping: windows outside this service's scope are left out.
-            if (mSecurityPolicy.isIchthysWindowHiddenLocked(userId, this, window.getId())) {
+            if (mSecurityPolicy.isIchthysWindowHiddenLocked(userId, this, window.getId())
+                    || mSecurityPolicy.isIchthysUnnamedWindowHiddenLocked(userId, this, window)) {
                 continue;
             }
             AccessibilityWindowInfo windowClone =

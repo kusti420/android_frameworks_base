@@ -22,9 +22,12 @@ import android.location.Country;
 import android.location.CountryListener;
 import android.location.ICountryDetector;
 import android.location.ICountryListener;
+import android.os.Binder;
 import android.os.Handler;
 import android.os.IBinder;
+import android.os.Process;
 import android.os.RemoteException;
+import android.os.UserHandle;
 import android.text.TextUtils;
 import android.util.PrintWriterPrinter;
 import android.util.Printer;
@@ -34,6 +37,7 @@ import com.android.internal.R;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.os.BackgroundThread;
 import com.android.internal.util.DumpUtils;
+import com.android.server.location.IchthysLocationNoFix;
 import com.android.server.location.IchthysLocationSpoof;
 import com.android.server.location.countrydetector.ComprehensiveCountryDetector;
 import com.android.server.location.countrydetector.CountryDetectorBase;
@@ -60,10 +64,13 @@ public class CountryDetectorService extends ICountryDetector.Stub {
     private final class Receiver implements IBinder.DeathRecipient {
         private final ICountryListener mListener;
         private final IBinder mKey;
+        // IchthysOS: the registering app, for the "No location" check in notifyReceivers.
+        private final int mUid;
 
         public Receiver(ICountryListener listener) {
             mListener = listener;
             mKey = listener.asBinder();
+            mUid = Binder.getCallingUid();
         }
 
         public void binderDied() {
@@ -125,7 +132,39 @@ public class CountryDetectorService extends ICountryDetector.Stub {
         if (spoof != null) {
             return spoofedCountry(spoof);
         }
-        return mCountryDetector.detectCountry();
+        // IchthysOS "No location": a country taken from a location fix is a coarse fix itself.
+        return withheldForNoFix(mCountryDetector.detectCountry(), Binder.getCallingUid());
+    }
+
+    /**
+     * IchthysOS: null instead of {@code country} when it comes from a location fix and
+     * {@code uid} is on the "No location" list (IchthysLocationNoFix, any package of the uid).
+     * Countries from the network, the SIM or the locale are left alone: those don't need a fix.
+     */
+    @Nullable
+    private Country withheldForNoFix(@Nullable Country country, int uid) {
+        if (country == null || country.getSource() != Country.COUNTRY_SOURCE_LOCATION
+                || UserHandle.getAppId(uid) < Process.FIRST_APPLICATION_UID) {
+            return country;
+        }
+        final String[] packages;
+        final long token = Binder.clearCallingIdentity();
+        try {
+            packages = mContext.getPackageManager().getPackagesForUid(uid);
+        } catch (RuntimeException e) {
+            return country;
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+        if (packages != null) {
+            final int userId = UserHandle.getUserId(uid);
+            for (String pkg : packages) {
+                if (IchthysLocationNoFix.isNoFix(pkg, userId)) {
+                    return null;
+                }
+            }
+        }
+        return country;
     }
 
     @Nullable
@@ -199,8 +238,13 @@ public class CountryDetectorService extends ICountryDetector.Stub {
     protected void notifyReceivers(Country country) {
         synchronized (mReceivers) {
             for (Receiver receiver : mReceivers.values()) {
+                // IchthysOS "No location": see withheldForNoFix; such an app hears nothing.
+                final Country forReceiver = withheldForNoFix(country, receiver.mUid);
+                if (forReceiver == null) {
+                    continue;
+                }
                 try {
-                    receiver.getListener().onCountryDetected(country);
+                    receiver.getListener().onCountryDetected(forReceiver);
                 } catch (RemoteException e) {
                     // TODO: Shall we remove the receiver?
                     Slog.e(TAG, "notifyReceivers failed:", e);

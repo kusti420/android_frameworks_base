@@ -43,9 +43,11 @@ import android.os.UserManager;
 import android.util.ArraySet;
 import android.util.Slog;
 import android.util.SparseBooleanArray;
+import android.view.Display;
 import android.view.WindowInfo;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
 import android.view.inputmethod.InputMethodInfo;
 
@@ -53,6 +55,7 @@ import com.android.internal.util.ArrayUtils;
 import com.android.server.LocalServices;
 import com.android.server.companion.virtual.VirtualDeviceManagerInternal;
 import com.android.server.inputmethod.InputMethodManagerInternal;
+import com.android.server.wm.ActivityTaskManagerInternal;
 import com.android.server.wm.WindowManagerInternal;
 
 import libcore.util.EmptyArray;
@@ -350,11 +353,184 @@ public class AccessibilitySecurityPolicy {
                 mAccessibilityWindowManager.resolveParentWindowIdLocked(windowId);
         final AccessibilityWindowManager.RemoteAccessibilityConnection connection =
                 mAccessibilityWindowManager.getConnectionLocked(userId, resolvedWindowId);
+        // Null while windows aren't tracked; then only the connection's owner is known.
+        final WindowInfo windowInfo =
+                mAccessibilityWindowManager.findWindowInfoByIdLocked(resolvedWindowId);
+        // A window drawn for an app's activity by another process (the splash screen and the
+        // snapshot starting window, drawn by SystemUI's shell) or without a connection to name
+        // its owner: judge it by the activity's app too.
+        if (windowInfo != null
+                && (connection == null
+                        || windowInfo.type == WindowManager.LayoutParams.TYPE_APPLICATION_STARTING)
+                && isIchthysActivityWindowHiddenLocked(userId, service, windowInfo)) {
+            return true;
+        }
         if (connection == null) {
             return false;
         }
-        return isIchthysPackageHiddenLocked(userId, service, connection.getPackageName(),
-                resolvedWindowId);
+        final String packageName = connection.getPackageName();
+        if (isIchthysPackageHiddenLocked(userId, service, packageName, resolvedWindowId)) {
+            return true;
+        }
+        if (windowInfo == null) {
+            return false;
+        }
+        // The keyboard shows what is typed into the app it serves (and a PIN pad's keys):
+        // hidden while that app is.
+        if (windowInfo.type == WindowManager.LayoutParams.TYPE_INPUT_METHOD) {
+            final int clientWindowId = mAccessibilityWindowManager.getFocusedWindowId(
+                    AccessibilityNodeInfo.FOCUS_INPUT);
+            if (clientWindowId != resolvedWindowId
+                    && isIchthysWindowHiddenLocked(userId, service, clientWindowId)) {
+                return true;
+            }
+        }
+        // The notification shade and heads-up show other apps' notifications.
+        if (IchthysA11yScopes.SYSTEMUI_PACKAGE.equals(packageName)
+                && windowInfo.type == WindowManager.LayoutParams.TYPE_NOTIFICATION_SHADE
+                && isIchthysShadeShowingHiddenLocked(userId, service, resolvedWindowId)) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * IchthysOS (attack-surface sweep, low): the app whose activity {@code windowInfo} belongs
+     * to is hidden from {@code service}. Fails closed when the activity can't be named.
+     */
+    private boolean isIchthysActivityWindowHiddenLocked(int userId,
+            @NonNull AbstractAccessibilityServiceConnection service,
+            @NonNull WindowInfo windowInfo) {
+        if (windowInfo.activityToken == null || !isIchthysHidingLocked(userId, service)) {
+            return false;
+        }
+        // Takes the WindowManager lock; the accessibility lock may be held for that
+        // (AccessibilityWindowManager.findFocusedWindowId does the same).
+        final ActivityTaskManagerInternal atm =
+                LocalServices.getService(ActivityTaskManagerInternal.class);
+        final ComponentName activity =
+                atm != null ? atm.getActivityName(windowInfo.activityToken) : null;
+        if (activity == null) {
+            return true;
+        }
+        return isIchthysPackageHiddenLocked(userId, service, activity.getPackageName(),
+                AccessibilityWindowInfo.UNDEFINED_WINDOW_ID);
+    }
+
+    /**
+     * IchthysOS (attack-surface sweep A3): SystemUI's shade window (the pulled-down shade and
+     * heads-up notifications) shows notifications of apps hidden from {@code service}. Window
+     * owner alone can't tell (every row is SystemUI's), so while any app hidden from the service
+     * has an active notification, the shade window is hidden from it as a whole; also while the
+     * notification list is being re-read after the shade appeared or a notification came in.
+     */
+    private boolean isIchthysShadeShowingHiddenLocked(int userId,
+            @NonNull AbstractAccessibilityServiceConnection service, int windowId) {
+        if (!isIchthysHidingLocked(userId, service)) {
+            return false;
+        }
+        final AccessibilityWindowInfo window =
+                mAccessibilityWindowManager.findA11yWindowInfoByIdLocked(windowId);
+        final long shownSince = window != null ? window.getTransitionTimeMillis() : 0;
+        final ArraySet<String> packages = mIchthysScopes.getNotificationPackages(shownSince);
+        if (packages == null) {
+            return true;
+        }
+        for (int i = 0; i < packages.size(); i++) {
+            final String packageName = packages.valueAt(i);
+            if (!IchthysA11yScopes.SYSTEMUI_PACKAGE.equals(packageName)
+                    && isIchthysPackageHiddenLocked(userId, service, packageName,
+                            AccessibilityWindowInfo.UNDEFINED_WINDOW_ID)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** IchthysOS: a notification was posted; the shade check re-reads the active ones. */
+    public void onIchthysNotificationPosted() {
+        mIchthysScopes.onNotificationPosted();
+    }
+
+    /** IchthysOS: whether anything can be hidden from {@code service} at all. */
+    private boolean isIchthysHidingLocked(int userId,
+            @NonNull AbstractAccessibilityServiceConnection service) {
+        return isIchthysScopedService(service) && mIchthysScopes.hidesAnything(
+                service.getComponentName(),
+                IchthysA11yScopes.isThirdPartyService(service.getServiceInfo()), userId);
+    }
+
+    /**
+     * IchthysOS (attack-surface sweep A1, A2, A5): whether something hidden from
+     * {@code service} is on screen: the lock screen, the window with input focus, or any window
+     * on {@code displayId}. Raw key and motion events, injected gestures and screenshots are
+     * refused for the service then; a hidden PIN pad's keys must not reach it as raw input.
+     *
+     * @param strict for screen captures: re-reads input focus from WindowManager (the window
+     *        list lags behind an app that is just launching), and fails closed when the
+     *        window list is missing or holds an app window no accessibility connection names.
+     */
+    public boolean isIchthysHiddenContentShownLocked(int userId,
+            @NonNull AbstractAccessibilityServiceConnection service, int displayId,
+            boolean strict) {
+        if (!isIchthysHidingLocked(userId, service)) {
+            return false;
+        }
+        // The lock screen (and its PIN pad) while it is hidden from the service.
+        if (isIchthysKeyguardLocked() && isIchthysPackageHiddenLocked(userId, service,
+                IchthysA11yScopes.SYSTEMUI_PACKAGE, AccessibilityWindowInfo.UNDEFINED_WINDOW_ID)) {
+            return true;
+        }
+        if (mAccessibilityWindowManager == null) {
+            return strict;
+        }
+        final List<AccessibilityWindowInfo> windows = mAccessibilityWindowManager
+                .getWindowListLocked(displayId == Display.INVALID_DISPLAY
+                        ? Display.DEFAULT_DISPLAY : displayId);
+        if (windows == null || strict) {
+            // Takes the WindowManager lock (as AccessibilityWindowManager.findFocusedWindowId).
+            final WindowManagerInternal wm =
+                    LocalServices.getService(WindowManagerInternal.class);
+            final IBinder focused = wm != null ? wm.getFocusedWindowToken() : null;
+            if (focused != null) {
+                final int focusedId =
+                        mAccessibilityWindowManager.findWindowIdLocked(userId, focused);
+                // A focused window without a connection yet: an app just starting.
+                if ((strict && focusedId == AccessibilityWindowInfo.UNDEFINED_WINDOW_ID)
+                        || isIchthysWindowHiddenLocked(userId, service, focusedId)) {
+                    return true;
+                }
+            }
+        }
+        if (windows == null) {
+            return strict;
+        }
+        for (int i = 0; i < windows.size(); i++) {
+            final AccessibilityWindowInfo window = windows.get(i);
+            if (window.getId() == AccessibilityWindowInfo.UNDEFINED_WINDOW_ID) {
+                if (strict && window.getType() == AccessibilityWindowInfo.TYPE_APPLICATION) {
+                    return true;
+                }
+                continue;
+            }
+            if (isIchthysWindowHiddenLocked(userId, service, window.getId())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * IchthysOS (attack-surface sweep, low): an app window in the window list that no
+     * accessibility connection names (a splash or an app that is just starting) can't be told
+     * apart from a hidden app's: left out for services that have anything hidden.
+     */
+    public boolean isIchthysUnnamedWindowHiddenLocked(int userId,
+            @NonNull AbstractAccessibilityServiceConnection service,
+            @NonNull AccessibilityWindowInfo window) {
+        return window.getId() == AccessibilityWindowInfo.UNDEFINED_WINDOW_ID
+                && window.getType() == AccessibilityWindowInfo.TYPE_APPLICATION
+                && isIchthysHidingLocked(userId, service);
     }
 
     /**

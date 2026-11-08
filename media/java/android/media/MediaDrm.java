@@ -2333,7 +2333,68 @@ public final class MediaDrm implements AutoCloseable {
      * Standard fields names are {@link #PROPERTY_DEVICE_UNIQUE_ID}
      */
     @NonNull
-    public native byte[] getPropertyByteArray(String propertyName);
+    public byte[] getPropertyByteArray(String propertyName) {
+        final byte[] value = getPropertyByteArrayNative(propertyName);
+        if (value != null && PROPERTY_DEVICE_UNIQUE_ID.equals(propertyName)) {
+            return ichthysScopeDeviceUniqueId(value);
+        }
+        return value;
+    }
+
+    private native byte[] getPropertyByteArrayNative(String propertyName);
+
+    /**
+     * IchthysOS (Guard identity shield): the DRM plugin's deviceUniqueId is one value for every
+     * app on the device and survives factory reset, so apps could join their identities with it.
+     * A third-party app instead gets HMAC-SHA256(key = its own Android ID, raw id), the same
+     * length as the raw value: stable for that app (and across MediaDrm instances), different
+     * per app and signer, and new after Guard's "Reset identity" (which rotates the Android ID).
+     * DRM provisioning and licensing run inside the plugin and never see this value. System
+     * apps keep the raw id. Covers the Java API only; NDK AMediaDrm callers go to the plugin
+     * directly.
+     */
+    private static byte[] ichthysScopeDeviceUniqueId(@NonNull byte[] raw) {
+        final Application app = ActivityThread.currentApplication();
+        if (app == null) {
+            return raw;
+        }
+        final android.content.pm.ApplicationInfo ai = app.getApplicationInfo();
+        if (ai == null || ai.isSystemApp() || android.os.UserHandle.getAppId(ai.uid)
+                < android.os.Process.FIRST_APPLICATION_UID) {
+            return raw;
+        }
+        String key = null;
+        try {
+            key = android.provider.Settings.Secure.getString(app.getContentResolver(),
+                    android.provider.Settings.Secure.ANDROID_ID);
+        } catch (RuntimeException e) {
+            Log.w(TAG, "deviceUniqueId: no Android ID", e);
+        }
+        if (key == null || key.isEmpty()) {
+            key = "pkg:" + ai.packageName;
+        }
+        try {
+            final javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+            mac.init(new javax.crypto.spec.SecretKeySpec(
+                    ("ichthys-mediadrm-id:" + key).getBytes(
+                            java.nio.charset.StandardCharsets.UTF_8), "HmacSHA256"));
+            final byte[] out = new byte[raw.length];
+            int filled = 0;
+            for (int counter = 0; filled < out.length; counter++) {
+                mac.update(raw);
+                mac.update((byte) counter);
+                final byte[] block = mac.doFinal();
+                final int n = Math.min(block.length, out.length - filled);
+                System.arraycopy(block, 0, out, filled, n);
+                filled += n;
+            }
+            return out;
+        } catch (java.security.GeneralSecurityException e) {
+            Log.w(TAG, "deviceUniqueId: HMAC unavailable", e);
+            // Never hand out the raw id to a shielded app.
+            return new byte[raw.length];
+        }
+    }
 
     /**
     * Set a MediaDrm byte array property value, given the property name string

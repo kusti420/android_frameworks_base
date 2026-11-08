@@ -4404,18 +4404,24 @@ public class TelephonyRegistry extends ITelephonyRegistry.Stub {
         // in the future, we would need to create a unique key for each group of
         // location-bypass-packages.
         if (LocationAccessPolicy.isLocationModeEnabled(mContext, mContext.getUserId())) {
+            // IchthysOS: apps on the scan-empty list get only the sanitized ServiceState, like an
+            // app without location permission (see ichthysCellHidden). Null: stock broadcasts.
+            final String[] ichthysHidden = ichthysCellHiddenPackages();
+            final String[] ichthysExcluded = ichthysHidden.length == 0 ? null : ichthysHidden;
             Intent fullIntent = createServiceStateIntent(state, subId, phoneId, false);
             mContext.createContextAsUser(UserHandle.ALL, 0).sendBroadcastMultiplePermissions(
                     fullIntent,
                     new String[]{Manifest.permission.READ_PHONE_STATE,
                             Manifest.permission.ACCESS_FINE_LOCATION},
+                    null,
+                    ichthysExcluded,
                     createServiceStateBroadcastOptions(subId, phoneId, "I:RA"));
             mContext.createContextAsUser(UserHandle.ALL, 0).sendBroadcastMultiplePermissions(
                     fullIntent,
                     new String[]{Manifest.permission.READ_PRIVILEGED_PHONE_STATE,
                             Manifest.permission.ACCESS_FINE_LOCATION},
                     new String[]{Manifest.permission.READ_PHONE_STATE},
-                    null,
+                    ichthysExcluded,
                     createServiceStateBroadcastOptions(subId, phoneId, "I:RPA,E:R"));
 
             Intent sanitizedIntent = createServiceStateIntent(state, subId, phoneId, true);
@@ -4423,15 +4429,24 @@ public class TelephonyRegistry extends ITelephonyRegistry.Stub {
                     sanitizedIntent,
                     new String[]{Manifest.permission.READ_PHONE_STATE},
                     new String[]{Manifest.permission.ACCESS_FINE_LOCATION},
-                    null,
+                    ichthysExcluded,
                     createServiceStateBroadcastOptions(subId, phoneId, "I:R,E:A"));
             mContext.createContextAsUser(UserHandle.ALL, 0).sendBroadcastMultiplePermissions(
                     sanitizedIntent,
                     new String[]{Manifest.permission.READ_PRIVILEGED_PHONE_STATE},
                     new String[]{Manifest.permission.READ_PHONE_STATE,
                             Manifest.permission.ACCESS_FINE_LOCATION},
-                    null,
+                    ichthysExcluded,
                     createServiceStateBroadcastOptions(subId, phoneId, "I:RP,E:RA"));
+            for (String ichthysPkg : ichthysHidden) {
+                Intent hiddenIntent = createServiceStateIntent(state, subId, phoneId, true);
+                hiddenIntent.setPackage(ichthysPkg);
+                mContext.createContextAsUser(UserHandle.ALL, 0).sendBroadcastMultiplePermissions(
+                        hiddenIntent,
+                        new String[]{Manifest.permission.READ_PHONE_STATE},
+                        createServiceStateBroadcastOptions(subId, phoneId,
+                                "I:R,ichthys:" + ichthysPkg));
+            }
         } else {
             String[] locationBypassPackages = Binder.withCleanCallingIdentity(() ->
                     LocationAccessPolicy.getLocationBypassPackages(mContext));
@@ -4694,6 +4709,47 @@ public class TelephonyRegistry extends ITelephonyRegistry.Stub {
                 com.android.internal.ichthys.guard.GuardEvent.SHIELD_CALL_NUMBER,
                 "caller number hidden");
         return false;
+    }
+
+    /**
+     * IchthysOS: the "Scans" shield for cell data. An app on ichthys_scan_empty_pkgs is treated
+     * as having no location permission for every location check of this registry (cell info,
+     * cell location, ServiceState, barring info, registration failures, physical channels), so
+     * it gets the same empty or sanitized values as an app without the permission.
+     */
+    private boolean ichthysCellHidden(Record r) {
+        if (!com.android.internal.ichthys.guard.IchthysCellShield.isCellLocationHidden(mContext,
+                r.callerUid)) {
+            return false;
+        }
+        com.android.server.ichthys.guard.IchthysGuardInternal.note(r.callerUid,
+                com.android.internal.ichthys.guard.GuardEvent.SHIELD_SCANS_EMPTY,
+                "cell location withheld");
+        return true;
+    }
+
+    /**
+     * IchthysOS: the listed packages of every user ({@link #ichthysCellHidden}): the full-ServiceState
+     * broadcast leaves them out, and they get the sanitized one instead.
+     */
+    private String[] ichthysCellHiddenPackages() {
+        final ArraySet<String> out = new ArraySet<>();
+        final long token = Binder.clearCallingIdentity();
+        try {
+            final UserManager um = mContext.getSystemService(UserManager.class);
+            if (um != null) {
+                for (UserHandle user : um.getUserHandles(/* excludeDying= */ true)) {
+                    out.addAll(com.android.internal.ichthys.guard.IchthysCellShield
+                            .hiddenPackages(mContext, user.getIdentifier()));
+                }
+            }
+        } catch (RuntimeException e) {
+            log("IchthysShield: scan-empty packages unknown, ServiceState as stock: " + e);
+            out.clear();
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+        return out.toArray(new String[0]);
     }
 
     /** Whether the record's app may not have call numbers under the call-log shield. */
@@ -5002,6 +5058,9 @@ public class TelephonyRegistry extends ITelephonyRegistry.Stub {
         if (r.renounceFineLocationAccess) {
             return false;
         }
+        if (ichthysCellHidden(r)) {
+            return false;
+        }
         LocationAccessPolicy.LocationPermissionQuery query =
                 new LocationAccessPolicy.LocationPermissionQuery.Builder()
                         .setCallingPackage(r.callingPackage)
@@ -5029,6 +5088,9 @@ public class TelephonyRegistry extends ITelephonyRegistry.Stub {
      */
     private boolean checkCoarseLocationAccess(Record r, int minSdk) {
         if (r.renounceCoarseLocationAccess) {
+            return false;
+        }
+        if (ichthysCellHidden(r)) {
             return false;
         }
         LocationAccessPolicy.LocationPermissionQuery query =

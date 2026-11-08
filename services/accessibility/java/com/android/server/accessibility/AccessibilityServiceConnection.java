@@ -607,7 +607,14 @@ class AccessibilityServiceConnection extends AbstractAccessibilityServiceConnect
                     if (wmTracingEnabled()) {
                         logTraceWM("isTouchOrFaketouchDevice", "");
                     }
-                    if (motionEventInjector != null
+                    // IchthysOS accessibility scoping (attack-surface sweep A2): no injected
+                    // gestures while a window outside this service's scope (or the lock screen
+                    // hidden from it) is on screen: it could tap through what it can't see.
+                    final boolean ichthysHidden =
+                            mSecurityPolicy.isIchthysHiddenContentShownLocked(
+                                    mSystemSupport.getCurrentUserIdLocked(), this, displayId,
+                                    false);
+                    if (motionEventInjector != null && !ichthysHidden
                             && mWindowManagerService.isTouchOrFaketouchDevice()) {
                         motionEventInjector.injectEvents(
                                 gestureSteps.getList(), mClient, sequence, displayId,

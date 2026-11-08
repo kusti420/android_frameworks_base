@@ -1619,6 +1619,12 @@ public class AccessibilityManagerService extends IAccessibilityManager.Stub
             mTraceManager.logTrace(LOG_TAG + ".sendAccessibilityEvent", FLAGS_ACCESSIBILITY_MANAGER,
                     "event=" + event + ";userId=" + userId);
         }
+        // IchthysOS accessibility scoping (attack-surface sweep A3): a notification may have come
+        // in; the shade/heads-up check re-reads the active ones (on a background thread, never
+        // here: NotificationManagerService sends this under its own lock).
+        if (event.getEventType() == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) {
+            mSecurityPolicy.onIchthysNotificationPosted();
+        }
         boolean dispatchEvent = false;
         int resolvedUserId;
 
@@ -1829,6 +1835,8 @@ public class AccessibilityManagerService extends IAccessibilityManager.Stub
                     "feedbackType=" + feedbackType + ";userId=" + userId);
         }
 
+        final int resolvedUserId;
+        final List<AccessibilityServiceInfo> result;
         synchronized (mLock) {
             final int deviceId = mProxyManager.getFirstDeviceIdForUidLocked(
                     Binder.getCallingUid());
@@ -1839,7 +1847,7 @@ public class AccessibilityManagerService extends IAccessibilityManager.Stub
             // We treat calls from a profile as if made by its parent as profiles
             // share the accessibility state of the parent. The call below
             // performs the current profile parent resolution.
-            final int resolvedUserId = mSecurityPolicy
+            resolvedUserId = mSecurityPolicy
                     .resolveCallingUserIdEnforcingPermissionsLocked(userId);
 
             // The automation service can suppress other services.
@@ -1850,7 +1858,7 @@ public class AccessibilityManagerService extends IAccessibilityManager.Stub
 
             final List<AccessibilityServiceConnection> services = userState.mBoundServices;
             final int serviceCount = services.size();
-            final List<AccessibilityServiceInfo> result = new ArrayList<>(serviceCount);
+            result = new ArrayList<>(serviceCount);
             for (int i = 0; i < serviceCount; ++i) {
                 final AccessibilityServiceConnection service = services.get(i);
                 if ((service.mFeedbackType & feedbackType) != 0
@@ -1858,8 +1866,24 @@ public class AccessibilityManagerService extends IAccessibilityManager.Stub
                     result.add(service.getServiceInfo());
                 }
             }
+        }
+
+        // IchthysOS (attack-surface sweep U5): like getInstalledAccessibilityServiceList(), an
+        // app only learns of the enabled services whose package it may see (package visibility).
+        if (Binder.getCallingPid() == OWN_PROCESS_ID) {
             return result;
         }
+        final PackageManagerInternal pm = LocalServices.getService(
+                PackageManagerInternal.class);
+        final int callingUid = Binder.getCallingUid();
+        for (int i = result.size() - 1; i >= 0; i--) {
+            final ComponentName component = result.get(i).getComponentName();
+            if (component != null && pm.filterAppAccess(component.getPackageName(), callingUid,
+                    resolvedUserId)) {
+                result.remove(i);
+            }
+        }
+        return result;
     }
 
     @Override
@@ -2708,6 +2732,15 @@ public class AccessibilityManagerService extends IAccessibilityManager.Stub
         for (int i = state.mBoundServices.size() - 1; i >= 0; i--) {
             AccessibilityServiceConnection service = state.mBoundServices.get(i);
             if (service.mRequestTouchExplorationMode && service.mIsDefault == isDefault) {
+                // IchthysOS accessibility scoping (attack-surface sweep A1): the gesture, but not
+                // the raw touches behind it, while something hidden from the service is shown.
+                if (!gestureEvent.getMotionEvents().isEmpty()
+                        && mSecurityPolicy.isIchthysHiddenContentShownLocked(mCurrentUserId,
+                                service, gestureEvent.getDisplayId(), false)) {
+                    service.notifyGesture(new AccessibilityGestureEvent(
+                            gestureEvent.getGestureId(), gestureEvent.getDisplayId()));
+                    return true;
+                }
                 service.notifyGesture(gestureEvent);
                 return true;
             }
@@ -2725,6 +2758,14 @@ public class AccessibilityManagerService extends IAccessibilityManager.Stub
                 if (service.wantsGenericMotionEvent(event)
                         || (event.isFromSource(InputDevice.SOURCE_TOUCHSCREEN)
                         && service.isServiceDetectsGesturesEnabled(displayId))) {
+                    // IchthysOS accessibility scoping (attack-surface sweep A1): no raw touches
+                    // while a window outside the service's scope (or the keyboard typing into
+                    // one, or the lock screen hidden from it) is on screen: taps on a PIN pad
+                    // give the PIN away.
+                    if (mSecurityPolicy.isIchthysHiddenContentShownLocked(
+                            mCurrentUserId, service, displayId, false)) {
+                        continue;
+                    }
                     service.notifyMotionEvent(event);
                     result = true;
                 }

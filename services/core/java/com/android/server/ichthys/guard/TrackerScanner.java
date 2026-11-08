@@ -58,6 +58,29 @@ final class TrackerScanner {
     /** Whole-APK budget: past this the scan stops and reports what it has (logged). */
     private static final long SCAN_BUDGET_NANOS = 20_000_000_000L;
 
+    /**
+     * IchthysOS: markers appended to a scan result after the tracker names (getScan's String[]
+     * carries them; Settings' ServiceBackend splits them off). A tracker name can never take
+     * this prefix ({@link #addEntry} drops such names).
+     */
+    static final String MARK_PREFIX = "ichthys:";
+    /**
+     * Not all of the app's code could be read (oversized or broken dex, time budget, out of
+     * memory, unreadable APK): "no trackers found" means "unknown", not "none".
+     */
+    static final String MARK_INCOMPLETE = MARK_PREFIX + "incomplete";
+    /**
+     * The app can load code the scan never sees: dex or jar files in its assets, or references
+     * to DexClassLoader / InMemoryDexClassLoader / DelegateLastClassLoader.
+     */
+    static final String MARK_RUNTIME_CODE = MARK_PREFIX + "runtime_code";
+
+    /** Class loaders that load dex code from a file or a buffer at run time. */
+    private static final Set<String> RUNTIME_LOADER_TYPES = Set.of(
+            "Ldalvik/system/DexClassLoader;",
+            "Ldalvik/system/InMemoryDexClassLoader;",
+            "Ldalvik/system/DelegateLastClassLoader;");
+
     /** Small built-in fallback DB, used when {@link #TRACKERS_FILE} is missing or broken. */
     private static final String[][] DEFAULT_SIGNATURES = {
         {"Google AdMob", "com.google.android.gms.ads.", "com.google.ads."},
@@ -181,7 +204,7 @@ final class TrackerScanner {
     private static void addEntry(List<Signature> out, @Nullable JSONObject o) {
         if (o == null) return;
         final String name = o.optString("name", null);
-        if (name == null || name.isEmpty()) return;
+        if (name == null || name.isEmpty() || name.startsWith(MARK_PREFIX)) return;
         final Set<String> prefixes = new TreeSet<>();
         final JSONArray arr = o.optJSONArray("codeSignatures");
         if (arr != null) {
@@ -209,11 +232,15 @@ final class TrackerScanner {
 
     /**
      * Returns the names of the signatures matched by the classes defined in {@code apkPaths}
-     * (sorted, no duplicates).
+     * (sorted, no duplicates), followed by {@link #MARK_INCOMPLETE} and/or
+     * {@link #MARK_RUNTIME_CODE} when they apply.
      */
     @NonNull
     String[] scan(@NonNull List<String> apkPaths) {
         final Set<String> packages = new HashSet<>();
+        // IchthysOS: what the scan could not see is reported, never folded into "no trackers".
+        boolean incomplete = false;
+        boolean runtimeCode = false;
         // IchthysOS: untrusted input inside system_server: a crafted dex must cost bounded
         // time and memory, so the whole scan has a deadline and every table a cap.
         final long deadline = System.nanoTime() + SCAN_BUDGET_NANOS;
@@ -224,29 +251,41 @@ final class TrackerScanner {
                 while (entries.hasMoreElements()) {
                     final ZipEntry e = entries.nextElement();
                     final String n = e.getName();
+                    if (n.startsWith("assets/") && (n.endsWith(".dex") || n.endsWith(".jar"))) {
+                        // Code shipped as data, for a loader to pick up at run time.
+                        runtimeCode = true;
+                        continue;
+                    }
                     if (!n.startsWith("classes") || !n.endsWith(".dex") || n.indexOf('/') >= 0) {
                         continue;
                     }
                     if (e.getSize() > MAX_DEX_BYTES) {
                         Slog.w(TAG, "Skipping oversized " + n + " in " + path);
+                        incomplete = true;
                         continue;
                     }
                     if (System.nanoTime() > deadline) {
                         Slog.w(TAG, "Scan budget exhausted before " + n + " in " + path);
+                        incomplete = true;
                         break scan;
                     }
                     try (InputStream in = zip.getInputStream(e)) {
-                        collectPackages(readAll(in, e.getSize()), packages, deadline);
+                        if (collectPackages(readAll(in, e.getSize()), packages, deadline)) {
+                            runtimeCode = true;
+                        }
                     } catch (IOException | RuntimeException ex) {
                         Slog.w(TAG, "Bad dex " + n + " in " + path + ": " + ex);
+                        incomplete = true;
                     } catch (OutOfMemoryError oom) {
                         // IchthysOS: one APK must not take system_server (and every boot's
                         // backfill) down with it.
                         Slog.w(TAG, "Out of memory scanning " + n + " in " + path);
+                        incomplete = true;
                     }
                 }
-            } catch (IOException e) {
+            } catch (IOException | RuntimeException e) {
                 Slog.w(TAG, "Cannot open " + path + ": " + e);
+                incomplete = true;
             }
         }
         final Set<String> matched = new TreeSet<>();
@@ -261,7 +300,10 @@ final class TrackerScanner {
                 }
             }
         }
-        return matched.toArray(new String[0]);
+        final ArrayList<String> out = new ArrayList<>(matched);
+        if (incomplete) out.add(MARK_INCOMPLETE);
+        if (runtimeCode) out.add(MARK_RUNTIME_CODE);
+        return out.toArray(new String[0]);
     }
 
     private static byte[] readAll(InputStream in, long size) throws IOException {
@@ -290,8 +332,10 @@ final class TrackerScanner {
      * As above, giving up with an IllegalStateException once {@code deadlineNanos}
      * (System.nanoTime) has passed. Every type id is resolved at most once, and a class_defs
      * table larger than a dex can legitimately hold is refused.
+     *
+     * @return whether the dex references a run-time dex loader ({@link #RUNTIME_LOADER_TYPES})
      */
-    static void collectPackages(byte[] dex, Set<String> out, long deadlineNanos) {
+    static boolean collectPackages(byte[] dex, Set<String> out, long deadlineNanos) {
         if (dex.length < 0x70 || dex[0] != 'd' || dex[1] != 'e' || dex[2] != 'x') {
             throw new IllegalArgumentException("not a dex file");
         }
@@ -334,6 +378,21 @@ final class TrackerScanner {
             byType.put(typeIdx, pkg);
             if (pkg != null) out.add(pkg);
         }
+        // IchthysOS: a type id names every class the code refers to, not only the defined
+        // ones: a reference to a run-time loader shows up here.
+        for (int t = 0; t < typeIdsSize; t++) {
+            if ((t & 1023) == 0 && System.nanoTime() > deadlineNanos) {
+                throw new IllegalStateException("scan time budget exceeded");
+            }
+            final int strIdx = u32(dex, typeIdsOff + t * 4);
+            if (strIdx < 0 || strIdx >= stringIdsSize) continue;
+            final String desc = readString(dex, u32(dex, stringIdsOff + strIdx * 4));
+            if (desc != null && desc.startsWith("Ldalvik/system/")
+                    && RUNTIME_LOADER_TYPES.contains(desc)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void check(byte[] dex, int off, int count, int stride) {

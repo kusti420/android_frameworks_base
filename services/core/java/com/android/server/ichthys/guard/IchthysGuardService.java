@@ -340,6 +340,7 @@ public final class IchthysGuardService extends SystemService {
     private final ArrayMap<String, Long> mAlertTimes = new ArrayMap<>();
     /** "uid|pkg" -> elapsedRealtime the wakelock op went active. */
     private final ArrayMap<String, Long> mWakeStarts = new ArrayMap<>();
+    private static final int MAX_WAKE_STARTS = 512;
     /** "uid|pkg" -> {window start (elapsed), starts in window} while the screen is off. */
     private final ArrayMap<String, long[]> mWakeups = new ArrayMap<>();
     /** Non-system packages exempt from battery optimisation; null until the first snapshot. */
@@ -375,12 +376,43 @@ public final class IchthysGuardService extends SystemService {
 
     private static final class ScanEntry {
         final long versionCode;
+        /**
+         * IchthysOS: what was scanned: version plus every APK's path, size and mtime (see
+         * {@link #scanKey}). The version alone let a re-signed or swapped APK with the same
+         * versionCode keep the old result. Null for entries saved before the key existed.
+         */
+        @Nullable final String key;
         final String[] matches;
 
-        ScanEntry(long versionCode, String[] matches) {
+        ScanEntry(long versionCode, @Nullable String key, String[] matches) {
             this.versionCode = versionCode;
+            this.key = key;
             this.matches = matches;
         }
+
+        boolean isFor(String currentKey) {
+            return key != null && key.equals(currentKey);
+        }
+    }
+
+    /** IchthysOS: the cache key of an installed package's scan (see ScanEntry#key). */
+    private static String scanKey(PackageInfo pi) {
+        final StringBuilder sb = new StringBuilder().append(pi.getLongVersionCode());
+        final ApplicationInfo ai = pi.applicationInfo;
+        if (ai != null) {
+            appendApkKey(sb, ai.sourceDir);
+            if (ai.splitSourceDirs != null) {
+                for (String split : ai.splitSourceDirs) appendApkKey(sb, split);
+            }
+        }
+        return sb.toString();
+    }
+
+    private static void appendApkKey(StringBuilder sb, @Nullable String path) {
+        if (path == null) return;
+        final File f = new File(path);
+        sb.append('|').append(path).append(':').append(f.length()).append(':')
+                .append(f.lastModified());
     }
 
     public IchthysGuardService(Context context) {
@@ -467,6 +499,7 @@ public final class IchthysGuardService extends SystemService {
             mScanHandler.post(this::releaseLauncherlessQuarantines);
             mScanHandler.post(this::releaseDormantSuspensions);
             mScanHandler.post(this::backfillScans);
+            mScanHandler.post(this::sweepStaleAllowLists);
             mHandler.post(this::applyLan);
             // First snapshot only; later changes of the battery allowlist are alerted.
             mHandler.post(() -> checkBatteryExemptions(false));
@@ -569,6 +602,8 @@ public final class IchthysGuardService extends SystemService {
                     if (force || !Arrays.equals(deny, mAppliedDeny)) {
                         mCm.replaceFirewallChain(FIREWALL_CHAIN_OEM_DENY_3, deny);
                         mAppliedDeny = deny;
+                        // IchthysOS (N1): mediaserver's RTSP client, which the chain misses.
+                        IchthysMediaFirewall.push(deny);
                         if (force) mLastForcedApplyElapsed = nowElapsed;
                     }
                     // Idempotent and cheap (one BPF configuration write); the getter is hidden
@@ -610,11 +645,16 @@ public final class IchthysGuardService extends SystemService {
       }
     }
 
-    /** On screen: top, bound to the top app, or persistent. */
+    /**
+     * On screen: top (any visible activity, split screen and picture-in-picture included) or
+     * persistent. IchthysOS: a uid merely bound by the top app (PROCESS_STATE_BOUND_TOP) is not
+     * on screen; counting it let any app the top app binds keep its network under
+     * "Foreground only".
+     */
     @GuardedBy("mLock")
     private boolean isVisibleLocked(int uid) {
         return mProcState.get(uid, ActivityManager.PROCESS_STATE_NONEXISTENT)
-                <= ActivityManager.PROCESS_STATE_BOUND_TOP;
+                <= ActivityManager.PROCESS_STATE_TOP;
     }
 
     private boolean isVisible(int uid) {
@@ -955,7 +995,12 @@ public final class IchthysGuardService extends SystemService {
         final String[] pkgs = getContext().getPackageManager().getPackagesForUid(uid);
         if (pkgs != null) {
             for (String p : pkgs) {
-                if (CRITICAL_PACKAGES.contains(p)) return true;
+                // IchthysOS: the name alone is free to take (a sideloaded
+                // com.google.android.cellbroadcastservice was never firewalled): only the system
+                // image's copy, or one signed with the platform key, is infrastructure.
+                if (CRITICAL_PACKAGES.contains(p) && isSystemOrPlatformSigned(p, uid)) {
+                    return true;
+                }
             }
             boolean blockable = pkgs.length > 0;
             for (String p : pkgs) {
@@ -970,6 +1015,27 @@ public final class IchthysGuardService extends SystemService {
             }
         }
         return false;
+    }
+
+    /**
+     * IchthysOS: {@code pkg} (installed in {@code uid}'s user) is on the system image (FLAG_SYSTEM
+     * survives updates of a system app; a sideloaded app never has it) or is signed with the
+     * platform certificate. Identity must be cleared.
+     */
+    private boolean isSystemOrPlatformSigned(String pkg, int uid) {
+        final PackageManager pm = getContext().getPackageManager();
+        try {
+            final ApplicationInfo ai = pm.getApplicationInfoAsUser(pkg,
+                    PackageManager.MATCH_UNINSTALLED_PACKAGES, UserHandle.getUserId(uid));
+            if ((ai.flags & ApplicationInfo.FLAG_SYSTEM) != 0) return true;
+        } catch (PackageManager.NameNotFoundException e) {
+            return false;
+        }
+        try {
+            return pm.checkSignatures("android", pkg) == PackageManager.SIGNATURE_MATCH;
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     private static boolean isValidAccess(int access) {
@@ -1629,7 +1695,10 @@ public final class IchthysGuardService extends SystemService {
         @Override
         public void onReceive(Context context, Intent intent) {
             try {
+                // IchthysOS: an archived app (restored or archived, EXTRA_ARCHIVAL) is a stub, not
+                // a new app to review; its unarchive is a replacing install.
                 if (intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)
+                        || intent.getBooleanExtra(Intent.EXTRA_ARCHIVAL, false)
                         || intent.getData() == null) {
                     return;
                 }
@@ -1769,13 +1838,119 @@ public final class IchthysGuardService extends SystemService {
                     removed = mScans.remove(pkgName) != null;
                 }
                 if (removed) saveScans();
+                // IchthysOS: the app and its data are gone: so are its exemptions. Here, not in
+                // Settings, so it happens whether or not Settings runs.
+                final int userId = getSendingUserId();
+                mHandler.post(() -> pruneAllowLists(pkgName, userId));
                 return;
             }
             // Fresh installs: quarantine, LAN default and install alerts are mInstallReceiver's.
-            // ADDED (fresh or replacing) and REPLACED: scanPackage dedupes on versionCode.
+            // ADDED (fresh or replacing) and REPLACED: scanPackage dedupes on its cache key.
             scanPackage(pkgName, getSendingUserId(), true);
         }
     };
+
+    /**
+     * IchthysOS: the per-user Settings.Secure lists that hand a listed app something real (the
+     * ALLOW lists of IchthysShields: contacts, clipboard, sensors, BLE, Wi-Fi control, UWB, ...,
+     * and the fake place's real-location exemption). They are keyed by package name only, so an
+     * entry left by an uninstalled app would go to the next app of that name, whoever signed it.
+     * The PROTECT lists (and scopes) only take something away and are left alone.
+     */
+    private static List<String> allowListKeys() {
+        final ArrayList<String> keys = new ArrayList<>();
+        for (com.android.internal.ichthys.config.IchthysShields.Shield s
+                : com.android.internal.ichthys.config.IchthysShields.all()) {
+            if (s.listKey != null && s.polarity
+                    == com.android.internal.ichthys.config.IchthysShields.Polarity.ALLOW) {
+                keys.add(s.listKey);
+            }
+        }
+        keys.add("ichthys_location_real_pkgs");
+        return keys;
+    }
+
+    /**
+     * IchthysOS: drops {@code pkgName} (bare and "pkg:picked" entries) from every allow list of
+     * {@code userId}. Handler thread (scan thread for the boot sweep).
+     */
+    private void pruneAllowLists(String pkgName, int userId) {
+        if (userId < 0 || pkgName == null || pkgName.isEmpty()) return;
+        final android.content.ContentResolver cr = getContext().getContentResolver();
+        int pruned = 0;
+        for (String key : allowListKeys()) {
+            try {
+                final String stored = Settings.Secure.getStringForUser(cr, key, userId);
+                if (stored == null || stored.isEmpty()) continue;
+                final ArrayList<String> keep = new ArrayList<>();
+                boolean dropped = false;
+                for (String entry : stored.split(",")) {
+                    final String e = entry.trim();
+                    if (e.isEmpty()) continue;
+                    if (e.equals(pkgName) || e.startsWith(pkgName + ":")) {
+                        dropped = true;
+                    } else {
+                        keep.add(e);
+                    }
+                }
+                if (!dropped) continue;
+                Settings.Secure.putStringForUser(cr, key,
+                        keep.isEmpty() ? null : String.join(",", keep), userId);
+                pruned++;
+            } catch (RuntimeException e) {
+                Slog.w(TAG, "Could not prune " + pkgName + " from " + key, e);
+            }
+        }
+        if (pruned > 0) {
+            Slog.i(TAG, "Uninstalled " + pkgName + " (user " + userId + "): dropped from "
+                    + pruned + " exemption lists");
+        }
+    }
+
+    /**
+     * IchthysOS: once per boot, drops allow-list entries of packages the package manager no
+     * longer knows on any user (left by uninstalls before {@link #pruneAllowLists} existed).
+     * A package it still knows (uninstalled with its data kept, another user's copy, an app on
+     * unmounted storage) keeps its entries: only its own signer can come back under that name.
+     * Scan thread, at boot.
+     */
+    private void sweepStaleAllowLists() {
+        final Context context = getContext();
+        final PackageManager pm = context.getPackageManager();
+        final android.content.ContentResolver cr = context.getContentResolver();
+        final ArraySet<String> unknown = new ArraySet<>();
+        final ArraySet<String> known = new ArraySet<>();
+        for (android.content.pm.UserInfo user
+                : context.getSystemService(android.os.UserManager.class).getAliveUsers()) {
+            for (String key : allowListKeys()) {
+                final String stored;
+                try {
+                    stored = Settings.Secure.getStringForUser(cr, key, user.id);
+                } catch (RuntimeException e) {
+                    continue;
+                }
+                if (stored == null || stored.isEmpty()) continue;
+                for (String entry : stored.split(",")) {
+                    String p = entry.trim();
+                    final int colon = p.indexOf(':');
+                    if (colon >= 0) p = p.substring(0, colon);
+                    if (p.isEmpty() || known.contains(p) || unknown.contains(p)) continue;
+                    try {
+                        pm.getApplicationInfoAsUser(p, PackageManager.MATCH_KNOWN_PACKAGES,
+                                user.id);
+                        known.add(p);
+                    } catch (PackageManager.NameNotFoundException e) {
+                        unknown.add(p);
+                    } catch (RuntimeException e) {
+                        known.add(p); // Can't tell: keep it.
+                    }
+                }
+            }
+            for (int i = 0; i < unknown.size(); i++) {
+                pruneAllowLists(unknown.valueAt(i), user.id);
+            }
+        }
+    }
 
     /**
      * W8b decision 14: a user app installed after setup stays dormant until the user opens it.
@@ -1802,14 +1977,21 @@ public final class IchthysGuardService extends SystemService {
         }
         // Already opened (store "Open", adb install && am start): a new app is in the stopped
         // state until something starts it, so a running process means the user did.
+        // IchthysOS: only a process on screen counts as "the user opened it". Any running process
+        // used to: a sister app could start the new app's service or receiver before
+        // PACKAGE_ADDED arrived and so keep the payload out of quarantine. A process that runs
+        // without being on screen is stopped and the app quarantined like any other.
         final int quarantinedUid;
+        final boolean runningUnseen;
         try {
             final int uid = userPm.getPackageUid(pkgName, 0);
             synchronized (mLock) {
-                if (mProcState.indexOfKey(uid) >= 0) {
-                    Slog.i(TAG, "Not quarantining " + pkgName + " (already running)");
+                final int state = mProcState.get(uid, ActivityManager.PROCESS_STATE_NONEXISTENT);
+                if (state <= ActivityManager.PROCESS_STATE_TOP) {
+                    Slog.i(TAG, "Not quarantining " + pkgName + " (already on screen)");
                     return;
                 }
+                runningUnseen = state != ActivityManager.PROCESS_STATE_NONEXISTENT;
             }
             quarantinedUid = uid;
         } catch (PackageManager.NameNotFoundException e) {
@@ -1830,8 +2012,18 @@ public final class IchthysGuardService extends SystemService {
             if (failed != null && failed.length > 0) {
                 Slog.i(TAG, "Not quarantining " + pkgName + " (can't be suspended)");
             } else {
+                if (runningUnseen) {
+                    // Started behind the user's back before the install broadcast: the
+                    // suspension alone would leave that process running.
+                    Slog.i(TAG, "Stopping " + pkgName + ": running before it was ever opened");
+                    context.getSystemService(ActivityManager.class)
+                            .forceStopPackageAsUser(pkgName, userId);
+                }
                 addJournal(quarantinedUid, GuardEvent.JOURNAL_QUARANTINE,
-                        "New app held until you open it and pick a preset");
+                        runningUnseen
+                                ? "New app was started in the background before it was opened:"
+                                        + " stopped and held until you open it"
+                                : "New app held until you open it and pick a preset");
             }
         } catch (RemoteException | RuntimeException e) {
             Slog.w(TAG, "Could not quarantine " + pkgName, e);
@@ -1926,6 +2118,7 @@ public final class IchthysGuardService extends SystemService {
             return false;
         }
         if (isInstalledByIchthysApps(context, pkgName, userId)) return false;
+        if (isInstalledByDeviceOrProfileOwner(context, pkgName, userId)) return false;
         try {
             final ApplicationInfo ai = context.getPackageManager().getApplicationInfoAsUser(
                     pkgName, 0, userId);
@@ -1950,6 +2143,28 @@ public final class IchthysGuardService extends SystemService {
             }
             return (pm.getApplicationInfo(ICHTHYS_APPS_PACKAGE, 0).flags
                     & ApplicationInfo.FLAG_SYSTEM) != 0;
+        } catch (PackageManager.NameNotFoundException | RuntimeException e) {
+            return false;
+        }
+    }
+
+    /**
+     * IchthysOS: the device or profile owner installs what it manages (a work profile's apps, a
+     * kiosk app); holding those for review would stop managed setups. Identity must be cleared.
+     */
+    private static boolean isInstalledByDeviceOrProfileOwner(Context context, String pkgName,
+            int userId) {
+        try {
+            final String installer = context.createContextAsUser(UserHandle.of(userId), 0)
+                    .getPackageManager().getInstallSourceInfo(pkgName).getInstallingPackageName();
+            if (installer == null) return false;
+            final android.app.admin.DevicePolicyManager dpm =
+                    context.getSystemService(android.app.admin.DevicePolicyManager.class);
+            if (dpm == null) return false;
+            final ComponentName deviceOwner = dpm.getDeviceOwnerComponentOnAnyUser();
+            if (deviceOwner != null && installer.equals(deviceOwner.getPackageName())) return true;
+            final ComponentName profileOwner = dpm.getProfileOwnerAsUser(userId);
+            return profileOwner != null && installer.equals(profileOwner.getPackageName());
         } catch (PackageManager.NameNotFoundException | RuntimeException e) {
             return false;
         }
@@ -1990,9 +2205,10 @@ public final class IchthysGuardService extends SystemService {
         final ApplicationInfo ai = pi.applicationInfo;
         if (ai == null || ai.sourceDir == null) return null;
         final long version = pi.getLongVersionCode();
+        final String key = scanKey(pi);
         synchronized (mLock) {
             final ScanEntry cached = mScans.get(pkgName);
-            if (cached != null && cached.versionCode == version) return cached.matches;
+            if (cached != null && cached.isFor(key)) return cached.matches;
         }
         TrackerScanner scanner = mScanner;
         if (scanner == null) {
@@ -2002,15 +2218,17 @@ public final class IchthysGuardService extends SystemService {
         final ArrayList<String> paths = new ArrayList<>();
         paths.add(ai.sourceDir);
         if (ai.splitSourceDirs != null) paths.addAll(Arrays.asList(ai.splitSourceDirs));
-        // IchthysOS: a provisional "nothing found" entry is written before the scan, so an APK
-        // that crashes system_server while being scanned is not scanned again at every boot.
+        // IchthysOS: a provisional entry is written before the scan, so an APK that crashes
+        // system_server while being scanned is not scanned again at every boot. It says
+        // "incomplete", not "nothing found": such an app is unknown, not clean.
         synchronized (mLock) {
-            mScans.put(pkgName, new ScanEntry(version, new String[0]));
+            mScans.put(pkgName, new ScanEntry(version, key,
+                    new String[] {TrackerScanner.MARK_INCOMPLETE}));
         }
         if (mScanHandler.getLooper().isCurrentThread()) saveScans();
         final String[] matches = scanner.scan(paths);
         synchronized (mLock) {
-            mScans.put(pkgName, new ScanEntry(version, matches));
+            mScans.put(pkgName, new ScanEntry(version, key, matches));
         }
         if (persist) {
             if (mScanHandler.getLooper().isCurrentThread()) {
@@ -2036,9 +2254,10 @@ public final class IchthysGuardService extends SystemService {
         for (PackageInfo pi : pkgs) {
             final ApplicationInfo ai = pi.applicationInfo;
             if (ai == null || (ai.flags & ApplicationInfo.FLAG_SYSTEM) != 0) continue;
+            final String key = scanKey(pi);
             synchronized (mLock) {
                 final ScanEntry cached = mScans.get(pi.packageName);
-                if (cached != null && cached.versionCode == pi.getLongVersionCode()) continue;
+                if (cached != null && cached.isFor(key)) continue;
             }
             scanPackage(pi.packageName, UserHandle.USER_SYSTEM, false);
             scanned++;
@@ -2057,6 +2276,7 @@ public final class IchthysGuardService extends SystemService {
             final TypedXmlPullParser parser = Xml.resolvePullParser(in);
             String pkg = null;
             long version = 0;
+            String key = null;
             ArrayList<String> matches = null;
             int type;
             while ((type = parser.next()) != XmlPullParser.END_DOCUMENT) {
@@ -2064,6 +2284,7 @@ public final class IchthysGuardService extends SystemService {
                     if ("pkg".equals(parser.getName())) {
                         pkg = parser.getAttributeValue(null, "name");
                         version = parser.getAttributeLong(null, "version", 0);
+                        key = parser.getAttributeValue(null, "key");
                         matches = new ArrayList<>();
                     } else if ("match".equals(parser.getName()) && matches != null) {
                         final String n = parser.getAttributeValue(null, "name");
@@ -2071,7 +2292,8 @@ public final class IchthysGuardService extends SystemService {
                     }
                 } else if (type == XmlPullParser.END_TAG && "pkg".equals(parser.getName())) {
                     if (pkg != null && matches != null) {
-                        loaded.put(pkg, new ScanEntry(version, matches.toArray(new String[0])));
+                        loaded.put(pkg, new ScanEntry(version, key,
+                                matches.toArray(new String[0])));
                     }
                     pkg = null;
                     matches = null;
@@ -2109,6 +2331,7 @@ public final class IchthysGuardService extends SystemService {
                 xml.startTag(null, "pkg");
                 xml.attribute(null, "name", copy.keyAt(i));
                 xml.attributeLong(null, "version", e.versionCode);
+                if (e.key != null) xml.attribute(null, "key", e.key);
                 for (String m : e.matches) {
                     xml.startTag(null, "match");
                     xml.attribute(null, "name", m);
@@ -2209,6 +2432,14 @@ public final class IchthysGuardService extends SystemService {
                         "Kept the phone awake for " + ((now - start) / 60_000) + " min");
             }
             return;
+        }
+        // IchthysOS: a release that was never observed leaves an entry behind for good; drop the
+        // ones held for over 6 h (long since reported) before the map can grow without bound.
+        if (mWakeStarts.size() >= MAX_WAKE_STARTS) {
+            for (int i = mWakeStarts.size() - 1; i >= 0; i--) {
+                if (now - mWakeStarts.valueAt(i) > 6 * 60 * 60_000L) mWakeStarts.removeAt(i);
+            }
+            if (mWakeStarts.size() >= MAX_WAKE_STARTS) mWakeStarts.clear();
         }
         mWakeStarts.put(key, now);
         final boolean locked;

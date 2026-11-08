@@ -549,7 +549,10 @@ public class Ringtone {
                 // is haptic only ringtone
                 startLocalPlayer();
             }
-        } else if (mAllowRemote && (mRemotePlayer != null) && (mUri != null)) {
+        } else if (mAllowRemote && (mRemotePlayer != null) && (mUri != null)
+                && isLocalSoundUri(mUri)) {
+            // IchthysOS: only local sounds are handed to the remote player (SystemUI refuses the
+            // rest too): a URL the app couldn't open itself must not be fetched by SystemUI.
             final Uri canonicalUri = mUri.getCanonicalUri();
             final boolean looping;
             final float volume;
@@ -666,6 +669,14 @@ public class Ringtone {
             Log.w(TAG, "Neither local nor remote playback available");
             return false;
         }
+    }
+
+    /** IchthysOS: content:, file: or android.resource:, the sounds the remote player plays. */
+    private static boolean isLocalSoundUri(Uri uri) {
+        final String scheme = uri.getScheme();
+        return ContentResolver.SCHEME_CONTENT.equalsIgnoreCase(scheme)
+                || ContentResolver.SCHEME_FILE.equalsIgnoreCase(scheme)
+                || ContentResolver.SCHEME_ANDROID_RESOURCE.equalsIgnoreCase(scheme);
     }
 
     private boolean playFallbackRingtone() {

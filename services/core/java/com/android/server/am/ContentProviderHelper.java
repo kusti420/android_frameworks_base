@@ -1582,6 +1582,9 @@ public class ContentProviderHelper {
             return "ContentProvider access not allowed from sdk sandbox UID. "
                     + "ProviderInfo: " + cpi.toString();
         }
+        // IchthysOS: a few prebuilt apps export a provider without a permission that only their
+        // sister apps should read; everyone else is answered as if it were not exported.
+        final boolean exported = cpi.exported && !isIchthysGatedProvider(cpi, callingUid);
         boolean checkedGrants = false;
         if (checkUser) {
             // Looking for cross-user grants before enforcing the typical cross-users permissions
@@ -1605,12 +1608,12 @@ public class ContentProviderHelper {
             }
         }
         if (ActivityManagerService.checkComponentPermission(cpi.readPermission,
-                callingPid, callingUid, cpi.getUid(), cpi.exported)
+                callingPid, callingUid, cpi.getUid(), exported)
                 == PackageManager.PERMISSION_GRANTED) {
             return null;
         }
         if (ActivityManagerService.checkComponentPermission(cpi.writePermission,
-                callingPid, callingUid, cpi.getUid(), cpi.exported)
+                callingPid, callingUid, cpi.getUid(), exported)
                 == PackageManager.PERMISSION_GRANTED) {
             return null;
         }
@@ -1623,13 +1626,13 @@ public class ContentProviderHelper {
                 PathPermission pp = pps[i];
                 String pprperm = pp.getReadPermission();
                 if (pprperm != null && ActivityManagerService.checkComponentPermission(pprperm,
-                        callingPid, callingUid, cpi.getUid(), cpi.exported)
+                        callingPid, callingUid, cpi.getUid(), exported)
                         == PackageManager.PERMISSION_GRANTED) {
                     return null;
                 }
                 String ppwperm = pp.getWritePermission();
                 if (ppwperm != null && ActivityManagerService.checkComponentPermission(ppwperm,
-                        callingPid, callingUid, cpi.getUid(), cpi.exported)
+                        callingPid, callingUid, cpi.getUid(), exported)
                         == PackageManager.PERMISSION_GRANTED) {
                     return null;
                 }
@@ -1641,7 +1644,7 @@ public class ContentProviderHelper {
         }
 
         final String suffix;
-        if (!cpi.exported) {
+        if (!exported) {
             suffix = " that is not exported from UID " + cpi.getUid();
         } else if (android.Manifest.permission.MANAGE_DOCUMENTS.equals(cpi.readPermission)) {
             suffix = " requires that you obtain access using ACTION_OPEN_DOCUMENT or related APIs";
@@ -1653,6 +1656,64 @@ public class ContentProviderHelper {
                 + " (pid=" + callingPid + ", uid=" + callingUid + ")" + suffix;
         Slog.w(TAG, msg);
         return msg;
+    }
+
+    /**
+     * IchthysOS: content authorities that a bundled prebuilt app exports without any permission
+     * although only its sister apps read them, mapped to the packages that may. The APKs are
+     * presigned upstream builds, so the manifest can't be fixed; the gate lives here instead.
+     */
+    private static final Map<String, String[]> ICHTHYS_GATED_PROVIDERS = Map.of(
+            // Fossify Contacts' "private contacts" (names, numbers, birthdays, never in the
+            // contacts provider, so no contacts shield covers them), read by Fossify Phone and
+            // Fossify Messages for caller and sender names.
+            "org.fossify.commons.contactsprovider",
+            new String[] {"org.fossify.contacts", "org.fossify.phone", "org.fossify.messages"});
+
+    /**
+     * IchthysOS: whether {@code callingUid} must be answered as if {@code cpi} were not exported:
+     * it is one of {@link #ICHTHYS_GATED_PROVIDERS} and the caller is neither one of the packages
+     * listed for it with the provider's own signer, nor the provider's own uid, root or system
+     * (which the non-exported check lets through anyway). URI grants still work, as for any
+     * non-exported provider. Fails closed: only the sister apps need the provider.
+     */
+    private boolean isIchthysGatedProvider(ProviderInfo cpi, int callingUid) {
+        if (cpi.authority == null) {
+            return false;
+        }
+        String[] allowed = null;
+        for (String authority : cpi.authority.split(";")) {
+            allowed = ICHTHYS_GATED_PROVIDERS.get(authority.trim());
+            if (allowed != null) {
+                break;
+            }
+        }
+        if (allowed == null) {
+            return false;
+        }
+        final int appId = UserHandle.getAppId(callingUid);
+        if (appId == Process.ROOT_UID || appId == Process.SYSTEM_UID
+                || UserHandle.isSameApp(callingUid, cpi.getUid())) {
+            return false;
+        }
+        final long token = Binder.clearCallingIdentity();
+        try {
+            final AndroidPackage pkg =
+                    mService.getPackageManagerInternal().getPackage(callingUid);
+            if (pkg != null && ArrayUtils.contains(allowed, pkg.getPackageName())
+                    && mService.getPackageManagerInternal().checkUidSignaturesForAllUsers(
+                            callingUid, cpi.getUid()) == PackageManager.SIGNATURE_MATCH) {
+                return false;
+            }
+        } catch (RuntimeException e) {
+            Slog.w(TAG, "IchthysOS: cannot resolve uid " + callingUid + " for "
+                    + cpi.authority + ", denying", e);
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+        Slog.i(TAG, "IchthysOS: uid " + callingUid + " may not open " + cpi.authority
+                + " (sister apps only)");
+        return true;
     }
 
     private String checkContentProviderAssociation(ProcessRecord callingApp, int callingUid,

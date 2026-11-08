@@ -3715,12 +3715,92 @@ public class ActivityManagerService extends IActivityManager.Stub
         }
     }
 
+    /** IchthysOS: same Secure key UsageStatsService reads (Guard decision 34). */
+    private static final String ICHTHYS_USAGE_FULL_PKGS = "ichthys_usage_full_pkgs";
+
+    /**
+     * IchthysOS (Guard decision 34, usage shield): whether a third-party caller must not learn
+     * the state of {@code targetUid}. Mirrors UsageStatsService.ichthysHidesUsageHistory: an app
+     * that is not a system or platform-signed app, and that the user did not list in Secure
+     * {@link #ICHTHYS_USAGE_FULL_PKGS}, gets the answer a phone with nothing running would give
+     * for every UID but its own. A callingPackage that does not belong to the caller is treated
+     * as shielded.
+     */
+    private boolean ichthysHidesUidStateFrom(String callingPackage, int targetUid) {
+        final int callingUid = Binder.getCallingUid();
+        if (UserHandle.getAppId(callingUid) < Process.FIRST_APPLICATION_UID) {
+            return false;
+        }
+        if (targetUid >= 0 && UserHandle.getAppId(targetUid) == UserHandle.getAppId(callingUid)) {
+            return false;
+        }
+        final int userId = UserHandle.getUserId(callingUid);
+        final long token = Binder.clearCallingIdentity();
+        try {
+            final PackageManagerInternal pmi = getPackageManagerInternal();
+            if (callingPackage == null) {
+                if (pmi.isUidPrivileged(callingUid)) {
+                    return false;
+                }
+                callingPackage = pmi.getNameForUid(callingUid);
+                if (callingPackage == null) {
+                    return true;
+                }
+            }
+            final ApplicationInfo ai = pmi.getApplicationInfo(
+                    callingPackage, 0, Process.SYSTEM_UID, userId);
+            if (ai == null || ai.uid != callingUid) {
+                return true;
+            }
+            if (ai.isSystemApp() || pmi.isPlatformSigned(callingPackage)) {
+                return false;
+            }
+            final String allowed = Settings.Secure.getStringForUser(
+                    mContext.getContentResolver(), ICHTHYS_USAGE_FULL_PKGS, userId);
+            if (!TextUtils.isEmpty(allowed)) {
+                for (String pkg : allowed.split(",")) {
+                    if (callingPackage.equals(pkg.trim())) {
+                        return false;
+                    }
+                }
+            }
+            com.android.server.ichthys.guard.IchthysGuardInternal.note(callingUid,
+                    com.android.internal.ichthys.guard.GuardEvent.SHIELD_USAGE,
+                    "process state hidden");
+            return true;
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+    }
+
+    /** IchthysOS: {@link #ichthysHidesUidStateFrom} for a package name instead of a UID. */
+    private boolean ichthysHidesPackageStateFrom(String callingPackage, String packageName) {
+        final int callingUid = Binder.getCallingUid();
+        if (UserHandle.getAppId(callingUid) < Process.FIRST_APPLICATION_UID) {
+            return false;
+        }
+        int targetUid = -1;
+        if (packageName != null) {
+            final long token = Binder.clearCallingIdentity();
+            try {
+                targetUid = getPackageManagerInternal().getPackageUid(packageName, 0,
+                        UserHandle.getUserId(callingUid));
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
+        return ichthysHidesUidStateFrom(callingPackage, targetUid);
+    }
+
     @Override
     public @ActivityManager.ProcessState int getPackageProcessState(String packageName,
             String callingPackage) {
         if (!hasUsageStatsPermission(callingPackage)) {
             enforceCallingPermission(android.Manifest.permission.PACKAGE_USAGE_STATS,
                     "getPackageProcessState");
+        }
+        if (ichthysHidesPackageStateFrom(callingPackage, packageName)) {
+            return PROCESS_STATE_NONEXISTENT;
         }
 
         final @ActivityManager.ProcessState int[] procState = {PROCESS_STATE_NONEXISTENT};
@@ -8708,6 +8788,9 @@ public class ActivityManagerService extends IActivityManager.Stub
                 UserHandle.getUserId(uid), false /* allowAll */, ALLOW_FULL_ONLY,
                 "getUidProcessState", callingPackage); // Ignore return value
 
+        if (ichthysHidesUidStateFrom(callingPackage, uid)) {
+            return PROCESS_STATE_NONEXISTENT;
+        }
         synchronized (mProcLock) {
             return getUidProcessStateInnerLOSP(uid);
         }
@@ -8814,6 +8897,9 @@ public class ActivityManagerService extends IActivityManager.Stub
                 UserHandle.getUserId(uid), false /* allowAll */, ALLOW_FULL_ONLY,
                 "getUidProcessCapabilities", callingPackage); // Ignore return value
 
+        if (ichthysHidesUidStateFrom(callingPackage, uid)) {
+            return PROCESS_CAPABILITY_NONE;
+        }
         synchronized (mProcLock) {
             return mProcessList.getUidProcessCapabilityLOSP(uid);
         }
@@ -8847,6 +8933,12 @@ public class ActivityManagerService extends IActivityManager.Stub
             enforceCallingPermission(android.Manifest.permission.PACKAGE_USAGE_STATS,
                     "registerUidObserver");
         }
+        // IchthysOS (usage shield): a shielded app only ever observes its own UID.
+        if (ichthysHidesUidStateFrom(callingPackage, -1)) {
+            final int callingUid = Binder.getCallingUid();
+            final boolean watchesSelf = uids == null || ArrayUtils.contains(uids, callingUid);
+            uids = watchesSelf ? new int[] {callingUid} : new int[0];
+        }
         return mUidObserverController.register(observer, which, cutpoint, callingPackage,
                 Binder.getCallingUid(), uids);
     }
@@ -8869,6 +8961,9 @@ public class ActivityManagerService extends IActivityManager.Stub
         if (!hasUsageStatsPermission(callingPackage)) {
             enforceCallingPermission(android.Manifest.permission.PACKAGE_USAGE_STATS,
                     "registerUidObserver");
+        }
+        if (ichthysHidesUidStateFrom(callingPackage, uid)) {
+            return;
         }
         mUidObserverController.addUidToObserver(observerToken, uid);
     }
@@ -8896,6 +8991,9 @@ public class ActivityManagerService extends IActivityManager.Stub
             enforceCallingPermission(android.Manifest.permission.PACKAGE_USAGE_STATS,
                     "isUidActive");
         }
+        if (ichthysHidesUidStateFrom(callingPackage, uid)) {
+            return false;
+        }
         synchronized (mProcLock) {
             if (isUidActiveLOSP(uid)) {
                 return true;
@@ -8915,6 +9013,9 @@ public class ActivityManagerService extends IActivityManager.Stub
         if (!hasUsageStatsPermission(callingPackage)) {
             enforceCallingPermission(android.Manifest.permission.PACKAGE_USAGE_STATS,
                     "getUidLastIdleElapsedTime");
+        }
+        if (ichthysHidesUidStateFrom(callingPackage, uid)) {
+            return 0;
         }
         synchronized (mProcLock) {
             final UidRecord uidRecord = mProcessList.getUidRecordLOSP(uid);

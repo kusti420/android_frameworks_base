@@ -19,6 +19,7 @@ package com.android.server.accessibility;
 import android.accessibilityservice.AccessibilityServiceInfo;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.app.INotificationManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.pm.ResolveInfo;
@@ -26,8 +27,12 @@ import android.database.ContentObserver;
 import android.net.Uri;
 import android.os.Binder;
 import android.os.Handler;
+import android.os.RemoteException;
+import android.os.ServiceManager;
+import android.os.SystemClock;
 import android.os.UserHandle;
 import android.provider.Settings;
+import android.service.notification.StatusBarNotification;
 import android.text.TextUtils;
 import android.util.ArrayMap;
 import android.util.ArraySet;
@@ -156,6 +161,27 @@ final class IchthysA11yScopes {
     @GuardedBy("mLock")
     private boolean mObserving;
 
+    /**
+     * Packages with an active notification (current user, its profiles, all users), for the
+     * notification shade and heads-up (attack-surface sweep A3). Read on the background thread:
+     * NotificationManagerService sends accessibility events under its own lock, so it must not
+     * be called under the accessibility lock.
+     */
+    @GuardedBy("mLock")
+    private ArraySet<String> mNotificationPackages = new ArraySet<>();
+    /** Uptime at which the last successful read of {@link #mNotificationPackages} started. */
+    @GuardedBy("mLock")
+    private long mNotificationsReadUptime;
+    /** Uptime of the last sign that the notifications changed (a posting event). */
+    @GuardedBy("mLock")
+    private long mNotificationsChangedUptime;
+    @GuardedBy("mLock")
+    private boolean mNotificationReadPending;
+    /** Uptime at which the last read was posted: reads are at least this far apart. */
+    @GuardedBy("mLock")
+    private long mNotificationReadPostedUptime;
+    private static final long NOTIFICATION_READ_MIN_INTERVAL_MS = 200;
+
     IchthysA11yScopes(@NonNull Context context) {
         mContext = context;
     }
@@ -204,6 +230,97 @@ final class IchthysA11yScopes {
         return DEFAULT_PROTECTED.contains(targetPackage)
                 || state.mCredentialProviders.contains(targetPackage)
                 || isBankName(targetPackage);
+    }
+
+    /**
+     * Whether {@code service} may have anything hidden from it at all: the default protection
+     * (third-party services) or a "deny" list. The fail-closed paths (windows whose owner can't
+     * be told, a stale notification list) only apply then, so an unrestricted service never
+     * loses anything to them.
+     */
+    boolean hidesAnything(@Nullable ComponentName service, boolean thirdPartyService,
+            int userId) {
+        if (service == null) {
+            return false;
+        }
+        if (thirdPartyService) {
+            return true;
+        }
+        final Scope scope = getUserState(userId).mScopes.get(service);
+        return scope != null && !scope.mDenied.isEmpty();
+    }
+
+    /** A notification was posted (TYPE_NOTIFICATION_STATE_CHANGED): read the list again. */
+    void onNotificationPosted() {
+        synchronized (mLock) {
+            mNotificationsChangedUptime = SystemClock.uptimeMillis();
+            scheduleNotificationReadLocked();
+        }
+    }
+
+    /**
+     * The packages with an active notification, or null while that list may be older than
+     * {@code shownSinceUptime} (when the shade or heads-up appeared or changed) or than the last
+     * posted notification. A fresh read is then on its way; callers treat null as "hidden".
+     */
+    @Nullable
+    ArraySet<String> getNotificationPackages(long shownSinceUptime) {
+        synchronized (mLock) {
+            final long since = Math.max(shownSinceUptime, mNotificationsChangedUptime);
+            if (mNotificationsReadUptime == 0 || mNotificationsReadUptime <= since) {
+                scheduleNotificationReadLocked();
+                return null;
+            }
+            return mNotificationPackages;
+        }
+    }
+
+    @GuardedBy("mLock")
+    private void scheduleNotificationReadLocked() {
+        if (mNotificationReadPending) {
+            return;
+        }
+        mNotificationReadPending = true;
+        final long now = SystemClock.uptimeMillis();
+        final long delay = Math.max(0,
+                mNotificationReadPostedUptime + NOTIFICATION_READ_MIN_INTERVAL_MS - now);
+        mNotificationReadPostedUptime = now + delay;
+        BackgroundThread.getHandler().postDelayed(this::readNotificationPackages, delay);
+    }
+
+    /** On the background thread, no accessibility lock held. */
+    private void readNotificationPackages() {
+        final long start = SystemClock.uptimeMillis();
+        ArraySet<String> packages = null;
+        final long token = Binder.clearCallingIdentity();
+        try {
+            final INotificationManager nm = INotificationManager.Stub.asInterface(
+                    ServiceManager.getService(Context.NOTIFICATION_SERVICE));
+            if (nm != null) {
+                final StatusBarNotification[] active =
+                        nm.getActiveNotificationsWithAttribution(mContext.getOpPackageName(),
+                                null);
+                packages = new ArraySet<>();
+                if (active != null) {
+                    for (StatusBarNotification sbn : active) {
+                        if (sbn != null && sbn.getPackageName() != null) {
+                            packages.add(sbn.getPackageName());
+                        }
+                    }
+                }
+            }
+        } catch (RemoteException | RuntimeException e) {
+            Slog.w(LOG_TAG, "Failed to read the active notifications", e);
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+        synchronized (mLock) {
+            mNotificationReadPending = false;
+            if (packages != null) {
+                mNotificationPackages = packages;
+                mNotificationsReadUptime = start;
+            }
+        }
     }
 
     private boolean isBankName(String packageName) {

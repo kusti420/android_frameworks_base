@@ -3924,6 +3924,11 @@ public class NotificationManagerService extends SystemService {
 
     void updateNotificationChannelInt(String pkg, int uid, NotificationChannel channel,
             boolean fromListener) {
+        // IchthysOS: as on creation, a sound URL (from a companion listener) becomes the default.
+        final Uri ichthysSound = ichthysLocalSound(channel.getSound());
+        if (!Objects.equals(ichthysSound, channel.getSound())) {
+            channel.setSound(ichthysSound, channel.getAudioAttributes());
+        }
         if (channel.getImportance() == IMPORTANCE_NONE) {
             // cancel
             cancelAllNotificationsInt(MY_UID, MY_PID, pkg, channel.getId(), 0, 0,
@@ -5333,6 +5338,11 @@ public class NotificationManagerService extends SystemService {
             for (int i = 0; i < channelsSize; i++) {
                 final NotificationChannel channel = channels.get(i);
                 Objects.requireNonNull(channel, "channel in list is null");
+                // IchthysOS: a channel sound URL becomes the default sound (ichthysLocalSound).
+                final Uri ichthysSound = ichthysLocalSound(channel.getSound());
+                if (!Objects.equals(ichthysSound, channel.getSound())) {
+                    channel.setSound(ichthysSound, channel.getAudioAttributes());
+                }
                 needsPolicyFileChange = mPreferencesHelper.createNotificationChannel(pkg, uid,
                         channel, true /* fromTargetApp */,
                         mConditionProviders.isPackageOrComponentAllowed(
@@ -9646,6 +9656,9 @@ public class NotificationManagerService extends SystemService {
         // can't be set by an app
         notification.extras.remove(Notification.EXTRA_SUMMARIZED_CONTENT);
 
+        // IchthysOS: a pre-channels sound URL would be fetched by SystemUI; see ichthysLocalSound.
+        notification.sound = ichthysLocalSound(notification.sound);
+
         if (notification.isForegroundService() && fgsPolicy == NOT_FOREGROUND_SERVICE) {
             notification.flags &= ~FLAG_FOREGROUND_SERVICE;
         }
@@ -9882,6 +9895,27 @@ public class NotificationManagerService extends SystemService {
      */
     @VisibleForTesting
     @RequiresPermission(UPDATE_APP_OPS_STATS)
+    /**
+     * IchthysOS: {@code sound} unless it is a URL (http, https, rtsp, ...): SystemUI's ringtone
+     * player would fetch that with its own network access for an app that Ichthys Guard may have
+     * cut off, and refuses it; here such a sound becomes the default notification sound, so the
+     * app still makes one. content:, file: and android.resource: (and null) pass unchanged.
+     */
+    @Nullable
+    static Uri ichthysLocalSound(@Nullable Uri sound) {
+        if (sound == null) {
+            return null;
+        }
+        final String scheme = sound.getScheme();
+        if (ContentResolver.SCHEME_CONTENT.equalsIgnoreCase(scheme)
+                || ContentResolver.SCHEME_FILE.equalsIgnoreCase(scheme)
+                || ContentResolver.SCHEME_ANDROID_RESOURCE.equalsIgnoreCase(scheme)) {
+            return sound;
+        }
+        Slog.w(TAG, "Replacing non-local notification sound " + sound + " with the default");
+        return Settings.System.DEFAULT_NOTIFICATION_URI;
+    }
+
     protected void fixNotificationWithChannel(Notification notification,
             NotificationChannel channel, int notificationUid, String pkg) {
         if (isPromotable(notification, channel)) {

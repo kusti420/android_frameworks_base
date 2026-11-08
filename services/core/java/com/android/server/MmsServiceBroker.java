@@ -21,6 +21,7 @@ import static android.telephony.SubscriptionManager.INVALID_SIM_SLOT_INDEX;
 import android.Manifest;
 import android.app.AppOpsManager;
 import android.app.PendingIntent;
+import android.app.role.RoleManager;
 import android.content.ComponentName;
 import android.content.ContentProvider;
 import android.content.ContentValues;
@@ -47,6 +48,7 @@ import android.util.Slog;
 import com.android.internal.telephony.IMms;
 import com.android.internal.telephony.TelephonyPermissions;
 import com.android.internal.telephony.util.TelephonyUtils;
+import com.android.server.ichthys.guard.IchthysGuardInternal;
 import com.android.server.uri.NeededUriGrants;
 import com.android.server.uri.UriGrantsManagerInternal;
 
@@ -322,6 +324,43 @@ public class MmsServiceBroker extends SystemService {
         return mTelephonyManager;
     }
 
+    /**
+     * IchthysOS: MmsService fetches (and sends to) MMS URLs as uid phone, which the per-uid
+     * firewall lets through, so an app whose own networking is blocked (on the MMS network,
+     * which is metered) would get its traffic carried for it. Such a caller is refused here. The
+     * user's default SMS app is left as stock: it is the phone's messaging.
+     */
+    private boolean isIchthysNetworkBlocked(int uid, String callingPkg) {
+        if (!IchthysGuardInternal.isUidNetworkingBlocked(mContext, uid, true /* metered */)) {
+            return false;
+        }
+        final long token = Binder.clearCallingIdentity();
+        try {
+            final RoleManager roles = mContext.getSystemService(RoleManager.class);
+            if (roles != null && roles.getRoleHoldersAsUser(RoleManager.ROLE_SMS,
+                    UserHandle.getUserHandleForUid(uid)).contains(callingPkg)) {
+                return false;
+            }
+        } catch (RuntimeException e) {
+            return false;
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+        return true;
+    }
+
+    /** IchthysOS: what the caller sees when the MMS network can't be reached. */
+    private void ichthysFailNoNetwork(PendingIntent pendingIntent) {
+        if (pendingIntent == null) {
+            return;
+        }
+        try {
+            pendingIntent.send(mContext, SmsManager.MMS_ERROR_NO_DATA_NETWORK, null);
+        } catch (PendingIntent.CanceledException e) {
+            Slog.e(TAG, "Failed to return pending intent result", e);
+        }
+    }
+
     private String getCallingPackageName() {
         final String[] packages = getPackageManager().getPackagesForUid(Binder.getCallingUid());
         if (packages != null && packages.length > 0) {
@@ -358,6 +397,11 @@ public class MmsServiceBroker extends SystemService {
                 Slog.e(TAG, callingPkg + " is not allowed to call sendMessage()");
                 return;
             }
+            if (isIchthysNetworkBlocked(Binder.getCallingUid(), callingPkg)) {
+                Slog.i(TAG, "IchthysOS: " + callingPkg + " has no network; MMS not sent");
+                ichthysFailNoNetwork(sentIntent);
+                return;
+            }
             contentUri = adjustUriForUserAndGrantPermission(contentUri,
                     CarrierMessagingService.SERVICE_INTERFACE,
                     Intent.FLAG_GRANT_READ_URI_PERMISSION,
@@ -377,6 +421,11 @@ public class MmsServiceBroker extends SystemService {
             if (getAppOpsManager().noteOp(AppOpsManager.OP_RECEIVE_MMS, Binder.getCallingUid(),
                     callingPkg, attributionTag, null) != AppOpsManager.MODE_ALLOWED) {
                 Slog.e(TAG, callingPkg + " is not allowed to call downloadMessage()");
+                return;
+            }
+            if (isIchthysNetworkBlocked(Binder.getCallingUid(), callingPkg)) {
+                Slog.i(TAG, "IchthysOS: " + callingPkg + " has no network; MMS not downloaded");
+                ichthysFailNoNetwork(downloadedIntent);
                 return;
             }
             contentUri = adjustUriForUserAndGrantPermission(contentUri,

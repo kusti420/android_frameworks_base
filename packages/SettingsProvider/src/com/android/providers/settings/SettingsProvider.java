@@ -150,6 +150,7 @@ import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.nio.ByteBuffer;
 import java.security.InvalidKeyException;
+import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.util.ArrayList;
@@ -160,6 +161,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -1552,6 +1554,7 @@ public class SettingsProvider extends ContentProvider {
 
         // IchthysOS: asked before the lock (it may ask the package manager).
         final boolean ichthysTrusted = isCallerSystemOrPlatform();
+        final boolean genericDeviceName = !ichthysTrusted && isDeviceNameGenericForCaller();
         synchronized (mLock) {
             // Get the settings.
             // Note that global settings are applicable only for the default device, hence pass
@@ -1586,6 +1589,9 @@ public class SettingsProvider extends ContentProvider {
                     continue;
                 }
                 String value = getEffectiveValue(setting, sReadableGlobalSettingsWithRedactedValue);
+                if (genericDeviceName && Global.DEVICE_NAME.equals(name)) {
+                    value = Build.MODEL; // IchthysOS: see isDeviceNameGenericForCaller
+                }
                 appendSettingToCursor(result, String.valueOf(setting.getId()), setting.getName(),
                         value, String.valueOf(setting.isValuePreservedInRestore()));
             }
@@ -1606,6 +1612,10 @@ public class SettingsProvider extends ContentProvider {
         // isIchthysAllowlist), in this table as in Secure. Asked before the lock: it may ask the
         // package manager.
         final boolean hidden = isIchthysAllowlist(name) && !isCallerSystemOrPlatform();
+        // IchthysOS: and the device name, to an app without BLUETOOTH_CONNECT, is the model (see
+        // isDeviceNameGenericForCaller).
+        final boolean genericDeviceName =
+                Global.DEVICE_NAME.equals(name) && isDeviceNameGenericForCaller();
 
         // Get the value.
         synchronized (mLock) {
@@ -1613,6 +1623,18 @@ public class SettingsProvider extends ContentProvider {
                 final SettingsState settings = mSettingsRegistry.getSettingsLocked(
                         SETTINGS_TYPE_GLOBAL, UserHandle.USER_SYSTEM, Context.DEVICE_ID_DEFAULT);
                 return settings != null ? settings.getNullSetting() : null;
+            }
+            if (genericDeviceName) {
+                final SettingsState settings = mSettingsRegistry.getSettingsLocked(
+                        SETTINGS_TYPE_GLOBAL, UserHandle.USER_SYSTEM, Context.DEVICE_ID_DEFAULT);
+                final Setting setting = mSettingsRegistry.getSettingLocked(SETTINGS_TYPE_GLOBAL,
+                        UserHandle.USER_SYSTEM, Context.DEVICE_ID_DEFAULT, name);
+                if (settings == null || setting == null || setting.isNull()) {
+                    return setting;
+                }
+                return settings.new Setting(name, Build.MODEL, setting.getDefaultValue(),
+                        setting.getPackageName(), setting.getTag(), setting.isDefaultFromSystem(),
+                        setting.getId());
             }
             // Global settings are applicable only for the default device, hence pass
             // Context.DEVICE_ID_DEFAULT as the deviceId.
@@ -1755,6 +1777,12 @@ public class SettingsProvider extends ContentProvider {
         final int ssaidUserId = resolveOwningUserIdForSecureSetting(callingUserId,
                 Settings.Secure.ANDROID_ID);
         final PackageInfo ssaidCallingPkg = getCallingPackageInfo(ssaidUserId);
+        // IchthysOS: asked before the lock (it may ask the package manager): whether the
+        // ichthys_* keys are hidden (isIchthysAllowlist) and whether the values that name apps
+        // are cut to the packages the caller can see (filterAppNamingValue, after the lock).
+        final boolean ichthysTrusted = isCallerSystemOrPlatform();
+        final List<String[]> appNamingRows = new ArrayList<>();
+        final MatrixCursor result;
 
         synchronized (mLock) {
             List<String> names = getSettingsNamesLocked(SETTINGS_TYPE_SECURE, callingUserId,
@@ -1763,7 +1791,7 @@ public class SettingsProvider extends ContentProvider {
             final int nameCount = names.size();
 
             String[] normalizedProjection = normalizeProjection(projection);
-            MatrixCursor result = new MatrixCursor(normalizedProjection, nameCount);
+            result = new MatrixCursor(normalizedProjection, nameCount);
 
             for (int i = 0; i < nameCount; i++) {
                 String name = names.get(i);
@@ -1771,14 +1799,18 @@ public class SettingsProvider extends ContentProvider {
                 final int owningUserId = resolveOwningUserIdForSecureSetting(callingUserId,
                         name);
 
-                if (!isSecureSettingAccessible(name)) {
+                if (isIchthysAllowlist(name)) {
+                    if (!ichthysTrusted) {
+                        continue; // IchthysOS: see isIchthysAllowlist
+                    }
+                } else if (!isSecureSettingAccessible(name)) {
                     // This caller is not permitted to access this setting. Pretend the setting
                     // doesn't exist.
                     continue;
                 }
                 // IchthysOS: and the attestation target list only by its own line (see
                 // getSecureSetting); a listing leaves it out.
-                if (KEYBOX_TARGET_SETTING.equals(name) && !isCallerSystemOrPlatform()) {
+                if (KEYBOX_TARGET_SETTING.equals(name) && !ichthysTrusted) {
                     continue;
                 }
 
@@ -1804,12 +1836,25 @@ public class SettingsProvider extends ContentProvider {
                 }
 
                 String value = getEffectiveValue(setting, sReadableSecureSettingsWithRedactedValue);
+                if (!ichthysTrusted && APP_NAMING_SECURE_SETTINGS.contains(name)) {
+                    // IchthysOS: filtered after the lock (it asks the package manager).
+                    appNamingRows.add(new String[] {String.valueOf(setting.getId()),
+                            setting.getName(), value,
+                            String.valueOf(setting.isValuePreservedInRestore())});
+                    continue;
+                }
                 appendSettingToCursor(result, String.valueOf(setting.getId()), setting.getName(),
                         value, String.valueOf(setting.isValuePreservedInRestore()));
             }
-
-            return result;
         }
+
+        for (String[] row : appNamingRows) {
+            final String value = filterAppNamingValue(row[1], row[2]);
+            if (value != null) {
+                appendSettingToCursor(result, row[0], row[1], value, row[3]);
+            }
+        }
+        return result;
     }
 
     private Setting getSecureSetting(String name,
@@ -1850,6 +1895,37 @@ public class SettingsProvider extends ContentProvider {
         final boolean ownTargetOnly =
                 KEYBOX_TARGET_SETTING.equals(name) && !isCallerSystemOrPlatform();
         final String callingPackage = ownTargetOnly ? getCallingPackage() : null;
+
+        // IchthysOS: a value that names apps (default keyboard, notification listeners,
+        // autofill, assistant...) is cut, for an app, to the packages it can see; read under the
+        // lock, filtered outside it (that asks the package manager).
+        if (APP_NAMING_SECURE_SETTINGS.contains(name) && !isCallerSystemOrPlatform()) {
+            final Setting setting;
+            synchronized (mLock) {
+                setting = mSettingsRegistry.getSettingLocked(SETTINGS_TYPE_SECURE,
+                        owningUserId, deviceId, name);
+            }
+            if (setting == null || setting.isNull()) {
+                return setting;
+            }
+            final String filtered = filterAppNamingValue(name, setting.getValue());
+            if (Objects.equals(filtered, setting.getValue())) {
+                return setting;
+            }
+            synchronized (mLock) {
+                final SettingsState state = mSettingsRegistry.getSettingsLocked(
+                        SETTINGS_TYPE_SECURE, owningUserId, deviceId);
+                if (state == null) {
+                    return null;
+                }
+                if (filtered == null) {
+                    return state.getNullSetting();
+                }
+                return state.new Setting(name, filtered, setting.getDefaultValue(),
+                        setting.getPackageName(), setting.getTag(), setting.isDefaultFromSystem(),
+                        setting.getId());
+            }
+        }
 
         // Not the SSAID; do a straight lookup
         synchronized (mLock) {
@@ -1894,9 +1970,10 @@ public class SettingsProvider extends ContentProvider {
 
     /**
      * IchthysOS Guard "Reset identity": gives {@code packageName} a fresh random Android ID
-     * (SSAID), so after its data is cleared the app sees a new phone. The derived ID only comes
-     * back if the app is uninstalled and installed again. Only for the system uid, which
-     * {@link #call} checks.
+     * (SSAID), so after its data is cleared the app sees a new phone. The ID stays reset across
+     * an uninstall and reinstall too (a per-signer salt, see
+     * SettingsRegistry#resetSsaidSaltLocked). Only for the system uid, which {@link #call}
+     * checks.
      */
     private boolean resetSsaidForPackage(String packageName, int userId) {
         if (TextUtils.isEmpty(packageName)) {
@@ -1906,21 +1983,21 @@ public class SettingsProvider extends ContentProvider {
                 resolveCallingUserIdEnforcingPermissions(userId), Settings.Secure.ANDROID_ID);
         final long token = Binder.clearCallingIdentity();
         try {
-            final int uid = getContext().getPackageManager()
-                    .getPackageUidAsUser(packageName, owningUserId);
-            final byte[] bytes = new byte[8];
-            new SecureRandom().nextBytes(bytes);
-            final String ssaid = HexEncoding.encodeToString(bytes, false /* upperCase */);
-            synchronized (mLock) {
-                final SettingsState ssaidSettings = mSettingsRegistry.getSettingsLocked(
-                        SETTINGS_TYPE_SSAID, owningUserId, Context.DEVICE_ID_DEFAULT);
-                if (ssaidSettings == null) {
-                    return false;
-                }
-                return ssaidSettings.insertSettingLocked(Integer.toString(uid), ssaid, null,
-                        true, packageName);
+            // IchthysOS: the reset is a new salt for the app's signer (see
+            // SettingsRegistry#resetSsaidSaltLocked), so it outlives an uninstall: a reinstall
+            // derives the reset ID again instead of the original one.
+            final PackageInfo pkg = mPackageManager.getPackageInfo(packageName,
+                    PackageManager.GET_SIGNATURES, owningUserId);
+            if (pkg == null || pkg.applicationInfo == null || pkg.signatures == null
+                    || pkg.signatures.length == 0) {
+                return false;
             }
-        } catch (PackageManager.NameNotFoundException e) {
+            synchronized (mLock) {
+                final Setting ssaid = mSettingsRegistry.resetSsaidSaltLocked(pkg, owningUserId);
+                return ssaid != null && !ssaid.isNull();
+            }
+        } catch (RemoteException | IllegalStateException e) {
+            Slog.w(LOG_TAG, "SSAID reset of " + packageName + " failed", e);
             return false;
         } finally {
             Binder.restoreCallingIdentity(token);
@@ -2128,6 +2205,8 @@ public class SettingsProvider extends ContentProvider {
 
         // Resolve the userId on whose behalf the call is made.
         final int callingUserId = resolveCallingUserIdEnforcingPermissions(userId);
+        // IchthysOS: asked before the lock (it may ask the package manager).
+        final boolean ichthysTrusted = isCallerSystemOrPlatform();
 
         synchronized (mLock) {
             List<String> names = getSettingsNamesLocked(SETTINGS_TYPE_SYSTEM, callingUserId,
@@ -2140,6 +2219,9 @@ public class SettingsProvider extends ContentProvider {
 
             for (int i = 0; i < nameCount; i++) {
                 String name = names.get(i);
+                if (!ichthysTrusted && isIchthysAllowlist(name)) {
+                    continue; // IchthysOS: see isIchthysAllowlist
+                }
                 try {
                     enforceSettingReadable(name, SETTINGS_TYPE_SYSTEM, callingUserId);
                 } catch (SecurityException e) {
@@ -2179,8 +2261,17 @@ public class SettingsProvider extends ContentProvider {
         // Determine the owning user as some profile settings are cloned from the parent.
         final int owningUserId = resolveOwningUserIdForSystemSettingLocked(callingUserId, name);
 
+        // IchthysOS: the ichthys_* keys are absent for apps here as in Secure and Global (see
+        // isIchthysAllowlist). Asked before the lock: it may ask the package manager.
+        final boolean hidden = isIchthysAllowlist(name) && !isCallerSystemOrPlatform();
+
         // Get the value.
         synchronized (mLock) {
+            if (hidden) {
+                final SettingsState settings = mSettingsRegistry.getSettingsLocked(
+                        SETTINGS_TYPE_SYSTEM, owningUserId, deviceId);
+                return settings != null ? settings.getNullSetting() : null;
+            }
             return mSettingsRegistry.getSettingLocked(SETTINGS_TYPE_SYSTEM, owningUserId,
                     deviceId, name);
         }
@@ -2471,22 +2562,133 @@ public class SettingsProvider extends ContentProvider {
      * weather and sun times) is hidden the same way: it is where the owner is, and so are
      * today's sunset and sunrise (ichthys_twilight_times, Global: a pair of local times gives
      * the latitude away).
+     *
+     * <p>A list of names to hide kept missing new ones (ichthys_apps_adopted, ichthys_apps_install,
+     * ichthys_unrestricted_bg_added, and some 80 options that each said "this is IchthysOS, set
+     * up like so"), so every ichthys_* key in System, Secure and Global is hidden from apps, and
+     * only {@link #ICHTHYS_PUBLIC_SETTINGS} stays readable. No key is on it today: the readers
+     * of ichthys_* keys are system_server, SystemUI, Settings, Launcher3, the mainline modules
+     * and the preinstalled IchthysOS apps, all system callers; the framework code that runs in
+     * an app's own process reads none of them (AmbientDisplayConfiguration's
+     * ichthys_twilight_times is read from SystemUI and Settings). Add a key here only when an
+     * app that is not preinstalled must read it.
      */
     private static boolean isIchthysAllowlist(String name) {
         return name != null && name.startsWith("ichthys_")
-                && (name.startsWith("ichthys_location_")
-                        || name.equals("ichthys_twilight_times")
-                        || name.endsWith("_pkgs")
-                        || name.endsWith("_seeded")
-                        || name.endsWith("_shield")
-                        || name.equals("ichthys_a11y_scopes")
-                        // Per-app folders and hidden notification channels name the apps the
-                        // owner set up: not for other apps either.
-                        || name.equals("ichthys_storage_scopes")
-                        || name.equals("ichthys_quiet_hidden")
-                        || name.equals("ichthys_contacts_lockdown")
-                        || name.equals("ichthys_clipboard_lockdown")
-                        || name.equals("ichthys_sensor_fingerprint_protection"));
+                && !ICHTHYS_PUBLIC_SETTINGS.contains(name);
+    }
+
+    /** IchthysOS: the ichthys_* keys apps may read (see {@link #isIchthysAllowlist}). */
+    private static final Set<String> ICHTHYS_PUBLIC_SETTINGS = Set.of();
+
+    /**
+     * IchthysOS: Secure keys whose value names apps: which keyboard, notification listeners and
+     * assistant, autofill / credential / print / spell-checker / VR / accessibility services the
+     * owner uses. Any app could read them, which listed apps the package-visibility rules (and
+     * Guard's hiding) keep it from seeing, and fingerprinted the owner's setup. For an app (not
+     * a system app) each entry is kept only when the app can see that package, the same rule
+     * InputMethodManager.getInputMethodList and AccessibilityManager already answer by; its own
+     * entries always stay, so "am I the enabled keyboard / listener / autofill service?" works.
+     * voice_recognition_service is left whole: SpeechRecognizer reads it in the app's process
+     * and binds to it.
+     */
+    private static final Set<String> APP_NAMING_SECURE_SETTINGS = Set.of(
+            Secure.DEFAULT_INPUT_METHOD,
+            Secure.ENABLED_INPUT_METHODS,
+            Secure.ENABLED_NOTIFICATION_LISTENERS,
+            Secure.ENABLED_NOTIFICATION_ASSISTANT,
+            Secure.ENABLED_NOTIFICATION_POLICY_ACCESS_PACKAGES,
+            Secure.AUTOFILL_SERVICE,
+            Secure.CREDENTIAL_SERVICE,
+            Secure.CREDENTIAL_SERVICE_PRIMARY,
+            Secure.VOICE_INTERACTION_SERVICE,
+            Secure.ASSISTANT,
+            Secure.ENABLED_PRINT_SERVICES,
+            Secure.DISABLED_PRINT_SERVICES,
+            Secure.SELECTED_SPELL_CHECKER,
+            Secure.ENABLED_VR_LISTENERS,
+            Secure.ENABLED_ACCESSIBILITY_SERVICES,
+            Secure.ACCESSIBILITY_SHORTCUT_TARGET_SERVICE,
+            Secure.ACCESSIBILITY_BUTTON_TARGETS,
+            Secure.ACCESSIBILITY_QS_TARGETS,
+            Secure.NFC_PAYMENT_DEFAULT_COMPONENT);
+
+    /**
+     * IchthysOS: [value] of the app-naming Secure key [name] (see
+     * {@link #APP_NAMING_SECURE_SETTINGS}) with the entries of packages the calling app can't
+     * see left out; null if none is left. Entries are ':'-separated; an entry's package is the
+     * part before its '/' (a component, or an input method id with ";subtype" suffixes). An entry
+     * without a '/' is a package in enabled_notification_policy_access_packages and is kept as
+     * it is elsewhere (an accessibility shortcut's built-in target such as the magnification
+     * controller). Not under mLock: it asks the package manager.
+     */
+    private String filterAppNamingValue(String name, String value) {
+        if (value == null || value.isEmpty()) {
+            return value;
+        }
+        final String callingPackage = getCallingPackage();
+        if (callingPackage == null) {
+            return null;
+        }
+        final boolean packageList = Secure.ENABLED_NOTIFICATION_POLICY_ACCESS_PACKAGES.equals(name);
+        final int userId = UserHandle.getCallingUserId();
+        final ArrayMap<String, Boolean> seen = new ArrayMap<>();
+        final StringBuilder out = new StringBuilder(value.length());
+        for (String entry : value.split(":")) {
+            if (entry.isEmpty()) {
+                continue;
+            }
+            final int slash = entry.indexOf('/');
+            final String pkg = slash > 0 ? entry.substring(0, slash) : (packageList ? entry : null);
+            if (pkg != null) {
+                Boolean visible = seen.get(pkg);
+                if (visible == null) {
+                    visible = canCallerSeePackage(callingPackage, pkg, userId);
+                    seen.put(pkg, visible);
+                }
+                if (!visible) {
+                    continue;
+                }
+            }
+            if (out.length() > 0) {
+                out.append(':');
+            }
+            out.append(entry);
+        }
+        return out.length() > 0 ? out.toString() : null;
+    }
+
+    /** IchthysOS: whether [callingPackage] may see [pkg] (package visibility, its own: yes). */
+    private boolean canCallerSeePackage(String callingPackage, String pkg, int userId) {
+        if (callingPackage.equals(pkg)) {
+            return true;
+        }
+        final long token = Binder.clearCallingIdentity();
+        try {
+            final boolean[] result = mPackageManager.canPackageQuery(callingPackage,
+                    new String[] {pkg}, userId);
+            return result != null && result.length == 1 && result[0];
+        } catch (RemoteException | RuntimeException e) {
+            // Not installed (ParcelableException(NameNotFoundException)), or no answer: hidden.
+            return false;
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+    }
+
+    /**
+     * IchthysOS: whether the calling app reads Global.DEVICE_NAME as {@link Build#MODEL} (the
+     * name a phone has until the owner renames it). The name the owner gives the phone ("Kusti's
+     * A52s") is often their own name and outlives reinstalls, i.e. an identifier; the same name
+     * through BluetoothAdapter.getName() needs BLUETOOTH_CONNECT, and so does it here. System
+     * apps and apps holding that permission see the real name.
+     */
+    private boolean isDeviceNameGenericForCaller() {
+        if (isCallerSystemOrPlatform()) {
+            return false;
+        }
+        return getContext().checkCallingOrSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)
+                != PackageManager.PERMISSION_GRANTED;
     }
 
     private boolean isCallerSystemOrPlatform() {
@@ -3619,6 +3821,9 @@ public class SettingsProvider extends ContentProvider {
 
         private static final String SSAID_USER_KEY = "userkey";
 
+        /** IchthysOS: prefix of the per-signer SSAID salts (see ichthysSsaidSaltName). */
+        private static final String ICHTHYS_SSAID_SALT_PREFIX = "ichthys_salt_";
+
         private final LongSparseArray<SettingsState> mSettingsStates = new LongSparseArray<>();
 
         private final GenerationRegistry mGenerationRegistry;
@@ -3665,6 +3870,48 @@ public class SettingsProvider extends ContentProvider {
             return ByteBuffer.allocate(4).putInt(data.length).array();
         }
 
+        /**
+         * IchthysOS: ssaid-table name of the salt Guard's "Reset identity" gives one signer in
+         * one user: the prefix and the SHA-256 of the signer's certificates, length-prefixed as
+         * the SSAID MACs them. Keyed by signer, not uid, so it outlives an uninstall (the uid's
+         * own entry goes in onUidRemovedLocked) and a reinstall derives the reset ID again,
+         * not the original one.
+         */
+        private String ichthysSsaidSaltName(PackageInfo pkg) {
+            try {
+                final MessageDigest digest = MessageDigest.getInstance("SHA-256");
+                for (int i = 0; i < pkg.signatures.length; i++) {
+                    final byte[] sig = pkg.signatures[i].toByteArray();
+                    digest.update(getLengthPrefix(sig));
+                    digest.update(sig);
+                }
+                return ICHTHYS_SSAID_SALT_PREFIX
+                        + HexEncoding.encodeToString(digest.digest(), false /* upperCase */);
+            } catch (NoSuchAlgorithmException e) {
+                throw new IllegalStateException("SHA-256 is not available", e);
+            }
+        }
+
+        /**
+         * IchthysOS Guard "Reset identity": a fresh random salt for [pkg]'s signer in [userId]
+         * and [pkg]'s SSAID derived again with it. Every app of that signer installed or
+         * reinstalled from now on gets the new ID; stays until the next reset (or the user
+         * is removed).
+         */
+        public Setting resetSsaidSaltLocked(PackageInfo pkg, int userId) {
+            final byte[] saltBytes = new byte[32];
+            new SecureRandom().nextBytes(saltBytes);
+            final long ssaidKey = makeKey(SETTINGS_TYPE_SSAID, userId, Context.DEVICE_ID_DEFAULT);
+            final SettingsState ssaidSettings = getOrCreateSettingsStateLocked(ssaidKey);
+            if (ssaidSettings == null || !ssaidSettings.insertSettingLocked(
+                    ichthysSsaidSaltName(pkg),
+                    HexEncoding.encodeToString(saltBytes, false /* upperCase */), null, true,
+                    SettingsState.SYSTEM_PACKAGE_NAME)) {
+                return null;
+            }
+            return generateSsaidLocked(pkg, userId);
+        }
+
         public Setting generateSsaidLocked(PackageInfo callingPkg, int userId) {
             // Read the user's key from the ssaid table.
             // Note that ssaid settings are applicable only for the default device, hence pass
@@ -3704,6 +3951,20 @@ public class SettingsProvider extends ContentProvider {
                 throw new IllegalStateException("HmacSHA256 is not available", e);
             } catch (InvalidKeyException e) {
                 throw new IllegalStateException("Key is corrupted", e);
+            }
+
+            // IchthysOS: Guard's "Reset identity" salt for this signer, if it was ever reset (see
+            // ICHTHYS_SSAID_SALT_PREFIX). Without one the ID is the stock one.
+            final Setting saltSetting = getSettingLocked(SETTINGS_TYPE_SSAID, userId,
+                    Context.DEVICE_ID_DEFAULT, ichthysSsaidSaltName(callingPkg));
+            if (saltSetting != null && !saltSetting.isNull() && saltSetting.getValue() != null) {
+                try {
+                    final byte[] salt = HexEncoding.decode(saltSetting.getValue());
+                    m.update(getLengthPrefix(salt), 0, 4);
+                    m.update(salt);
+                } catch (IllegalArgumentException e) {
+                    Slog.w(LOG_TAG, "Ignoring a corrupt SSAID salt", e);
+                }
             }
 
             // Mac each of the developer signatures.
@@ -3760,6 +4021,8 @@ public class SettingsProvider extends ContentProvider {
                         getSettingsNamesLocked(SETTINGS_TYPE_SSAID, user.id,
                                 Context.DEVICE_ID_DEFAULT));
                 ssaidUids.remove(SSAID_USER_KEY);
+                // IchthysOS: the per-signer salts are no uid's and outlive their apps on purpose.
+                ssaidUids.removeIf(name -> name.startsWith(ICHTHYS_SSAID_SALT_PREFIX));
 
                 // Perform a set difference for the appUids and ssaidUids.
                 ssaidUids.removeAll(appUids);

@@ -17,6 +17,11 @@
 package com.android.server.ichthys.guard;
 
 import android.annotation.Nullable;
+import android.content.Context;
+import android.net.ConnectivityManager;
+import android.os.Binder;
+import android.os.Process;
+import android.os.UserHandle;
 
 import com.android.server.LocalServices;
 
@@ -53,6 +58,33 @@ public abstract class IchthysGuardInternal {
             s.noteShield(uid, code, detail);
         } catch (RuntimeException e) {
             // Evidence only: never let it reach the caller's path.
+        }
+    }
+
+    /**
+     * IchthysOS: whether {@code uid}'s own traffic is dropped right now, as the BPF firewall
+     * decides it: Guard's deny chain, and with {@code metered} also the metered restrictions
+     * (Guard's "unmetered only", Data Saver), plus the stock power and background chains. For
+     * the system services that fetch on an app's behalf as their own uid, which that firewall
+     * lets through: they refuse when this is true. False for core uids and on any failure.
+     * Reads the BPF maps directly (no binder call); system_server only.
+     */
+    public static boolean isUidNetworkingBlocked(@Nullable Context context, int uid,
+            boolean metered) {
+        if (context == null || UserHandle.getAppId(uid) < Process.FIRST_APPLICATION_UID) {
+            return false;
+        }
+        final ConnectivityManager cm = context.getSystemService(ConnectivityManager.class);
+        if (cm == null) {
+            return false;
+        }
+        final long token = Binder.clearCallingIdentity();
+        try {
+            return cm.isUidNetworkingBlocked(uid, metered);
+        } catch (RuntimeException e) {
+            return false;
+        } finally {
+            Binder.restoreCallingIdentity(token);
         }
     }
 }

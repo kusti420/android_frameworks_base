@@ -375,7 +375,8 @@ public final class AppsFilterImpl extends AppsFilterLocked implements Watchable,
                 return;
             }
             final long currentTimeUs = SystemClock.currentTimeMicro();
-            updateEnabledState(pkg);
+            final PackageStateInternal ps = snapshot.getPackageStateInternal(packageName);
+            updateEnabledState(pkg, ps != null && ps.isSystem());
             mAppsFilter.updateShouldFilterCacheForPackage(snapshot, packageName);
             mAppsFilter.logCacheUpdated(
                     PACKAGE_MANAGER_APPS_FILTER_CACHE_UPDATE_REPORTED__EVENT_TYPE__COMPAT_CHANGED,
@@ -385,10 +386,14 @@ public final class AppsFilterImpl extends AppsFilterLocked implements Watchable,
                     pkg.getUid());
         }
 
-        private void updateEnabledState(@NonNull AndroidPackage pkg) {
+        private void updateEnabledState(@NonNull AndroidPackage pkg, boolean isSystem) {
             // TODO(b/135203078): Do not use toAppInfo
             // TODO(b/167551701): Make changeId non-logging
-            final boolean enabled = mInjector.getCompatibility().isChangeEnabledInternalNoLogging(
+            // IchthysOS: package visibility filtering is always on for apps the user installed,
+            // whatever their targetSdk; an app targeting <= 29 would otherwise see every package.
+            // System apps keep the stock compat behaviour.
+            final boolean enabled = !isSystem
+                    || mInjector.getCompatibility().isChangeEnabledInternalNoLogging(
                     PackageManager.FILTER_APPLICATION_QUERY,
                     AndroidPackageUtils.generateAppInfoWithoutState(pkg));
             synchronized (mDisabledPackages) {
@@ -417,7 +422,7 @@ public final class AppsFilterImpl extends AppsFilterLocked implements Watchable,
                     mAppsFilter.onChanged();
                 }
             } else if (setting.getPkg() != null) {
-                updateEnabledState(setting.getPkg());
+                updateEnabledState(setting.getPkg(), setting.isSystem());
             }
         }
 

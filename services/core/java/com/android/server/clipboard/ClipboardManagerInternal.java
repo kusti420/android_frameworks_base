@@ -28,4 +28,16 @@ public interface ClipboardManagerInternal {
      * @param uid The uid expected to access clip data.
      */
     void notifyUserAuthorizedClipAccess(int uid);
+
+    /**
+     * IchthysOS clipboard lockdown: an accessibility service performed ACTION_PASTE in a window
+     * of {@code uid} for the user. Like {@link #notifyUserAuthorizedClipAccess}, except that a
+     * service that isn't preinstalled doesn't unlock a clip marked sensitive.
+     *
+     * @param uid The uid expected to access clip data.
+     * @param preinstalledService Whether the service is a system (preinstalled) app.
+     */
+    default void notifyAccessibilityPaste(int uid, boolean preinstalledService) {
+        notifyUserAuthorizedClipAccess(uid);
+    }
 }

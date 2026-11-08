@@ -183,8 +183,9 @@ public final class IchthysShields {
 
     // Shields that are per-app choices: nobody is protected until listed.
     public static final Shield SCANS = new Shield("scans",
-            "Bluetooth and Wi-Fi scans: for the listed apps, scans find nothing.",
-            "Apps whose Bluetooth and Wi-Fi scans find nothing.",
+            "Bluetooth, Wi-Fi and cell scans: for the listed apps, scans find nothing and "
+                    + "they get no cell tower information.",
+            "Apps whose Bluetooth, Wi-Fi and cell scans find nothing.",
             null, null, "ichthys_scan_empty_pkgs", Polarity.PROTECT, false);
     public static final Shield LOCATION = new Shield("location",
             "Location: the listed apps never get a fix, as if indoors.",

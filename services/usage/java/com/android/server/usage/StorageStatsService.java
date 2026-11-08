@@ -217,6 +217,58 @@ public class StorageStatsService extends IStorageStatsManager.Stub {
         }
     }
 
+    /**
+     * IchthysOS (Guard decision 34, usage shield): usage access granted to a third-party app
+     * does not reveal other apps' storage use unless the user listed the app in Secure
+     * {@link UsageStatsService#ICHTHYS_USAGE_FULL_PKGS}; the app is answered as if it had no
+     * usage access. Same rule as UsageStatsService.ichthysHidesUsageHistory. Returns null when
+     * the caller may see the stats, else the denial message.
+     */
+    @Nullable
+    private String ichthysUsageShieldError(int callingUid, String callingPackage) {
+        if (UserHandle.getAppId(callingUid) < Process.FIRST_APPLICATION_UID) {
+            return null;
+        }
+        final String denied = "Package " + callingPackage + " from UID " + callingUid
+                + " does not have usage access";
+        if (callingPackage == null) {
+            return denied;
+        }
+        final int userId = UserHandle.getUserId(callingUid);
+        final long token = Binder.clearCallingIdentity();
+        try {
+            final android.content.pm.PackageManagerInternal pmi =
+                    LocalServices.getService(android.content.pm.PackageManagerInternal.class);
+            if (pmi == null) {
+                return null;
+            }
+            final ApplicationInfo ai = pmi.getApplicationInfo(
+                    callingPackage, 0, Process.SYSTEM_UID, userId);
+            if (ai == null || ai.uid != callingUid) {
+                return denied;
+            }
+            if (ai.isSystemApp() || pmi.isPlatformSigned(callingPackage)) {
+                return null;
+            }
+            final String allowed = Settings.Secure.getStringForUser(
+                    mContext.getContentResolver(), UsageStatsService.ICHTHYS_USAGE_FULL_PKGS,
+                    userId);
+            if (!TextUtils.isEmpty(allowed)) {
+                for (String pkg : allowed.split(",")) {
+                    if (callingPackage.equals(pkg.trim())) {
+                        return null;
+                    }
+                }
+            }
+            com.android.server.ichthys.guard.IchthysGuardInternal.note(callingUid,
+                    com.android.internal.ichthys.guard.GuardEvent.SHIELD_USAGE,
+                    "storage stats withheld");
+            return denied;
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+    }
+
     private String checkStatsPermission(int callingUid, String callingPackage, boolean noteOp) {
         final int mode;
         if (noteOp) {
@@ -226,11 +278,11 @@ public class StorageStatsService extends IStorageStatsManager.Stub {
         }
         switch (mode) {
             case AppOpsManager.MODE_ALLOWED:
-                return null;
+                return ichthysUsageShieldError(callingUid, callingPackage);
             case AppOpsManager.MODE_DEFAULT:
                 if (mContext.checkCallingOrSelfPermission(
                         Manifest.permission.PACKAGE_USAGE_STATS) == PERMISSION_GRANTED) {
-                    return null;
+                    return ichthysUsageShieldError(callingUid, callingPackage);
                 } else {
                     return "Caller does not have " + Manifest.permission.PACKAGE_USAGE_STATS
                             + "; callingPackage=" + callingPackage + ", callingUid=" + callingUid;

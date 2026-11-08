@@ -1961,6 +1961,19 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
     }
 
     boolean isSecureLocked() {
+        // block screen capture to protect sensitive notifications or content on the screen.
+        if (mWmService.mSensitiveContentPackages.shouldBlockScreenCaptureForApp(
+                getOwningPackage(), getOwningUid(), getWindowToken())) {
+            return true;
+        }
+
+        if (!DevicePolicyCache.getInstance().isScreenCaptureAllowed(mShowUserId)) {
+            return true;
+        }
+
+        // IchthysOS: the global DISABLE_SECURE_WINDOWS switch (debug) only lifts the apps' own
+        // FLAG_SECURE, like the per-app exemption below: the sensitive-content and
+        // device-policy blocks above still hold.
         if (mWmService.getDisableSecureWindows()) {
             return false;
         }
@@ -1968,19 +1981,9 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
         // IchthysOS: the owner can exempt an app from its own FLAG_SECURE (Settings > IchthysOS >
         // Apps > Install & compatibility), so screenshots, screen recording, casting and the
         // recents preview show it. Only the app's own flag is lifted: the sensitive-content and
-        // device-policy blocks below still hold.
-        if ((mAttrs.flags & WindowManager.LayoutParams.FLAG_SECURE) != 0
-                && !mWmService.isSecureWindowBypassed(getOwningPackage())) {
-            return true;
-        }
-
-        // block screen capture to protect sensitive notifications or content on the screen.
-        if (mWmService.mSensitiveContentPackages.shouldBlockScreenCaptureForApp(
-                getOwningPackage(), getOwningUid(), getWindowToken())) {
-            return true;
-        }
-
-        return !DevicePolicyCache.getInstance().isScreenCaptureAllowed(mShowUserId);
+        // device-policy blocks above still hold.
+        return (mAttrs.flags & WindowManager.LayoutParams.FLAG_SECURE) != 0
+                && !mWmService.isSecureWindowBypassed(getOwningPackage());
     }
 
     /**

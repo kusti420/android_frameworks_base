@@ -93,6 +93,7 @@ import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.FrameworkStatsLog;
+import com.android.server.ichthys.guard.IchthysGrantShield;
 import com.android.internal.util.Preconditions;
 import com.android.modules.utils.TypedXmlPullParser;
 import com.android.modules.utils.TypedXmlSerializer;
@@ -138,6 +139,8 @@ public class UriGrantsManagerService extends IUriGrantsManager.Stub implements
     private final Object mLock = new Object();
     private final H mH;
     ActivityManagerInternal mAmInternal;
+    /** IchthysOS: for the shield lookups of {@link IchthysGrantShield}. */
+    Context mContext;
     PackageManagerInternal mPmInternal;
     UriMetricsHelper mMetricsHelper;
 
@@ -230,6 +233,7 @@ public class UriGrantsManagerService extends IUriGrantsManager.Stub implements
             super(context);
             mContext = context;
             mService = new UriGrantsManagerService();
+            mService.mContext = context;
         }
 
         @Override
@@ -1503,7 +1507,11 @@ public class UriGrantsManagerService extends IUriGrantsManager.Stub implements
         }
 
         // Third...  does the caller itself have permission to access this uri?
-        if (!checkHoldingPermissionsUnlocked(pi, grantUri, callingUid, modeFlags)) {
+        // IchthysOS: an app shielded from this provider's data holds the permission on paper
+        // only; for granting it counts as an app without it, so it can pass on a grant it holds
+        // (the picker's contact) but not hand out rows of the book it cannot read itself.
+        if (!checkHoldingPermissionsUnlocked(pi, grantUri, callingUid, modeFlags)
+                || IchthysGrantShield.isShieldedGranter(mContext, callingUid, pi.authority)) {
             // Require they hold a strong enough Uri permission
             final boolean res;
             synchronized (mLock) {

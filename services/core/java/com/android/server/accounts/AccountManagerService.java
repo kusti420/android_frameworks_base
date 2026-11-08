@@ -112,6 +112,8 @@ import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.content.PackageMonitor;
+import com.android.internal.ichthys.guard.GuardEvent;
+import com.android.internal.ichthys.guard.GuardShieldReporter;
 import com.android.internal.messages.nano.SystemMessageProto.SystemMessage;
 import com.android.internal.notification.SystemNotificationChannels;
 import com.android.internal.util.ArrayUtils;
@@ -123,6 +125,7 @@ import com.android.modules.expresslog.Histogram;
 import com.android.server.LocalServices;
 import com.android.server.ServiceThread;
 import com.android.server.SystemService;
+import com.android.server.ichthys.guard.IchthysGrantShield;
 
 import com.google.android.collect.Lists;
 import com.google.android.collect.Sets;
@@ -747,10 +750,29 @@ public class AccountManagerService
         }
 
         boolean preO = isPreOApplication(packageName);
-        if ((signatureCheckResult != SIGNATURE_CHECK_MISMATCH)
-                || (preO && checkGetAccountsPermission(packageName, accounts.userId))
+        final boolean visibleByPermission =
+                (preO && checkGetAccountsPermission(packageName, accounts.userId))
                 || (checkReadContactsPermission(packageName, accounts.userId)
-                    && accountTypeManagesContacts(account.type, accounts.userId))
+                    && accountTypeManagesContacts(account.type, accounts.userId));
+        // IchthysOS: an app shielded from contacts keeps READ_CONTACTS but reads an empty
+        // address book; that permission must not hand it the account list instead (it named the
+        // user's Google account). It sees accounts the way an app without the permission does:
+        // those the user picks for it in the account chooser (stored visibility, above), and
+        // those of its own signer. Privileged apps are unaffected.
+        // Any holder of READ_CONTACTS or GET_ACCOUNTS counts, not only those stock lets through
+        // above: microG holds no WRITE_CONTACTS, so stock never treats the Google account as a
+        // contacts account, and the app gets it from microG's default below instead (seen on
+        // device 2026-11-07, build ichthys202611071559).
+        final boolean shieldedFromAccounts = (visibleByPermission
+                        || checkReadContactsPermission(packageName, accounts.userId)
+                        || checkGetAccountsPermission(packageName, accounts.userId))
+                && signatureCheckResult == SIGNATURE_CHECK_MISMATCH && !isPrivileged
+                && IchthysGrantShield.isContactsShielded(mContext, uid);
+        if (shieldedFromAccounts) {
+            GuardShieldReporter.note(uid, GuardEvent.SHIELD_CONTACTS, "accounts");
+        }
+        if ((signatureCheckResult != SIGNATURE_CHECK_MISMATCH)
+                || (visibleByPermission && !shieldedFromAccounts)
                 || isPrivileged) {
             // Use legacy for preO apps with GET_ACCOUNTS permission or pre/postO with signature
             // match.
@@ -759,6 +781,12 @@ public class AccountManagerService
             if (AccountManager.VISIBILITY_UNDEFINED == visibility) {
                 visibility = AccountManager.VISIBILITY_USER_MANAGED_VISIBLE;
             }
+        } else if (shieldedFromAccounts) {
+            // IchthysOS: not the authenticator's default for apps without the permission either:
+            // microG stores USER_MANAGED_VISIBLE there, which hands its Google account to every
+            // app (seen on device 2026-11-07). The user can still pick an account for the app
+            // in the account chooser (stored per package, returned above).
+            visibility = AccountManager.VISIBILITY_USER_MANAGED_NOT_VISIBLE;
         } else {
             visibility = getAccountVisibilityFromCache(account,
                     AccountManager.PACKAGE_NAME_KEY_LEGACY_NOT_VISIBLE, accounts);
@@ -4857,6 +4885,18 @@ public class AccountManagerService
                 return EMPTY_ACCOUNT_ARRAY;
         }
         if (!UserHandle.isSameApp(callingUid, Process.SYSTEM_UID) && type == null) {
+            return getAccountsAsUserForPackage(type, userId,
+                packageName, packageUid, opPackageName, false /* includeUserManagedNotVisible */);
+        }
+        // IchthysOS: USER_MANAGED_NOT_VISIBLE accounts are the ones the user may still pick for
+        // the app; only the system's account chooser should list them. An authenticator asking
+        // on a contacts-shielded app's behalf (microG's AccountContentProvider
+        // "get_accounts", which any app can call) would otherwise hand that app every account
+        // the shield in resolveAccountVisibility hid from it. For such a target they count as
+        // NOT_VISIBLE here; the system's chooser path is unchanged.
+        if (!UserHandle.isSameApp(callingUid, Process.SYSTEM_UID)
+                && IchthysGrantShield.isContactsShielded(mContext, packageUid)) {
+            GuardShieldReporter.note(packageUid, GuardEvent.SHIELD_CONTACTS, "accounts");
             return getAccountsAsUserForPackage(type, userId,
                 packageName, packageUid, opPackageName, false /* includeUserManagedNotVisible */);
         }
