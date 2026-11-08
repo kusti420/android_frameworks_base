@@ -493,6 +493,10 @@ final class IchthysOptions {
         s.add(Option.integer("background.backstageMaxMinutes", 90L, 5, 2880,
                 "The custom Backstage limit in minutes, used while backstageMaxHours is -1.",
                 setting(SECURE, "ichthys_backstage_max_minutes")));
+        s.add(Option.integer("background.backstageIdleMinutes", 60L, 0, 1440,
+                "Release a hidden Backstage app's wake lock after it has not been used (opened, "
+                        + "or moving network data) for this many minutes (0 = never).",
+                setting(SECURE, "ichthys_backstage_idle_minutes")));
         // The Miscellaneous page had the same two keys as generated options. One key, one
         // option: two made a declarative apply set the key through one path and reset it through
         // the other, so applying the same file twice flipped the setting.

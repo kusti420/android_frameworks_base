@@ -47,6 +47,7 @@ import android.hardware.display.VirtualDisplay;
 import android.hardware.display.VirtualDisplayConfig;
 import android.media.Image;
 import android.media.ImageReader;
+import android.net.TrafficStats;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -107,6 +108,16 @@ import java.util.concurrent.ConcurrentHashMap;
  * awake display group right after the main one went to sleep, so the device briefly reports
  * screen off and then on again (other apps see SCREEN_OFF followed by SCREEN_ON).
  *
+ * <p>Idle cap (owner 2026-11-08: "if its unused then cap it some way"): a hidden app that is not
+ * used for {@link #KEY_IDLE_MINUTES} (default {@link #DEFAULT_IDLE_MINUTES} min) gives up its wake
+ * lock, so a forgotten Backstage app can no longer keep the phone awake all night. "Used" is the
+ * user opening it (any of the ways that bring it to the main screen, or Resume in its
+ * notification) or the app itself moving data ({@link #IDLE_TRAFFIC_BYTES} or more over the
+ * network per {@link #IDLE_CHECK_MS} check: an upload or sync in progress keeps it going). Once
+ * released, its hidden display falls asleep like the main screen does, so the app stops as any
+ * app off screen would; it stays in Backstage and its notification says it is paused. Any use
+ * (opening it, Resume) re-arms the hold. 0 = never release (the old behaviour).
+ *
  * <p>Control: Settings.Secure {@link #KEY_PACKAGES} (comma-separated packages, per user) is the
  * set of apps in Backstage. The crDroidSettings page and the Backstage tile write it; this service
  * reconciles. While an app is hidden, an ongoing notification offers "Open" and "Stop" (removes
@@ -126,6 +137,12 @@ public final class IchthysBackstageService {
     public static final String KEY_MAX_HOURS = "ichthys_backstage_max_hours";
     /** Settings.Secure, per user: the custom limit in minutes, used while KEY_MAX_HOURS is -1. */
     public static final String KEY_MAX_MINUTES = "ichthys_backstage_max_minutes";
+    /**
+     * Settings.Secure, per user: release a hidden app's wake lock after it has not been used for
+     * this many minutes (0 = never). See the class comment.
+     */
+    public static final String KEY_IDLE_MINUTES = "ichthys_backstage_idle_minutes";
+    public static final int DEFAULT_IDLE_MINUTES = 60;
 
     private static final int MAX_APPS = 3;
     private static final float REFRESH_RATE = 5f;
@@ -138,11 +155,16 @@ public final class IchthysBackstageService {
      * long enough to glance at recents or a share sheet, short enough not to matter to the app.
      */
     private static final long LEAVE_DELAY_MS = 2_500;
+    /** How often the idle cap looks at the hidden apps (only while one holds the phone awake). */
+    private static final long IDLE_CHECK_MS = 5 * MINUTE_MS;
+    /** Network traffic per check that counts as the app being in use (an upload, a sync). */
+    private static final long IDLE_TRAFFIC_BYTES = 64 * 1024;
 
     private static final String CHANNEL_ID = "ichthys_backstage";
     private static final String ACTION_BRING_BACK =
             "com.android.server.ichthys.BACKSTAGE_BRING_BACK";
     private static final String ACTION_STOP = "com.android.server.ichthys.BACKSTAGE_STOP";
+    private static final String ACTION_RESUME = "com.android.server.ichthys.BACKSTAGE_RESUME";
     private static final String EXTRA_PACKAGE = "package";
     private static final int NOTIFICATION_ID_BASE = 0x1c7b0000;
 
@@ -151,6 +173,7 @@ public final class IchthysBackstageService {
     private final IActivityTaskManager mAtm = ActivityTaskManager.getService();
     private final Runnable mCheckLeft = () -> hideLeftApps(false);
     private final Runnable mRefresh = this::refresh;
+    private final Runnable mIdleCheck = this::checkIdle;
 
     // Everything below is only touched on mHandler.
     private int mUserId = UserHandle.USER_SYSTEM;
@@ -181,6 +204,9 @@ public final class IchthysBackstageService {
             return display.getDisplay().getDisplayId();
         }
 
+        /** IchthysOS: the wake lock is released by the idle cap (the display may sleep). */
+        boolean paused;
+
         void release() {
             wakeLock.release();
             // Without DESTROY_CONTENT_ON_REMOVAL, anything still on the display moves to the
@@ -206,6 +232,10 @@ public final class IchthysBackstageService {
         final int serial;
         /** Its hour-limit alarm, if one is set. mHandler only. */
         AlarmManager.OnAlarmListener limitAlarm;
+        /** IchthysOS idle cap: when it was last used (elapsed ms). mHandler only. */
+        long usedAt = SystemClock.elapsedRealtime();
+        /** IchthysOS idle cap: its uid's network bytes at the last check (-1 = none yet). */
+        long trafficBytes = -1;
 
         Entry(String pkg, int serial) {
             this.pkg = pkg;
@@ -291,10 +321,24 @@ public final class IchthysBackstageService {
         mContext.getContentResolver().registerContentObserver(
                 Settings.Secure.getUriFor(KEY_MAX_MINUTES), false, limitObserver,
                 UserHandle.USER_ALL);
+        // IchthysOS idle cap: a new idle limit counts from now for every hidden app (a paused one
+        // stays paused until it is used, unless the cap is now off).
+        mContext.getContentResolver().registerContentObserver(
+                Settings.Secure.getUriFor(KEY_IDLE_MINUTES), false,
+                new ContentObserver(mHandler) {
+                    @Override
+                    public void onChange(boolean selfChange, Collection<Uri> uris, int flags,
+                            int userId) {
+                        if (userId == mUserId) {
+                            onIdleLimitChanged();
+                        }
+                    }
+                }, UserHandle.USER_ALL);
 
         final IntentFilter actions = new IntentFilter();
         actions.addAction(ACTION_BRING_BACK);
         actions.addAction(ACTION_STOP);
+        actions.addAction(ACTION_RESUME);
         // actionIntent() puts the package in the data.
         actions.addDataScheme("package");
         mContext.registerReceiver(new BroadcastReceiver() {
@@ -304,7 +348,9 @@ public final class IchthysBackstageService {
                 if (entry == null) {
                     return;
                 }
-                if (ACTION_BRING_BACK.equals(intent.getAction())) {
+                if (ACTION_RESUME.equals(intent.getAction())) {
+                    resumeStage(entry); // IchthysOS idle cap: keep it running hidden
+                } else if (ACTION_BRING_BACK.equals(intent.getAction())) {
                     if (stageId(entry) == Display.INVALID_DISPLAY
                             && findTask(entry.pkg, Display.DEFAULT_DISPLAY) == null) {
                         launchOnMainScreen(entry); // it is gone: "Open" starts it again
@@ -664,6 +710,8 @@ public final class IchthysBackstageService {
         }
         entry.movedAt = SystemClock.elapsedRealtime();
         entry.uid = task.effectiveUid;
+        // IchthysOS idle cap: the user just had it on screen, which is use.
+        markUsed(entry);
         publishHidden();
         postNotification(entry);
         Slog.i(TAG, entry.pkg + " went to Backstage");
@@ -1038,6 +1086,132 @@ public final class IchthysBackstageService {
         }
     }
 
+    // ---- Idle cap (IchthysOS 2026-11-08) ----
+
+    /** [entry] was used: its idle clock starts again, and a paused hold comes back. */
+    private void markUsed(Entry entry) {
+        entry.usedAt = SystemClock.elapsedRealtime();
+        entry.trafficBytes = -1;
+        if (entry.stage != null) {
+            if (entry.stage.paused) {
+                resumeStage(entry);
+            } else {
+                scheduleIdleCheck();
+            }
+        }
+    }
+
+    /** Holds [entry]'s hidden display awake again after the idle cap released it. */
+    private void resumeStage(Entry entry) {
+        final Stage stage = entry.stage;
+        entry.usedAt = SystemClock.elapsedRealtime();
+        entry.trafficBytes = -1;
+        if (stage == null || !stage.paused) {
+            return;
+        }
+        stage.paused = false;
+        stage.wakeLock.acquire(); // ACQUIRE_CAUSES_WAKEUP: its display wakes, the app resumes
+        Slog.i(TAG, entry.pkg + " resumed in Backstage");
+        if (entry.notified) {
+            postNotification(entry);
+        }
+        scheduleIdleCheck();
+    }
+
+    private void pauseStage(Entry entry, long idleMs) {
+        final Stage stage = entry.stage;
+        if (stage == null || stage.paused) {
+            return;
+        }
+        stage.paused = true;
+        // Only the wake lock: the display, the app's task and its place in Backstage stay. The
+        // display group then sleeps like the main screen, and the app stops as any app off screen.
+        stage.wakeLock.release();
+        Slog.i(TAG, entry.pkg + " not used for " + (idleMs / MINUTE_MS)
+                + " min; it no longer keeps the phone awake");
+        if (entry.notified) {
+            postNotification(entry);
+        }
+    }
+
+    private void scheduleIdleCheck() {
+        if (readIdleMs() > 0 && !mHandler.hasCallbacks(mIdleCheck)) {
+            mHandler.postDelayed(mIdleCheck, IDLE_CHECK_MS);
+        }
+    }
+
+    /**
+     * Every {@link #IDLE_CHECK_MS} while a hidden app holds the phone awake (the handler's clock
+     * runs then: the hold keeps the CPU up). Traffic since the last check counts as use.
+     */
+    private void checkIdle() {
+        mHandler.removeCallbacks(mIdleCheck);
+        final long idleMs = readIdleMs();
+        if (idleMs <= 0) {
+            return;
+        }
+        final long now = SystemClock.elapsedRealtime();
+        boolean anyHeld = false;
+        for (Entry entry : new ArrayList<>(mEntries.values())) {
+            if (entry.stage == null || entry.stage.paused) {
+                continue;
+            }
+            final long bytes = trafficBytes(entry);
+            if (bytes >= 0 && entry.trafficBytes >= 0
+                    && bytes - entry.trafficBytes >= IDLE_TRAFFIC_BYTES) {
+                entry.usedAt = now; // moving data: an upload or a sync is running
+            }
+            entry.trafficBytes = bytes;
+            if (now - entry.usedAt >= idleMs) {
+                pauseStage(entry, idleMs);
+            } else {
+                anyHeld = true;
+            }
+        }
+        if (anyHeld) {
+            mHandler.postDelayed(mIdleCheck, IDLE_CHECK_MS);
+        }
+    }
+
+    private void onIdleLimitChanged() {
+        final boolean off = readIdleMs() <= 0;
+        for (Entry entry : new ArrayList<>(mEntries.values())) {
+            entry.usedAt = SystemClock.elapsedRealtime();
+            entry.trafficBytes = -1;
+            if (off && entry.stage != null && entry.stage.paused) {
+                resumeStage(entry);
+            }
+        }
+        mHandler.removeCallbacks(mIdleCheck);
+        scheduleIdleCheck();
+    }
+
+    /** The idle limit in ms, or 0 for none (KEY_IDLE_MINUTES). */
+    private long readIdleMs() {
+        final int minutes = Settings.Secure.getIntForUser(mContext.getContentResolver(),
+                KEY_IDLE_MINUTES, DEFAULT_IDLE_MINUTES, mUserId);
+        return minutes > 0 ? Math.min(minutes, 7 * 24 * 60) * MINUTE_MS : 0;
+    }
+
+    /** The app's network bytes (received + sent) since boot, or -1 if unknown. */
+    private long trafficBytes(Entry entry) {
+        int uid = entry.uid;
+        if (uid == Process.INVALID_UID) {
+            try {
+                uid = mContext.getPackageManager().getPackageUidAsUser(entry.pkg, mUserId);
+            } catch (PackageManager.NameNotFoundException e) {
+                return -1;
+            }
+        }
+        try {
+            final long rx = TrafficStats.getUidRxBytes(uid);
+            final long tx = TrafficStats.getUidTxBytes(uid);
+            return rx < 0 || tx < 0 ? -1 : rx + tx;
+        } catch (RuntimeException e) {
+            return -1;
+        }
+    }
+
     // ---- The hidden displays ----
 
     /** Gives [entry] its own hidden display, unless it has one. */
@@ -1098,6 +1272,7 @@ public final class IchthysBackstageService {
         wakeLock.acquire();
         entry.stage = new Stage(display, reader, wakeLock);
         Slog.i(TAG, "Backstage display " + entry.stage.id() + " created for " + entry.pkg);
+        markUsed(entry);
         return true;
     }
 
@@ -1134,16 +1309,29 @@ public final class IchthysBackstageService {
                 actionIntent(ACTION_STOP, entry.pkg))
                 .setAuthenticationRequired(true)
                 .build();
-        final Notification notification = new Notification.Builder(mContext, CHANNEL_ID)
+        // IchthysOS idle cap: a paused app says so and offers Resume.
+        final boolean paused = entry.stage != null && entry.stage.paused;
+        final Notification.Builder builder = new Notification.Builder(mContext, CHANNEL_ID)
                 .setSmallIcon(com.android.internal.R.drawable.ic_settings_24dp)
-                .setContentTitle(label + " is running in Backstage")
-                .setContentText("Open it to use it; when you leave it, it keeps running here.")
+                .setContentTitle(paused ? label + " is paused in Backstage"
+                        : label + " is running in Backstage")
+                .setContentText(paused
+                        ? "Not used for a while, so it no longer keeps the phone awake. "
+                                + "Open or Resume it to keep it running."
+                        : "Open it to use it; when you leave it, it keeps running here.")
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .setVisibility(Notification.VISIBILITY_SECRET)
                 .setCategory(Notification.CATEGORY_STATUS)
                 .setContentIntent(actionIntent(ACTION_BRING_BACK, entry.pkg))
-                .addAction(open)
+                .addAction(open);
+        if (paused) {
+            builder.addAction(new Notification.Action.Builder(null, "Resume",
+                    actionIntent(ACTION_RESUME, entry.pkg))
+                    .setAuthenticationRequired(true)
+                    .build());
+        }
+        final Notification notification = builder
                 .addAction(stop)
                 .build();
         mContext.getSystemService(NotificationManager.class).notifyAsUser(TAG,
