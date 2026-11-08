@@ -56,6 +56,8 @@ class NotificationShadeWindowState(
     /** one of [StatusBarState] */
     @JvmField var statusBarState: Int = 0,
     @JvmField var remoteInputActive: Boolean = false,
+    /** IchthysOS: the quick settings notes composer has focus (the IME must get in). */
+    @JvmField var ichthysTextInputActive: Boolean = false,
     @JvmField var forcePluginOpen: Boolean = false,
     @JvmField var dozing: Boolean = false,
     @JvmField var dreaming: Boolean = false,

@@ -63,8 +63,8 @@ import com.android.systemui.qs.panels.ui.compose.toolbar.rememberEditModeButtonS
 import com.android.systemui.qs.panels.ui.viewmodel.PaginatedGridViewModel
 import com.android.systemui.qs.panels.ui.viewmodel.TileViewModel
 import com.android.systemui.qs.panels.ui.viewmodel.toolbar.EditModeButtonViewModel
-import com.android.systemui.qs.ui.composable.ReportIchthysTilePager
-import com.android.systemui.qs.ui.composable.ichthysNotesHostDrawsDots
+import com.android.systemui.ichthys.notes.ui.ReportIchthysTilePager
+import com.android.systemui.ichthys.notes.ui.ichthysNotesHostDrawsDots
 import javax.inject.Inject
 
 class PaginatedGridLayout

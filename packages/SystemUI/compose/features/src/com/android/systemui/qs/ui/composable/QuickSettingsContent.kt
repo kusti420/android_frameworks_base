@@ -16,6 +16,8 @@
 
 package com.android.systemui.qs.ui.composable
 
+import com.android.systemui.ichthys.notes.ui.ichthysKeepsHorizontalDrags
+
 import androidx.compose.foundation.layout.Arrangement.spacedBy
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column

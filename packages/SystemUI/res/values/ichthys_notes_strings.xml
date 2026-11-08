@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    IchthysOS: strings of the quick settings notes page (ichthys/notes). Kept in their own file so
+    the feature can be lifted out or rebased without a merge conflict.
+-->
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+    <!-- Page title. [CHAR LIMIT=20] -->
+    <string name="ichthys_notes_title">Notes</string>
+    <!-- Content description of the page indicator's pin glyph. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_notes_indicator">Notes page</string>
+    <!-- Content description of a tile-page dot in the page indicator. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_notes_indicator_tiles">Quick settings tiles</string>
+
+    <!-- Composer hint. [CHAR LIMIT=30] -->
+    <string name="ichthys_notes_composer_hint">Pin something…</string>
+    <!-- Composer: stores the note. [CHAR LIMIT=12] -->
+    <string name="ichthys_notes_done">Done</string>
+    <!-- Composer: turns the current line into a checklist item. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_notes_make_item">Checklist item</string>
+    <!-- Composer: opens the tint row. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_notes_tint">Colour</string>
+    <!-- Composer: no tint. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_notes_tint_none">No colour</string>
+    <!-- Composer: pin toggle. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_notes_pin_toggle">Keep at the top</string>
+    <!-- Composer: stop editing without storing. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_notes_cancel_edit">Stop editing</string>
+    <!-- Composer: the note did not fit the store. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_notes_full">No room left: remove a note first.</string>
+
+    <!-- Text actions above the composer while text is selected. [CHAR LIMIT=12] -->
+    <string name="ichthys_notes_text_cut">Cut</string>
+    <string name="ichthys_notes_text_copy">Copy</string>
+    <string name="ichthys_notes_text_paste">Paste</string>
+    <string name="ichthys_notes_text_select_all">Select all</string>
+
+    <!-- Hold actions under a card. [CHAR LIMIT=10] -->
+    <string name="ichthys_notes_action_pin">Pin</string>
+    <string name="ichthys_notes_action_unpin">Unpin</string>
+    <string name="ichthys_notes_action_copy">Copy</string>
+    <string name="ichthys_notes_action_share">Share</string>
+    <string name="ichthys_notes_action_on_lock">On lock</string>
+    <string name="ichthys_notes_action_off_lock">Hide locked</string>
+    <string name="ichthys_notes_action_delete">Delete</string>
+
+    <!-- Undo strip: the removed note's first line follows. [CHAR LIMIT=30] -->
+    <string name="ichthys_notes_removed">Removed <xliff:g id="note" example="Door code">%1$s</xliff:g></string>
+    <string name="ichthys_notes_undo">Undo</string>
+    <!-- Shown after a tap copied a code. [CHAR LIMIT=12] -->
+    <string name="ichthys_notes_copied">Copied</string>
+
+    <!-- Clipboard offer row. [CHAR LIMIT=24] -->
+    <string name="ichthys_notes_clipboard_label">Clipboard</string>
+    <string name="ichthys_notes_clipboard_pin">Pin</string>
+    <string name="ichthys_notes_clipboard_dismiss">Dismiss</string>
+
+    <!-- Checklist progress on a card: done of total. [CHAR LIMIT=10] -->
+    <string name="ichthys_notes_progress"><xliff:g id="done" example="2">%1$d</xliff:g>/<xliff:g id="total" example="4">%2$d</xliff:g></string>
+    <!-- Content description of a check box. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_notes_item_toggle">Tick</string>
+    <!-- Content description of a pinned card's glyph. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_notes_pinned_glyph">Pinned</string>
+    <!-- Content description of the eye glyph on a card readable when locked. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_notes_on_lock_glyph">Readable on the lock screen</string>
+
+    <!-- Empty page. [CHAR LIMIT=80] -->
+    <string name="ichthys_notes_empty">Notes you pin here stay one swipe away, on every screen.</string>
+    <!-- Locked: the pill that dismisses the lock screen and comes back here. [CHAR LIMIT=24] -->
+    <string name="ichthys_notes_unlock">Unlock to read</string>
+    <!-- Locked: a note was stored while locked. [CHAR LIMIT=40] -->
+    <string name="ichthys_notes_pinned_locked">Pinned · unlock to read</string>
+    <!-- Content description of a card drawn as bars while locked. [CHAR LIMIT=NONE] -->
+    <string name="ichthys_notes_card_locked">Note, unlock to read</string>
+
+    <!-- Share target and text selection action. [CHAR LIMIT=20] -->
+    <string name="ichthys_notes_share_target">Notes</string>
+    <string name="ichthys_notes_process_text">Pin</string>
+    <!-- Toasts of the share target. [CHAR LIMIT=40] -->
+    <string name="ichthys_notes_pinned_toast">Pinned to Notes</string>
+    <string name="ichthys_notes_pin_failed_toast">Could not pin: unlock first or remove a note</string>
+</resources>

@@ -86,7 +86,10 @@ import com.android.systemui.notifications.ui.composable.HeadsUpNotificationPlace
 import com.android.systemui.notifications.ui.composable.ScrollingNotificationPanel
 import com.android.systemui.qs.composefragment.ui.GridAnchor
 import com.android.systemui.qs.footer.ui.compose.FooterActionsWithAnimatedVisibility
-import com.android.systemui.qs.notes.IchthysQsNotesViewModel
+import com.android.systemui.ichthys.notes.IchthysNotesViewModel
+import com.android.systemui.ichthys.notes.ui.IchthysNotesPagerProgress
+import com.android.systemui.ichthys.notes.ui.IchthysQsNotesPagerHost
+import com.android.systemui.ichthys.notes.ui.LocalIchthysNotesPagerProgress
 import com.android.systemui.qs.panels.ui.compose.EditMode
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.rememberShoalQsEnabled
 import com.android.systemui.qs.shared.ui.QuickSettings
@@ -123,7 +126,7 @@ constructor(
     private val notificationRulesParentViewModelFactory: NotificationRulesParentViewModel.Factory,
     private val jankMonitor: InteractionJankMonitor,
     // IchthysOS: the notes page left of the tiles (IchthysQsNotesPage).
-    private val notesViewModel: IchthysQsNotesViewModel,
+    private val notesViewModel: IchthysNotesViewModel,
 ) : ExclusiveActivatable(), Scene {
     override val key = Scenes.QuickSettings
 
@@ -219,7 +222,7 @@ private fun ContentScope.QuickSettingsScene(
     modifier: Modifier = Modifier,
     shadeSession: SaveableSession,
     jankMonitor: InteractionJankMonitor,
-    notesViewModel: IchthysQsNotesViewModel,
+    notesViewModel: IchthysNotesViewModel,
 ) {
     val targetBlur by
         remember(layoutState) {
@@ -388,7 +391,7 @@ private fun ContentScope.QuickSettingsContent(
     viewModel: QuickSettingsSceneContentViewModel,
     headerViewModel: ShadeHeaderViewModel,
     verticalOverscrollEffect: OverscrollEffect,
-    notesViewModel: IchthysQsNotesViewModel,
+    notesViewModel: IchthysNotesViewModel,
 ) {
     val cutoutLocation = LocalDisplayCutout.current().location
 
@@ -546,7 +549,7 @@ private fun ContentScope.QuickSettingsContent(
  */
 @Composable
 private fun ContentScope.IchthysQsTilesHost(
-    notesViewModel: IchthysQsNotesViewModel,
+    notesViewModel: IchthysNotesViewModel,
     enabled: Boolean,
     isScrollable: Boolean,
     progress: IchthysNotesPagerProgress,

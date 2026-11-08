@@ -523,6 +523,7 @@ public class NotificationShadeWindowControllerImpl
         boolean panelFocusable = state.notificationShadeFocusable && state.shadeOrQsExpanded;
         if (state.bouncerShowing && (state.keyguardOccluded || state.keyguardNeedsInput)
                 || (ENABLE_REMOTE_INPUT && state.remoteInputActive)
+                || (state.ichthysTextInputActive && state.shadeOrQsExpanded)
                 || state.glanceableHubShowing) {
             mLpChanged.flags &= ~LayoutParams.FLAG_NOT_FOCUSABLE;
             mLpChanged.flags &= ~LayoutParams.FLAG_ALT_FOCUSABLE_IM;
@@ -544,7 +545,8 @@ public class NotificationShadeWindowControllerImpl
 
     private void applyForceShowNavigationFlag(NotificationShadeWindowState state) {
         if (state.shadeOrQsExpanded || state.bouncerShowing
-                || ENABLE_REMOTE_INPUT && state.remoteInputActive) {
+                || ENABLE_REMOTE_INPUT && state.remoteInputActive
+                || (state.ichthysTextInputActive && state.shadeOrQsExpanded)) {
             mLpChanged.forciblyShownTypes |= WindowInsets.Type.navigationBars();
         } else {
             mLpChanged.forciblyShownTypes &= ~WindowInsets.Type.navigationBars();
@@ -992,6 +994,13 @@ public class NotificationShadeWindowControllerImpl
     @Override
     public void onRemoteInputActive(boolean remoteInputActive) {
         mCurrentState.remoteInputActive = remoteInputActive;
+        apply(mCurrentState);
+    }
+
+    /** IchthysOS: see NotificationShadeWindowController#setIchthysTextInputActive. */
+    @Override
+    public void setIchthysTextInputActive(boolean active) {
+        mCurrentState.ichthysTextInputActive = active;
         apply(mCurrentState);
     }
 

@@ -138,6 +138,12 @@ public interface NotificationShadeWindowController extends RemoteInputController
     default void onRemoteInputActive(boolean remoteInputActive) {}
 
     /**
+     * IchthysOS: the quick settings notes composer has focus; the window must let the IME in,
+     * as it does for an inline reply.
+     */
+    default void setIchthysTextInputActive(boolean active) {}
+
+    /**
      * Sets the screen brightness level for when the device is dozing.
      * @param value The brightness value between {@link PowerManager#BRIGHTNESS_MIN} and
      * {@link PowerManager#BRIGHTNESS_MAX}

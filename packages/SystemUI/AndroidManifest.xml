@@ -1211,22 +1211,28 @@
             android:exported="false">
         </activity>
 
-        <!-- IchthysOS: editor of the quick settings notes page. An activity, not a dialog over
-             the shade: the text selection toolbar (a PopupWindow) needs an activity token, and
-             the keyboard cannot share the screen with expanded quick settings. Never shown over
-             the keyguard; launched as SystemUI's own user, hence showForAllUsers. -->
+        <!-- IchthysOS: "Notes" in every share sheet and "Pin" in every text selection menu:
+             stores the text as a quick settings note, toasts, finishes. Nothing opens. -->
         <activity
-            android:name=".qs.ui.composable.IchthysNoteEditorActivity"
+            android:name=".ichthys.notes.IchthysPinTextActivity"
             android:theme="@style/Theme.Transparent"
-            android:label="@string/ichthys_qs_notes_title"
-            android:exported="false"
+            android:label="@string/ichthys_notes_share_target"
+            android:exported="true"
             android:excludeFromRecents="true"
             android:taskAffinity=""
-            android:showWhenLocked="false"
-            android:showForAllUsers="true"
-            android:windowSoftInputMode="adjustResize|stateVisible"
-            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode"
-            />
+            android:noHistory="true"
+            android:showForAllUsers="true">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <intent-filter android:label="@string/ichthys_notes_process_text">
+                <action android:name="android.intent.action.PROCESS_TEXT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
 
         <!-- Contextual setup activity for dreams/screensavers. -->
         <activity

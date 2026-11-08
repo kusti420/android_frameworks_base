@@ -21,7 +21,7 @@ import com.android.compose.animation.Easings
 import com.android.compose.animation.scene.TransitionBuilder
 import com.android.systemui.notifications.ui.composable.Notifications
 import com.android.systemui.qs.shared.ui.QuickSettings
-import com.android.systemui.qs.ui.composable.IchthysQsNotes
+import com.android.systemui.ichthys.notes.ui.IchthysQsNotes
 import com.android.systemui.qs.ui.composable.ShoalMediaDock
 import com.android.systemui.shade.ui.composable.Shade
 import com.android.systemui.shade.ui.composable.ShadeHeader

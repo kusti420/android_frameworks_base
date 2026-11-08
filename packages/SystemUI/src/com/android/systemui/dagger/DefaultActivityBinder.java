@@ -26,7 +26,7 @@ import com.android.systemui.keyguard.WorkLockActivity;
 import com.android.systemui.people.PeopleSpaceActivity;
 import com.android.systemui.people.widget.LaunchConversationActivity;
 import com.android.systemui.personalcontext.attribution.AttributionActivity;
-import com.android.systemui.qs.ui.composable.IchthysNoteEditorActivity;
+import com.android.systemui.ichthys.notes.IchthysPinTextActivity;
 import com.android.systemui.screenshot.appclips.AppClipsActivity;
 import com.android.systemui.screenshot.appclips.AppClipsTrampolineActivity;
 import com.android.systemui.screenshot.scroll.LongScreenshotActivity;
@@ -183,9 +183,9 @@ public abstract class DefaultActivityBinder {
             AttributionActivity activity
     );
 
-    /** IchthysOS: inject into IchthysNoteEditorActivity (the quick settings notes editor). */
+    /** IchthysOS: the share target / text-selection action that pins text to the notes page. */
     @Binds
     @IntoMap
-    @ClassKey(IchthysNoteEditorActivity.class)
-    public abstract Activity bindIchthysNoteEditorActivity(IchthysNoteEditorActivity activity);
+    @ClassKey(IchthysPinTextActivity.class)
+    public abstract Activity bindIchthysPinTextActivity(IchthysPinTextActivity activity);
 }

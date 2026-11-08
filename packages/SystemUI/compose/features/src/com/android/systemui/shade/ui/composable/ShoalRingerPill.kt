@@ -58,7 +58,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
 import com.android.compose.modifiers.thenIf
-import com.android.systemui.qs.ui.composable.LocalIchthysNotesPagerProgress
+import com.android.systemui.ichthys.notes.ui.LocalIchthysNotesPagerProgress
 import com.android.systemui.res.R
 
 /**

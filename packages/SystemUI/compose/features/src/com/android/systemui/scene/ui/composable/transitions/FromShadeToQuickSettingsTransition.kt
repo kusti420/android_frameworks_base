@@ -14,7 +14,7 @@ import com.android.systemui.media.remedia.ui.compose.Media.Elements.MediaCarouse
 import com.android.systemui.notifications.ui.composable.Notifications
 import com.android.systemui.qs.shared.ui.QuickSettings.Elements
 import com.android.systemui.qs.shared.ui.QuickSettings.SHARED_TILE_PICKER_THRESHOLD
-import com.android.systemui.qs.ui.composable.IchthysQsNotes
+import com.android.systemui.ichthys.notes.ui.IchthysQsNotes
 import com.android.systemui.qs.ui.composable.ShoalMediaDock
 import com.android.systemui.scene.shared.model.Scenes
 import com.android.systemui.shade.ui.composable.ShadeHeader

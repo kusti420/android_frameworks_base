@@ -23,7 +23,7 @@ import com.android.systemui.brightness.ui.compose.BrightnessSlider
 import com.android.systemui.brightness.ui.compose.BrightnessSliderDimensions
 import com.android.systemui.notifications.ui.composable.Notifications
 import com.android.systemui.qs.shared.ui.QuickSettings.Elements
-import com.android.systemui.qs.ui.composable.IchthysQsNotes
+import com.android.systemui.ichthys.notes.ui.IchthysQsNotes
 import com.android.systemui.qs.ui.composable.QuickSettingsScene
 import com.android.systemui.shade.ui.composable.Shade
 import com.android.systemui.shade.ui.composable.ShadeHeader
