@@ -451,7 +451,15 @@ constructor(
                         instantlySnapScenes = true,
                         forDoubleTapPowerGesture = true,
                     )
-                } else if (it == PowerButtonLaunchEvent.LAUNCH_FROM_NOT_ENTERED) {
+                } else if (
+                    it == PowerButtonLaunchEvent.LAUNCH_FROM_NOT_ENTERED &&
+                        // IchthysOS: only move to Occluded when the camera will really show
+                        // over the lockscreen. With two camera apps and no default, the launch
+                        // waits for the keyguard to be dismissed (chooser), nothing ever
+                        // occludes, and unlocking on the bouncer left the scene on Occluded:
+                        // keyguard never went away and the screen stayed black.
+                        powerInteractor.willCameraLaunchOccludeKeyguard()
+                ) {
                     switchToScene(
                         Scenes.Occluded,
                         "double tap power while not entered when going to sleep",

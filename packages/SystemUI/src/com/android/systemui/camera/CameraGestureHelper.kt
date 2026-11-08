@@ -156,6 +156,22 @@ constructor(
     }
 
     /**
+     * Whether [launchCamera] would start a camera activity that shows over (occludes) the
+     * lockscreen right away. When it would not (the secure intent resolves to the chooser because
+     * several camera apps handle it with no default, or the insecure intent is used), the launch
+     * goes through [ActivityStarter.startActivity], which first dismisses the keyguard, so
+     * nothing will occlude it.
+     */
+    fun willLaunchOccludingCamera(): Boolean {
+        val intent: Intent = getStartCameraIntent()
+        return CameraIntents.isSecureCameraIntent(intent) &&
+            !activityIntentHelper.wouldLaunchResolverActivity(
+                intent,
+                selectedUserInteractor.getSelectedUserId(),
+            )
+    }
+
+    /**
      * Returns an [Intent] that can be used to start the camera app such that it occludes the
      * lock-screen, if needed.
      */

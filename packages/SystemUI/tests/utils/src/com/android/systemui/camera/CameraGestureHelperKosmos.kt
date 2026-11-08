@@ -25,5 +25,6 @@ val Kosmos.cameraGestureHelper: CameraGestureHelper by
     Kosmos.Fixture<CameraGestureHelper> {
         mock(CameraGestureHelper::class.java).also { helper ->
             whenever(helper.canCameraGestureBeLaunched(any())).thenReturn(true)
+            whenever(helper.willLaunchOccludingCamera()).thenReturn(true)
         }
     }

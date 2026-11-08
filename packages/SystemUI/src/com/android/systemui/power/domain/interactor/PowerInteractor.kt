@@ -344,6 +344,14 @@ constructor(
         }
     }
 
+    /**
+     * Whether the power button camera gesture will start an activity that occludes the
+     * lockscreen. False when the camera can only be started after the keyguard is dismissed (for
+     * example the chooser between several camera apps), in which case nothing will occlude it.
+     */
+    fun willCameraLaunchOccludeKeyguard(): Boolean =
+        cameraGestureHelper.get()?.willLaunchOccludingCamera() ?: true
+
     fun onWalletLaunchGestureDetected() {
         repository.updateWakefulness(powerButtonLaunchGestureTriggered = true)
     }
