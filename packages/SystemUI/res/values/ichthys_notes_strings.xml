@@ -78,4 +78,6 @@
     <!-- Toasts of the share target. [CHAR LIMIT=40] -->
     <string name="ichthys_notes_pinned_toast">Pinned to Notes</string>
     <string name="ichthys_notes_pin_failed_toast">Could not pin: unlock first or remove a note</string>
+    <!-- Toast when an app sends too many notes in a short time; the note is dropped. [CHAR LIMIT=50] -->
+    <string name="ichthys_notes_pin_limited_toast">Too many notes at once: not pinned</string>
 </resources>
