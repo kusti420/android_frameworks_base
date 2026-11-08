@@ -425,7 +425,8 @@ private fun NoteCard(
     modifier: Modifier,
 ) {
     val alpha by animateFloatAsState(if (dimmed) 0.4f else 1f, label = "cardDim")
-    val scale by animateFloatAsState(if (held) 1.02f else 1f, spring(stiffness = 600f), label = "cardLift")
+    // No size "lift" for the held card: it stayed 2 % larger while its actions were open and
+    // stuck out past the other cards. The accent border and the dimmed rest mark it.
     val border by
         androidx.compose.animation.animateColorAsState(
             if (held || editing) tokens.accentMark else tokens.hairline,
@@ -437,11 +438,7 @@ private fun NoteCard(
 
     Column(
         modifier =
-            modifier.graphicsLayer {
-                this.alpha = alpha
-                scaleX = scale
-                scaleY = scale
-            },
+            modifier.graphicsLayer { this.alpha = alpha },
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Column(
