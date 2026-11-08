@@ -37,6 +37,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.platform.LocalDensity
+import com.android.systemui.common.ui.compose.windowinsets.CutoutLocation
+import com.android.systemui.common.ui.compose.windowinsets.LocalDisplayCutout
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -107,6 +113,7 @@ fun ShoalHeaderWeather(
         horizontalArrangement = Arrangement.spacedBy(IconGap),
         modifier =
             modifier
+                .clearOfCenterCutout()
                 .clickable(onClick = onClick)
                 .semantics(mergeDescendants = true) { contentDescription = state.description },
     ) {
@@ -208,3 +215,42 @@ private fun readWeather(context: Context, client: OmniJawsClient): ShoalHeaderWe
 private const val SETTING_ENABLED = "ichthys_qs_header_weather"
 private val IconSize = 24.dp
 private val IconGap = 6.dp
+
+/** Space kept between the weather and a centred camera cutout. */
+private val CutoutGap = 8.dp
+
+/**
+ * IchthysOS: the weather never sits under a centred camera cutout. It is the first item of a row
+ * pinned to the screen's end, so its right edge stays put while icons come and go and the row
+ * grows towards the cutout. Where its left edge would land is known from that right edge and its
+ * own width; when that is under the cutout (plus [CutoutGap]) it takes no room and isn't drawn,
+ * and it comes back once the icons leave room again. Measuring always happens at full width, so
+ * the decision can't flip back and forth.
+ */
+@Composable
+private fun Modifier.clearOfCenterCutout(): Modifier {
+    val cutoutProvider = LocalDisplayCutout.current
+    val gapPx = with(LocalDensity.current) { CutoutGap.toPx() }
+    var hidden by remember { mutableStateOf(false) }
+    val naturalWidth = remember { IntArray(1) }
+    return this.onGloballyPositioned { coords ->
+            val cutout = cutoutProvider()
+            val b = coords.boundsInWindow()
+            val hits =
+                cutout.location == CutoutLocation.CENTER &&
+                    cutout.height > 0 &&
+                    b.top < cutout.bottom + gapPx &&
+                    b.right - naturalWidth[0] < cutout.right + gapPx &&
+                    b.right > cutout.left - gapPx
+            if (hits != hidden) hidden = hits
+        }
+        .layout { measurable, constraints ->
+            val placeable = measurable.measure(constraints)
+            naturalWidth[0] = placeable.width
+            if (hidden) {
+                layout(0, placeable.height) {}
+            } else {
+                layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+            }
+        }
+}
