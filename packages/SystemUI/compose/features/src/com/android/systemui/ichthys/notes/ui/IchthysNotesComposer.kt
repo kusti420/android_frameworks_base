@@ -31,7 +31,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -88,10 +87,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.zIndex
 import com.android.systemui.compose.modifiers.sysuiResTag
 import com.android.systemui.ichthys.notes.IchthysNoteDraft
 import com.android.systemui.ichthys.notes.IchthysNoteText
@@ -350,7 +356,24 @@ private fun TextMenuHost(tokens: IchthysNotesTokens, content: @Composable () -> 
     ) {
         Box {
             content()
-            provider.open?.let { InlineTextMenu(it.session, it.dataProvider, tokens) }
+            // In a popup window: the composer animates its size (animateContentSize clips to its
+            // bounds), so a row drawn inline above the field was cut off and got no taps.
+            provider.open?.let { menu ->
+                val gapPx = with(LocalDensity.current) { 8.dp.roundToPx() }
+                Popup(
+                    popupPositionProvider = remember(gapPx) { AboveAnchorProvider(gapPx) },
+                    properties =
+                        PopupProperties(
+                            // The field keeps focus and the keyboard; selection changes and taps
+                            // elsewhere close the menu through the field, as with the toolbar.
+                            focusable = false,
+                            dismissOnBackPress = false,
+                            dismissOnClickOutside = false,
+                        ),
+                ) {
+                    InlineTextMenu(menu.session, menu.dataProvider, tokens)
+                }
+            }
         }
     }
 }
@@ -384,6 +407,24 @@ private class InlineMenuProvider : TextContextMenuProvider {
     }
 }
 
+/** Puts the menu above the field (below it if there is no room), kept inside the window. */
+private class AboveAnchorProvider(private val gapPx: Int) : PopupPositionProvider {
+    override fun calculatePosition(
+        anchorBounds: IntRect,
+        windowSize: IntSize,
+        layoutDirection: LayoutDirection,
+        popupContentSize: IntSize,
+    ): IntOffset {
+        val maxX = (windowSize.width - popupContentSize.width).coerceAtLeast(0)
+        val x =
+            if (layoutDirection == LayoutDirection.Rtl) anchorBounds.right - popupContentSize.width
+            else anchorBounds.left
+        val above = anchorBounds.top - gapPx - popupContentSize.height
+        val y = if (above >= 0) above else anchorBounds.bottom + gapPx
+        return IntOffset(x.coerceIn(0, maxX), y)
+    }
+}
+
 @Composable
 private fun InlineTextMenu(
     session: TextContextMenuSession,
@@ -395,9 +436,7 @@ private fun InlineTextMenu(
     val shape = RoundedCornerShape(Composer.MENU_HEIGHT / 2)
     Row(
         modifier =
-            Modifier.offset(y = -(Composer.MENU_HEIGHT + 8.dp))
-                .zIndex(1f)
-                .height(Composer.MENU_HEIGHT)
+            Modifier.height(Composer.MENU_HEIGHT)
                 .background(tokens.card, shape)
                 .border(1.dp, tokens.hairline, shape)
                 .padding(horizontal = 4.dp),
