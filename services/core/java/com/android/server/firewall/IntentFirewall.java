@@ -68,6 +68,19 @@ public class IntentFirewall {
     // e.g. /data/system/ifw or /data/secure/system/ifw
     private static final File RULES_DIR = new File(Environment.getDataSystemDirectory(), "ifw");
 
+    /**
+     * IchthysOS: rules the ROM ships, read before the ones in {@link #RULES_DIR}. They close
+     * exported components of bundled apps that must only be reached by the app itself (for
+     * example a messaging app's notification-reply receiver, which would otherwise let any app
+     * send a text past the Guard confirmation). Read-only; the data directory stays the place
+     * for rules written at runtime.
+     */
+    private static final File[] SYSTEM_RULES_DIRS = {
+            new File("/system/etc/ifw"),
+            new File("/system_ext/etc/ifw"),
+            new File("/product/etc/ifw"),
+    };
+
     private static final int LOG_PACKAGES_MAX_LENGTH = 150;
     private static final int LOG_PACKAGES_SUFFICIENT_LENGTH = 125;
 
@@ -341,16 +354,11 @@ public class IntentFirewall {
             resolvers[i] = new FirewallIntentResolver();
         }
 
-        File[] files = rulesDir.listFiles();
-        if (files != null) {
-            for (int i=0; i<files.length; i++) {
-                File file = files[i];
-
-                if (file.getName().endsWith(".xml")) {
-                    readRules(file, resolvers);
-                }
-            }
+        // IchthysOS: the ROM's own rules first, then the data directory as before.
+        for (File systemDir : SYSTEM_RULES_DIRS) {
+            readRuleFiles(systemDir, resolvers);
         }
+        readRuleFiles(rulesDir, resolvers);
 
         Slog.i(TAG, "Read new rules (A:" + resolvers[TYPE_ACTIVITY].filterSet().size() +
                 " B:" + resolvers[TYPE_BROADCAST].filterSet().size() +
@@ -360,6 +368,19 @@ public class IntentFirewall {
             mActivityResolver = resolvers[TYPE_ACTIVITY];
             mBroadcastResolver = resolvers[TYPE_BROADCAST];
             mServiceResolver = resolvers[TYPE_SERVICE];
+        }
+    }
+
+    /** IchthysOS: reads every *.xml of one directory into the resolvers; a missing dir is fine. */
+    private void readRuleFiles(File rulesDir, FirewallIntentResolver[] resolvers) {
+        File[] files = rulesDir.listFiles();
+        if (files == null) {
+            return;
+        }
+        for (File file : files) {
+            if (file.getName().endsWith(".xml")) {
+                readRules(file, resolvers);
+            }
         }
     }
 
